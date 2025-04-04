@@ -307,6 +307,8 @@ class PetscFieldSplitScheme:
 
 @dataclass
 class PetscKSPScheme:
+    """Scheme for a KSP solver for a multiphysics problem."""
+
     preconditioner: Optional[PetscFieldSplitScheme] = None
     """The preconditioner to be used."""
 
