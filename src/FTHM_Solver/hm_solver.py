@@ -352,11 +352,14 @@ class IterativeHMSolver(IterativeLinearSolver):
         mech = [2, 3]
         flow = [4, 5, 6]
         config = self.params.get("linear_solver_config", {})
+        do_linear_transformation: bool = config.get("treat_singularity_contact", True)
 
         return LinearTransformedScheme(
             right_transformations=[
                 lambda bmat: self.Qright(contact_group=0, u_intf_group=3)
-            ],
+            ]
+            if do_linear_transformation
+            else [],
             inner=PetscKSPScheme(
                 petsc_options={
                     "ksp_rtol": 1e-10,

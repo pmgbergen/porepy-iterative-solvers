@@ -176,6 +176,7 @@ class THMSolver(IterativeHMSolver):
     def make_solver_scheme(self) -> FieldSplitScheme:
         config: dict = self.params.get("linear_solver_config", {})
         solver_type: str = config.get("solver", "SAMG")
+        do_linear_transformation: bool = config.get("treat_singularity_contact", True)
 
         if solver_type == "FGMRES":
             return self.make_solver_scheme_fgmres()
@@ -312,7 +313,9 @@ class THMSolver(IterativeHMSolver):
         return LinearTransformedScheme(
             right_transformations=[
                 lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
-            ],
+            ]
+            if do_linear_transformation
+            else [],
             left_transformations=[
                 lambda bmat: self.scale_energy_balance(bmat),
             ],
@@ -404,6 +407,8 @@ class THMSolver(IterativeHMSolver):
     def make_solver_scheme_fgmres(self):
         config: dict = self.params.get("linear_solver_config", {})
         ksp_monitor = {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
+
+        do_linear_transformation: bool = config.get("treat_singularity_contact", True)
         contact = [0]
         intf = [1, 2]
         mech = [3, 4]
@@ -413,7 +418,9 @@ class THMSolver(IterativeHMSolver):
         return LinearTransformedScheme(
             right_transformations=[
                 lambda bmat: self.Qright(contact_group=0, u_intf_group=4)
-            ],
+            ]
+            if do_linear_transformation
+            else [],
             left_transformations=[
                 lambda bmat: self.scale_energy_balance(bmat),
             ],
