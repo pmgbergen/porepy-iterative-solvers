@@ -11,6 +11,13 @@ from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .stats import LinearSolveStats, StatisticsSavingMixin
 
 
+__all__ = [
+    "IterativeLinearSolver",
+    "get_equations_group_ids",
+    "get_variables_group_ids",
+]
+
+
 class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
     """Mixin for iterative linear solvers."""
 
