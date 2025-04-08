@@ -378,7 +378,10 @@ class PetscKrylovSolver:
         options.setValue("ksp_divtol", 1e10)
         options.setValue("ksp_atol", atol)
         options.setValue("ksp_rtol", tol)
-        if pc is None:
+
+        # If no preconditioner is is explicitly provided and the options do not specify
+        # a preconditioner, set it to "none".
+        if pc is None and "pc_type" not in options.getAll():
             PETSc.Options().setValue("pc_type", "none")
 
         self.shape = mat.shape
