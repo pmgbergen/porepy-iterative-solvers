@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -18,6 +20,7 @@ __all__ = [
     "petsc_options_as_str",
     "PetscKrylovSolver",
     "SinglePhysicsPreconditionerScheme",
+    "PreconditionerScheme",
 ]
 
 
@@ -82,7 +85,23 @@ def petsc_options_as_str(stem: str) -> str:
     return s
 
 
-class SinglePhysicsPreconditionerScheme:
+class PreconditionerScheme(ABC):
+    """Abstract base class for PETSc preconditioner schemes."""
+
+    @abstractmethod
+    def get_groups(self) -> list[int]:
+        """Return the groups to be treated by the preconditioner."""
+        pass
+
+    @abstractmethod
+    def configure(
+        self, bmat: BlockMatrixStorage, petsc_pc: PETSc.PC, prefix: str = None
+    ) -> dict[str, Any]:
+        """Configure the PETSc PC object with the given options."""
+        pass
+
+
+class SinglePhysicsPreconditionerScheme(PreconditionerScheme):
     """Preconditioner scheme for a problem to be treated as single physics, that is,
     no splitting will be done.
 
