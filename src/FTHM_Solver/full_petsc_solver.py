@@ -6,6 +6,8 @@ from typing import Any, Callable, Optional
 import numpy as np
 from petsc4py import PETSc
 
+import FTHM_Solver
+
 from .block_matrix import BlockMatrixStorage
 from .mat_utils import csr_to_petsc, сlear_petsc_options
 
@@ -14,6 +16,8 @@ __all__ = [
     "PetscKSPScheme",
     "insert_petsc_options",
     "petsc_options_as_str",
+    "PetscKrylovSolver",
+    "SinglePhysicsPreconditionerScheme",
 ]
 
 
@@ -76,6 +80,65 @@ def petsc_options_as_str(stem: str) -> str:
                 s += f"{key}: {options[key]}\n"
 
     return s
+
+
+class SinglePhysicsPreconditionerScheme:
+    """Preconditioner scheme for a problem to be treated as single physics, that is,
+    no splitting will be done.
+
+    This preconditioner can be used as a monolithic preconditioner for a multiphysics
+    problem, or as the innermost preconditioner in a block preconditioner for a Schur
+    complement problem.
+
+    """
+
+    def __init__(
+        self, opts: dict | None = None, groups: list[int] | None = None
+    ) -> None:
+        """Initialize the preconditioner scheme.
+
+        Parameters:
+            opts: Options for the preconditioner, used for the PETSc configuration.
+                If not provided, a direct solver will be used.
+            groups: The groups to be treated by the preconditioner, referring to the
+                block matrix ordering. If None, the default group 0 will be used.
+        """
+        if groups is None:
+            groups = [0]
+        self._groups = groups
+
+        if opts is None:
+            opts = {}
+
+        default_opts = {
+            "pc_type": "lu",
+            "ksp_type": "preonly",
+        }
+        self._opts = {**default_opts, **opts}
+
+    def get_groups(self) -> list[int]:
+        """Return the groups to be treated by the preconditioner."""
+        return self._groups
+
+    def configure(self, bmat, petsc_pc: PETSc.PC, prefix: str = None):
+        """Configure the PETSc PC object with the given options.
+
+        Parameters:
+            bmat: The block matrix storage to which the preconditioner will be applied.
+            petsc_pc: The PETSc PC object to be configured.
+            prefix: A prefix to be used for the PETSc options. Should coincide with the
+                prefix used for petsc_pc (the return of petsc_pc.getOptionsPrefix()).
+
+        """
+        if prefix is None:
+            prefix = ""
+
+        opts = {f"{prefix}{k}": v for k, v in self._opts.items()}
+
+        FTHM_Solver.insert_petsc_options(opts)
+        petsc_pc.setFromOptions()
+        petsc_pc.setUp()
+        return opts
 
 
 @dataclass
