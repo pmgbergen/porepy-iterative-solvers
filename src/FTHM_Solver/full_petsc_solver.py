@@ -20,6 +20,7 @@ __all__ = [
     "petsc_options_as_str",
     "PetscKrylovSolver",
     "SinglePhysicsPreconditionerScheme",
+    "SolverScheme",
     "PreconditionerScheme",
 ]
 
@@ -83,6 +84,29 @@ def petsc_options_as_str(stem: str) -> str:
                 s += f"{key}: {options[key]}\n"
 
     return s
+
+
+class SolverScheme(ABC):
+    @abstractmethod
+    def get_groups(self) -> list[int]:
+        """Return the groups of the solver scheme."""
+        pass
+
+    @abstractmethod
+    def make_solver_scheme(self, mat_orig: BlockMatrixStorage):
+        """Make a solver for the given block matrix.
+
+        Parameters:
+            mat_orig: The original block matrix.
+
+        Returns:
+            A solver for the block matrix.
+
+        """
+        pass
+
+    def _register_equation_variable_groups(self):
+        pass
 
 
 class PreconditionerScheme(ABC):
