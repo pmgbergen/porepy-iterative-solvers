@@ -1,5 +1,5 @@
 import porepy as pp
-from functools import cached_property
+
 from .full_petsc_solver import SolverScheme, PreconditionerScheme, PetscFieldSplitScheme
 import FTHM_Solver
 
@@ -50,52 +50,8 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
         self._variable_groups_keys.append([self.model.pressure(subdomains)])
         self._variable_groups_keys.append([self.model.interface_darcy_flux(interfaces)])
 
-    @cached_property
-    def variable_groups(self) -> list[list[int]]:
-        """Assign the following groups to the variables:
-
-        0: Fluid pressure on all subdomains.
-        1: Interface darcy fluxes on all interfaces.
-
-        """
-        return FTHM_Solver.get_variables_group_ids(
-            model=self.model,
-            md_variables_groups=self._variable_groups_keys,
-        )
-
-    @cached_property
-    def equation_groups(self) -> list[list[int]]:
-        """Define the groups of equation in the specific order, that we will use in
-        the block Jacobian to access the submatrices.
-
-        Returns:
-            List of lists of integers. Each list contains the indices of the equations
-                in the group.
-
-        """
-        return FTHM_Solver.get_equations_group_ids(
-            model=self.model,
-            equations_group_order=self._equation_group_keys,
-        )
-
     def get_groups(self) -> list[list[int]]:
         return [1]
-
-    def _group_id_from_name(self, name: str) -> int:
-        """Get the group id from the name of the group.
-
-        Args:
-            name: Name of the group.
-
-        Returns:
-            Group id.
-
-        """
-        # This is rough, does not allow for duplicates.
-        for i, group in enumerate(self._equation_group_keys):
-            if group[0][0] == name:
-                return [i]
-        raise ValueError(f"Group {name} not found.")
 
     def _add_prefix(self, dct: dict, prefix: str):
         for key in dct.keys():
