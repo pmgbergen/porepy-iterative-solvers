@@ -119,9 +119,9 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
             mat=self.linear_system[0],
             global_dofs_row=self.eq_dofs,
             global_dofs_col=self.var_dofs,
-            groups_to_blocks_row=self.equation_groups,
-            groups_to_blocks_col=self.variable_groups,
-            group_names_row=self.group_row_names(),
+            groups_to_blocks_row=self._linear_solver_scheme_maker.equation_groups,
+            groups_to_blocks_col=self._linear_solver_scheme_maker.variable_groups,
+            group_names_row=self.group_row_names(),  # TODO: Move to the scheme
             group_names_col=self.group_col_names(),
         )
 
@@ -155,7 +155,7 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         if config.get("save_matrix", False):
             self.save_matrix_state()
 
-        scheme = self.make_solver_scheme()
+        scheme = self._linear_solver_scheme_maker.make_solver_scheme()
         # Construct the solver.
         bmat = self.bmat[scheme.get_groups()]
 
@@ -204,6 +204,15 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         self._linear_solve_stats.petsc_converged_reason = info
         self._linear_solve_stats.krylov_iters = len(solver.get_residuals())
         return np.atleast_1d(sol)
+
+    def _initialize_linear_solver(self) -> None:
+        """Initialize the linear solver.
+
+        This method fetches the linear solver scheme class (essentially a factory class
+        for a linear solver) from the parameters and creates an instance of it.
+        """
+        scheme_maker_cls = self.params.get("linear_solver_scheme")
+        self._linear_solver_scheme_maker = scheme_maker_cls(self, self.params)
 
 
 def get_variables_group_ids(
