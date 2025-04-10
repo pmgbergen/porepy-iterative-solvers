@@ -8,15 +8,6 @@ __all__ = ["FluidIterativeScheme"]
 
 
 class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
-    def __init__(self, model: pp.PorePyModel, opts=None):
-        self.model = model
-        self.opts = opts
-        self._equation_group_counter = 0
-        self._equation_group_keys = []
-        self._variable_groups_keys = []
-
-        self._register_equation_variable_groups()
-
     def _register_equation_variable_groups(self) -> None:
         super()._register_equation_variable_groups()
 

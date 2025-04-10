@@ -5,6 +5,7 @@ from functools import cached_property
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+import porepy as pp
 import numpy as np
 from petsc4py import PETSc
 
@@ -87,6 +88,23 @@ def petsc_options_as_str(stem: str) -> str:
 
 
 class SolverScheme(ABC):
+    def __init__(self, model: pp.PorePyModel, opts=None):
+        self.model = model
+        self.opts = opts
+        self._equation_group_keys = []
+        self._variable_groups_keys = []
+
+        self._register_equation_variable_groups()
+
+        self._equation_groups = FTHM_Solver.get_equations_group_ids(
+            model=self.model,
+            equations_group_order=self._equation_group_keys,
+        )
+        self._variable_groups = FTHM_Solver.get_variables_group_ids(
+            model=self.model,
+            md_variables_groups=self._variable_groups_keys,
+        )
+
     @abstractmethod
     def get_groups(self) -> list[int]:
         """Return the groups of the solver scheme."""
@@ -116,10 +134,8 @@ class SolverScheme(ABC):
         1: Interface darcy fluxes on all interfaces.
 
         """
-        return FTHM_Solver.get_variables_group_ids(
-            model=self.model,
-            md_variables_groups=self._variable_groups_keys,
-        )
+        print("In variable groups")
+        return self._variable_groups
 
     @cached_property
     def equation_groups(self) -> list[list[int]]:
@@ -131,10 +147,21 @@ class SolverScheme(ABC):
                 in the group.
 
         """
-        return FTHM_Solver.get_equations_group_ids(
-            model=self.model,
-            equations_group_order=self._equation_group_keys,
-        )
+        self._reorder_equation_groups()
+        return self._equation_groups
+
+    def _reorder_equation_groups(self):
+        """Reorder the equation groups.
+
+        This is a hook for subclasses to reorder the equation groups if needed.
+        Subclasses that need to reorder the equation groups should override this method.
+        To work in multiphysics settings, where there may be several equation groups
+        that need reordering, the overriding method should call
+        super()._reorder_equation_groups(). By assumption, it will not be necessary to
+        reorder the same equation twice.
+
+        """
+        pass
 
     def _group_id_from_name(self, name: str) -> int:
         """Get the group id from the name of the group.
