@@ -163,6 +163,31 @@ class SolverScheme(ABC):
         """
         pass
 
+    def row_indices(self) -> np.ndarray:
+        """Get the row indices of the block matrix.
+
+        TODO: Better name?
+
+        If the equations are reoredered compared to the original ordering in PorePy,
+        this method will reorder the row indices accordingly.
+
+        A subclass that needs to reorder the row indices should override the method
+        _reorder_row_indices; see that method for more details.
+        """
+        indices = np.arange(self.model.equation_system.num_dofs())
+        return self._reorder_row_indices(indices)
+
+    def _reorder_row_indices(self, indices: np.ndarray) -> np.ndarray:
+        """Reorder the row indices of the block matrix.
+
+        This is a hook for subclasses to reorder the row indices if needed. To work in a
+        multiphysics settings, where several (by assumption non-interferring) reorderings
+        are needed, the overriding method should call super()._reorder_row_indices().
+
+        """
+        # In the default case, no reordering is done.
+        return indices
+
     def _group_id_from_name(self, name: str) -> int:
         """Get the group id from the name of the group.
 
