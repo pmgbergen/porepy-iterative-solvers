@@ -30,7 +30,54 @@ class MomentumIterativeScheme(SolverScheme):
         # Register the groups of variables for this physics
         self._variable_groups_keys.append([self.model.contact_traction(sd_frac)])
         self._variable_groups_keys.append([self.model.displacement(sd_ambient)])
-        self._variable_groups_keys.append([self.model.interface_displacement(intf)])
+        self._variable_groups_keys.append(
+            [self.model.interface_displacement(interfaces)]
+        )
+
+    def _reorder_eq_dofs(self) -> None:
+        # First call the parent method, potentially setting off a chain of super-calls
+        # to other classes.
+        super()._reorder_eq_dofs()
+
+        unpermuted_eq_dofs = self._eq_dofs
+
+        contact_group_id = self._group_id_from_name(
+            "normal_fracture_deformation_equation"
+        )[0]
+        # Short cut if no contact mechanics, hence no reordering.
+        if len(self.equation_groups[contact_group_id]) == 0:
+            # Ignore mypy error, list[np.ndarray] is a subset of list[np.ndarray |
+            # None].
+            return unpermuted_eq_dofs  # type: ignore[return-value]
+
+        # We assume that normal equations go first. TODO: Can we make this more robust,
+        # or else put an assert here.
+        normal_blocks = self.equation_groups[contact_group_id]
+        num_fracs = len(self.model.mdg.subdomains(dim=self.model.nd - 1))
+
+        # EK: I believe this is an assumption that the tangential equations are right
+        # after the normal equations.
+        all_contact_blocks = [
+            nb + i * num_fracs for i in range(2) for nb in normal_blocks
+        ]
+
+        eq_dofs_corrected: list[np.ndarray | None] = []
+        # Add all equations that are not contact equations without any changes.
+        for i, x in enumerate(unpermuted_eq_dofs):
+            if i not in all_contact_blocks:
+                eq_dofs_corrected.append(x)
+            elif i in normal_blocks:
+                eq_dofs_corrected.append(None)
+
+        offset = unpermuted_eq_dofs[normal_blocks[0]][0]
+        for nb in normal_blocks:
+            # Create indices for the normal and tangential components of the contact.
+            # There will be self.nd equations for each block.
+            inds = offset + np.arange(unpermuted_eq_dofs[nb].size * self.model.nd)
+            offset = inds[-1] + 1
+            eq_dofs_corrected[nb] = np.array(inds)
+
+        self._eq_dofs = eq_dofs_corrected
 
     def _reorder_equation_groups(self) -> None:
         # First call the parent method, potentially setting off a chain of super-calls
