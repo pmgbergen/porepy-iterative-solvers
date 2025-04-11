@@ -204,6 +204,13 @@ class SolverScheme(ABC):
                 return [i]
         raise ValueError(f"Group {name} not found.")
 
+    def _add_prefix(self, dct: dict, prefix: str):
+        for key in dct.keys():
+            if prefix:
+                dct[key] = f"{prefix}_{dct[key]}"
+            else:
+                dct[key] = dct[key]
+
 
 class PreconditionerScheme(ABC):
     """Abstract base class for PETSc preconditioner schemes."""
