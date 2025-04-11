@@ -115,6 +115,15 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         """
         super().assemble_linear_system()  # type: ignore[misc]
 
+        row_permutation = self._linear_solver_scheme_maker.row_indices()
+        mat, rhs = self.linear_system
+
+        # Apply the `contact_permutation`.
+        mat = mat[row_permutation]
+        rhs = rhs[row_permutation]
+
+        scheme_maker = self._linear_solver_scheme_maker
+
         bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
             global_dofs_row=scheme_maker.eq_dofs,
