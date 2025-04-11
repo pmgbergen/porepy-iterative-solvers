@@ -44,13 +44,6 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
     def get_groups(self) -> list[list[int]]:
         return [1]
 
-    def _add_prefix(self, dct: dict, prefix: str):
-        for key in dct.keys():
-            if prefix:
-                dct[key] = f"{prefix}_{dct[key]}"
-            else:
-                dct[key] = dct[key]
-
     def _eliminate_interface_darcy_flux_scheme(
         self, complement: PreconditionerScheme, prefix: str = ""
     ) -> PetscFieldSplitScheme:
