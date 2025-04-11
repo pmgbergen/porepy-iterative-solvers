@@ -48,6 +48,7 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
         self, complement: PreconditionerScheme, prefix: str = ""
     ) -> PetscFieldSplitScheme:
         elim_group = self._group_id_from_name("interface_darcy_flux_equation")
+        loc_group = self.equation_groups[elim_group[0]]
 
         elim_options = {
             "ksp_type": "preonly",
@@ -62,7 +63,7 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
             self._add_prefix(dct, prefix)
 
         scheme = FTHM_Solver.PetscFieldSplitScheme(
-            groups=elim_group,
+            groups=loc_group,
             elim_options=elim_options,
             fieldsplit_options=fieldsplit_options,
             complement=complement,
@@ -72,7 +73,8 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
     def _fluid_mass_balance_scheme(
         self, complement: PreconditionerScheme | None, prefix: str = ""
     ) -> PreconditionerScheme:
-        group = self._group_id_from_name("mass_balance_equation")
+        mb_group = self._group_id_from_name("mass_balance_equation")
+        loc_group = self.equation_groups[mb_group[0]]
         opts = {
             "pc_type": "gamg",
             "pc_gamg_threshold": 0.02,
@@ -89,11 +91,11 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
 
         if complement is None:
             return FTHM_Solver.SinglePhysicsPreconditionerScheme(
-                groups=group, opts=opts
+                groups=loc_group, opts=opts
             )
         else:
             return FTHM_Solver.PetscFieldSplitScheme(
-                groups=group,
+                groups=loc_group,
                 elim_options=opts,
                 fieldsplit_options=field_split_options,
                 complement=complement,

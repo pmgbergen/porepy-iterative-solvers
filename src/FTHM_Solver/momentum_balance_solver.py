@@ -124,6 +124,9 @@ class MomentumIterativeScheme(SolverScheme):
             "normal_fracture_deformation_equation"
         )[0]
 
+        if len(self._equation_groups[contact_group_id]) == 0:
+            return indices
+
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
             [self.model.eq_dofs[i] for i in self.equation_groups[contact_group_id]]
@@ -165,6 +168,7 @@ class MomentumIterativeScheme(SolverScheme):
         contact_group_id = self._group_id_from_name(
             "normal_fracture_deformation_equation"
         )
+        loc_group = self.equation_groups[contact_group_id[0]]
 
         fieldsplit_options = {
             "pc_fieldsplit_schur_precondition": "selfp",
@@ -179,7 +183,7 @@ class MomentumIterativeScheme(SolverScheme):
             self._add_prefix(dct, prefix)
 
         precond_scheme = PetscFieldSplitScheme(
-            groups=contact_group_id,
+            groups=loc_group,
             # The blocks are of size `nd`, the number of contact traction
             # components.
             block_size=self.model.nd,
@@ -201,7 +205,10 @@ class MomentumIterativeScheme(SolverScheme):
         interface_group_id = self._group_id_from_name(
             "interface_force_balance_equation"
         )
-        groups = momentum_group_id + interface_group_id
+        groups = []
+        for ind in momentum_group_id + interface_group_id:
+            # Get the equation groups for the momentum balance equation
+            groups.extend(self.equation_groups[ind])
 
         opts = {
             "pc_type": "gamg",
