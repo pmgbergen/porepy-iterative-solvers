@@ -291,10 +291,11 @@ class SolverScheme(ABC):
 class PreconditionerScheme(ABC):
     """Abstract base class for PETSc preconditioner schemes."""
 
-    @abstractmethod
     def get_groups(self) -> list[int]:
-        """Return the groups to be treated by the preconditioner."""
-        pass
+        groups = [g for g in self.groups]
+        if self.complement is not None:
+            groups.extend(self.complement.get_groups())
+        return groups
 
     @abstractmethod
     def configure(
