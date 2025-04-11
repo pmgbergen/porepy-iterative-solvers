@@ -117,10 +117,10 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
 
         bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
-            global_dofs_row=self.eq_dofs,
-            global_dofs_col=self.var_dofs,
-            groups_to_blocks_row=self._linear_solver_scheme_maker.equation_groups,
-            groups_to_blocks_col=self._linear_solver_scheme_maker.variable_groups,
+            global_dofs_row=scheme_maker.eq_dofs,
+            global_dofs_col=scheme_maker.var_dofs,
+            groups_to_blocks_row=scheme_maker.equation_groups,
+            groups_to_blocks_col=scheme_maker.variable_groups,
             group_names_row=self.group_row_names(),  # TODO: Move to the scheme
             group_names_col=self.group_col_names(),
         )
