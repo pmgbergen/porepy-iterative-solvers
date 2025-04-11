@@ -5,13 +5,16 @@ from .full_petsc_solver import SolverScheme, PreconditionerScheme, PetscFieldSpl
 import FTHM_Solver
 
 
+__all__ = ["MomentumIterativeScheme"]
+
+
 class MomentumIterativeScheme(SolverScheme):
     def _register_equation_variable_groups(self):
         super()._register_equation_variable_groups()
         dim_max = self.model.mdg.dim_max()
         sd_ambient = self.model.mdg.subdomains(dim=dim_max)
         sd_frac = self.model.mdg.subdomains(dim=dim_max - 1)
-        intf = self.mdg.interfaces()
+        interfaces = self.model.mdg.interfaces(dim=dim_max - 1)
 
         self._equation_group_keys.append(
             [
@@ -20,7 +23,9 @@ class MomentumIterativeScheme(SolverScheme):
             ]
         )
         self._equation_group_keys.append([("momentum_balance_equation", sd_ambient)])
-        self._equation_group_keys.append([("interface_force_balance_equation", intf)])
+        self._equation_group_keys.append(
+            [("interface_force_balance_equation", interfaces)]
+        )
 
         # Register the groups of variables for this physics
         self._variable_groups_keys.append([self.model.contact_traction(sd_frac)])
@@ -33,7 +38,7 @@ class MomentumIterativeScheme(SolverScheme):
         super()._reorder_equation_groups()
         contact_group_id = self._group_id_from_name(
             "normal_fracture_deformation_equation"
-        )
+        )[0]
 
         equation_groups = self._equation_groups
 
@@ -43,7 +48,7 @@ class MomentumIterativeScheme(SolverScheme):
         # Create a copy of the equation groups to avoid modifying the original.
         eq_groups_corrected = [x.copy() for x in equation_groups]
 
-        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        num_fracs = len(self.model.mdg.subdomains(dim=self.model.nd - 1))
         # Index of the first block after the contact group. This and all subsequent
         # indexes will be reduced by the number of fractures (e.g., the number of
         # block equations that have been removed).
@@ -70,7 +75,7 @@ class MomentumIterativeScheme(SolverScheme):
 
         contact_group_id = self._group_id_from_name(
             "normal_fracture_deformation_equation"
-        )
+        )[0]
 
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
@@ -104,6 +109,9 @@ class MomentumIterativeScheme(SolverScheme):
             raise ValueError("Model dimension must be 2 or 3.")
         return indices
 
+    def get_groups(self):
+        raise NotImplementedError("")
+
     def _eliminate_contact_condition_scheme(
         self, complement, prefix: str = ""
     ) -> PetscFieldSplitScheme:
@@ -111,18 +119,15 @@ class MomentumIterativeScheme(SolverScheme):
             "normal_fracture_deformation_equation"
         )
 
-        fieldsplit_options = (
-            {
-                "pc_fieldsplit_schur_precondition": "selfp",
-            },
-        )
+        fieldsplit_options = {
+            "pc_fieldsplit_schur_precondition": "selfp",
+        }
         # PETSc's point block Jacobi preconditioner, with the given block
         # size.
-        elim_options = (
-            {
-                "pc_type": "pbjacobi",
-            },
-        )
+        elim_options = {
+            "pc_type": "pbjacobi",
+        }
+
         for dct in [elim_options, fieldsplit_options]:
             self._add_prefix(dct, prefix)
 
@@ -130,7 +135,7 @@ class MomentumIterativeScheme(SolverScheme):
             groups=contact_group_id,
             # The blocks are of size `nd`, the number of contact traction
             # components.
-            block_size=self.nd,
+            block_size=self.model.nd,
             elim_options=elim_options,
             fieldsplit_options=fieldsplit_options,
             # TODO: What to do with this one?
@@ -146,21 +151,22 @@ class MomentumIterativeScheme(SolverScheme):
     ) -> PreconditionerScheme:
         # Get the group id of the momentum balance equation
         momentum_group_id = self._group_id_from_name("momentum_balance_equation")
+        interface_group_id = self._group_id_from_name(
+            "interface_force_balance_equation"
+        )
+        groups = momentum_group_id + interface_group_id
 
-        opts = (
-            {
-                "pc_type": "gamg",
-                "mg_levels_ksp_type": "richardson",
-                "mg_levels_ksp_max_it": 1,
-                "mg_levels_pc_type": "bjacobi",
-                "mg_levels_pc_factor_mat_solver_type": "superlu_dist",
-            },
-        )
-        fieldsplit_options = (
-            {
-                "pc_fieldsplit_schur_precondition": "selfp",
-            },
-        )
+        opts = {
+            "pc_type": "gamg",
+            "mg_levels_ksp_type": "richardson",
+            "mg_levels_ksp_max_it": 1,
+            "mg_levels_pc_type": "bjacobi",
+            "mg_levels_pc_factor_mat_solver_type": "superlu_dist",
+        }
+
+        fieldsplit_options = {
+            "pc_fieldsplit_schur_precondition": "selfp",
+        }
         # Add the prefix to the options
         for dct in [opts, fieldsplit_options]:
             self._add_prefix(dct, prefix)
@@ -168,12 +174,12 @@ class MomentumIterativeScheme(SolverScheme):
         # Set up the preconditioner scheme
         if complement is None:
             precond_scheme = FTHM_Solver.SinglePhysicsPreconditionerScheme(
-                groups=momentum_group_id, opts=opts
+                groups=groups, opts=opts
             )
 
         else:
             precond_scheme = FTHM_Solver.PetscFieldSplitScheme(
-                groups=momentum_group_id,
+                groups=groups,
                 block_size=self.nd,
                 elim_options=opts,
                 fieldsplit_options=fieldsplit_options,
