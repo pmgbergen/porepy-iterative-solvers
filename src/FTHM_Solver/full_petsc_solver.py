@@ -96,6 +96,9 @@ class SolverScheme(ABC):
 
         self._register_equation_variable_groups()
 
+        self._eq_dofs = self._construct_eq_dofs()
+        self._var_dofs = self._construct_var_dofs()
+
         self._equation_groups = FTHM_Solver.get_equations_group_ids(
             model=self.model,
             equations_group_order=self._equation_group_keys,
@@ -210,6 +213,79 @@ class SolverScheme(ABC):
                 dct[key] = f"{prefix}_{dct[key]}"
             else:
                 dct[key] = dct[key]
+
+    @cached_property
+    def var_dofs(self) -> list[np.ndarray]:
+        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
+        (how they are arranged in the model).
+
+        Returns:
+            List of numpy arrays. Each array contains the global degrees of freedom for
+                one variable on one grid and provides the fine-scale (actual column
+                indices) of the variable.
+
+        """
+        return self._var_dofs
+
+    def _construct_var_dofs(self) -> list[np.ndarray]:
+        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
+        (how they are arranged in the model).
+
+        Returns:
+            List of numpy arrays. Each array contains the global degrees of freedom for
+                one variable on one grid and provides the fine-scale (actual column
+                indices) of the variable.
+
+        """
+        var_dofs: list[np.ndarray] = []
+        for var in self.model.equation_system.variables:
+            var_dofs.append(self.model.equation_system.dofs_of([var]))
+        return var_dofs
+
+    @cached_property
+    def eq_dofs(self) -> list[np.ndarray]:
+        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
+        EquationSystem.
+
+        Returns:
+            List of numpy arrays. Each list entry correspond to one equation on one
+                grid, and provides the fine-scale (actual row indices) of the equation.
+
+        """
+        self._reorder_eq_dofs()
+        return self._eq_dofs
+
+    def _construct_eq_dofs(self) -> list[np.ndarray]:
+        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
+        EquationSystem.
+
+        Returns:
+            List of numpy arrays. Each list entry correspond to one equation on one
+                grid, and provides the fine-scale (actual row indices) of the equation.
+
+        """
+        eq_dofs: list[np.ndarray] = []
+        offset = 0
+        for (
+            data
+        ) in self.model.equation_system._equation_image_space_composition.values():
+            local_offset = 0
+            for dofs in data.values():
+                eq_dofs.append(dofs + offset)
+                local_offset += len(dofs)
+            offset += local_offset
+        return eq_dofs
+
+    def _reorder_eq_dofs(self) -> None:
+        """Reorder the equation degrees of freedom.
+
+        This is a hook for subclasses to reorder the equation degrees of freedom if
+        needed. To work in a multiphysics settings, where several (by assumption
+        non-interferring) reorderings are needed, the overriding method should call
+        super()._reorder_eq_dofs().
+
+        """
+        pass
 
 
 class PreconditionerScheme(ABC):
