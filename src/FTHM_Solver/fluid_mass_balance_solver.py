@@ -42,6 +42,7 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
         self._variable_groups_keys.append([self.model.interface_darcy_flux(interfaces)])
 
     def get_groups(self) -> list[list[int]]:
+        assert False  # The assumption is this method should not be part of the scheme
         return [1]
 
     def _eliminate_interface_darcy_flux_scheme(
@@ -49,6 +50,7 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
     ) -> PetscFieldSplitScheme:
         elim_group = self._group_id_from_name("interface_darcy_flux_equation")
         loc_group = self.equation_groups[elim_group[0]]
+        loc_group = [elim_group[0]]
 
         elim_options = {
             "ksp_type": "preonly",
@@ -75,6 +77,7 @@ class FluidIterativeScheme(SolverScheme):  # Use SolverScheme directly
     ) -> PreconditionerScheme:
         mb_group = self._group_id_from_name("mass_balance_equation")
         loc_group = self.equation_groups[mb_group[0]]
+        loc_group = [mb_group[0]]
         opts = {
             "pc_type": "gamg",
             "pc_gamg_threshold": 0.02,
