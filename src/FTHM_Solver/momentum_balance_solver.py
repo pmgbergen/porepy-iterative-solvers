@@ -168,7 +168,8 @@ class MomentumIterativeScheme(SolverScheme):
         contact_group_id = self._group_id_from_name(
             "normal_fracture_deformation_equation"
         )
-        loc_group = self.equation_groups[contact_group_id[0]]
+        # loc_group = self.equation_groups[contact_group_id[0]]
+        loc_group = contact_group_id
 
         fieldsplit_options = {
             "pc_fieldsplit_schur_precondition": "selfp",
@@ -205,10 +206,7 @@ class MomentumIterativeScheme(SolverScheme):
         interface_group_id = self._group_id_from_name(
             "interface_force_balance_equation"
         )
-        groups = []
-        for ind in momentum_group_id + interface_group_id:
-            # Get the equation groups for the momentum balance equation
-            groups.extend(self.equation_groups[ind])
+        groups = [momentum_group_id[0], interface_group_id[0]]
 
         opts = {
             "pc_type": "gamg",
