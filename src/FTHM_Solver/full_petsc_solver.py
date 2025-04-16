@@ -6,7 +6,7 @@ from functools import cached_property
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from scipy.sparse import sps
+import scipy.sparse as sps
 import porepy as pp
 import numpy as np
 from petsc4py import PETSc
@@ -319,7 +319,11 @@ class SinglePhysicsPreconditionerScheme(PreconditionerScheme):
     """
 
     def __init__(
-        self, opts: dict | None = None, groups: list[int] | None = None
+        self,
+        opts: dict | None = None,
+        groups: list[int] | None = None,
+        near_null_space: list[np.ndarray] | None = None,
+        block_size: int = 1,
     ) -> None:
         """Initialize the preconditioner scheme.
 
@@ -342,6 +346,9 @@ class SinglePhysicsPreconditionerScheme(PreconditionerScheme):
         }
         self._opts = {**default_opts, **opts}
 
+        self._near_null_space = near_null_space
+        self._block_size = block_size
+
     def get_groups(self) -> list[int]:
         """Return the groups to be treated by the preconditioner."""
         return self._groups
@@ -360,6 +367,18 @@ class SinglePhysicsPreconditionerScheme(PreconditionerScheme):
             prefix = ""
 
         opts = {f"{prefix}{k}": v for k, v in self._opts.items()}
+
+        if self._near_null_space is not None:
+            null_space_vectors = []
+            for b in self._near_null_space:
+                null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
+                null_space_vec_petsc.setSizes(b.shape[0], self._block_size)
+                null_space_vec_petsc.setUp()
+                null_space_vec_petsc.setArray(b)
+                null_space_vectors.append(null_space_vec_petsc)
+            # possibly mem leak
+            null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
+            petsc_pc.getOperators()[1].setNearNullSpace(null_space_petsc)
 
         FTHM_Solver.insert_petsc_options(opts)
         petsc_pc.setFromOptions()
@@ -654,6 +673,14 @@ class PetscKSPScheme:
 
 @dataclass
 class LinearTransformedScheme:
+    nd: int
+    """Number of dimensions of the problem."""
+
+    contact_group: int
+    """The group that is the contact group."""
+    u_intf_group: int
+    """The group that is the interface group."""
+
     left_transformations: Optional[bool] = False
     right_transformations: Optional[bool] = True
     # This is not optional.
