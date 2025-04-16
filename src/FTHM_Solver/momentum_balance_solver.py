@@ -39,6 +39,7 @@ class MomentumIterativeScheme(SolverScheme):
         # to other classes.
         super()._reorder_eq_dofs()
 
+        # The unpermuted equation dofs, prior to any reordering of the equation groups.
         unpermuted_eq_dofs = self._eq_dofs
 
         contact_group_id = self._group_id_from_name(
@@ -80,6 +81,9 @@ class MomentumIterativeScheme(SolverScheme):
         self._eq_dofs = eq_dofs_corrected
 
     def _reorder_equation_groups(self) -> None:
+        """Reorder the equation groups to treat the normal and tangential equations for
+        every fracture as a single block."""
+
         # First call the parent method, potentially setting off a chain of super-calls
         # to other classes.
         super()._reorder_equation_groups()
@@ -127,10 +131,15 @@ class MomentumIterativeScheme(SolverScheme):
         if len(self._equation_groups[contact_group_id]) == 0:
             return indices
 
+        # NOTE: On the first call (which should be the only call to this method,
+        # considering the parent method is a cached property), the call to
+        # self.equation_groups will trigger the reordering of the equation groups. It is
+        # important that this happens prior to the reordering of equation dofs, as the
+        # latter should be based on the reordered equation groups.
+        eq_groups_contact = self.equation_groups[contact_group_id]
+
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
-        dofs_contact = np.concatenate(
-            [self.model.eq_dofs[i] for i in self.equation_groups[contact_group_id]]
-        )
+        dofs_contact = np.concatenate([self.eq_dofs[i] for i in eq_groups_contact])
 
         # The start and end indices of all contact mechanics equations.
         dofs_contact_start = dofs_contact[0]
