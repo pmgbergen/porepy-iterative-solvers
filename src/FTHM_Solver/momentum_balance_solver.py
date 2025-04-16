@@ -235,7 +235,10 @@ class MomentumIterativeScheme(SolverScheme):
         # Set up the preconditioner scheme
         if complement is None:
             precond_scheme = FTHM_Solver.SinglePhysicsPreconditionerScheme(
-                groups=groups, opts=opts
+                groups=groups,
+                opts=opts,
+                near_null_space=self._near_nullspace(),
+                block_size=self.model.nd,
             )
 
         else:
@@ -245,6 +248,7 @@ class MomentumIterativeScheme(SolverScheme):
                 elim_options=opts,
                 fieldsplit_options=fieldsplit_options,
                 complement=complement,
+                near_null_space=self._near_nullspace(),
             )
 
         return precond_scheme
@@ -261,4 +265,53 @@ class MomentumIterativeScheme(SolverScheme):
         ksp_scheme = FTHM_Solver.PetscKSPScheme(
             preconditioner=precond_scheme, petsc_options=ksp_options
         )
+        # solver_scheme = FTHM_Solver.LinearTransformedScheme(
+        #     right_transformations=True, inner=ksp_scheme, nd=self.model.nd
+        # )
+
         return ksp_scheme
+
+    def _near_nullspace(self, include_sd=True, include_intf=True):
+        cell_center_array = []
+        model = self.model
+        if include_sd:
+            cell_center_array.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
+        if include_intf:
+            cell_center_array.extend(
+                [intf.cell_centers for intf in model.mdg.interfaces(dim=model.nd - 1)]
+            )
+        cell_centers = np.concatenate(cell_center_array, axis=1)
+
+        x, y, z = cell_centers
+        num_dofs = cell_centers.shape[1]
+
+        def _vec():
+            vec = np.zeros((model.nd, num_dofs))
+            return vec.ravel("F")
+
+        null_space = []
+
+        for i in range(model.nd):
+            vec = _vec()
+            vec[i] = 1
+            null_space.append(vec.ravel("F"))
+
+        vec = np.zeros((model.nd, num_dofs))
+        vec[0] = -y
+        vec[1] = x
+        null_space.append(vec.ravel("F"))
+
+        if model.nd == 3:
+            # # 0, -z, y
+            vec = np.zeros((3, num_dofs))
+            vec[1] = -z
+            vec[2] = y
+            null_space.append(vec.ravel("F"))
+            # z, 0, -x
+            vec = np.zeros((3, num_dofs))
+            vec[0] = z
+            vec[2] = -x
+            null_space.append(vec.ravel("F"))
+            # -y, x, 0
+
+        return np.array(null_space)
