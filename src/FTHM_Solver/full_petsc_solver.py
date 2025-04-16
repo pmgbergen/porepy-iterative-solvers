@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from functools import cached_property
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+from scipy.sparse import sps
 import porepy as pp
 import numpy as np
 from petsc4py import PETSc
@@ -12,7 +14,7 @@ from petsc4py import PETSc
 import FTHM_Solver
 
 from .block_matrix import BlockMatrixStorage
-from .mat_utils import csr_to_petsc, сlear_petsc_options
+from .mat_utils import csr_to_petsc, сlear_petsc_options, inv_block_diag
 
 __all__ = [
     "PetscFieldSplitScheme",
@@ -23,6 +25,7 @@ __all__ = [
     "SinglePhysicsPreconditionerScheme",
     "SolverScheme",
     "PreconditionerScheme",
+    "LinearTransformedScheme",
 ]
 
 
@@ -651,18 +654,62 @@ class PetscKSPScheme:
 
 @dataclass
 class LinearTransformedScheme:
-    left_transformations: Optional[
-        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
-    ] = None
-    right_transformations: Optional[
-        list[Callable[[BlockMatrixStorage], BlockMatrixStorage]]
-    ] = None
+    left_transformations: Optional[bool] = False
+    right_transformations: Optional[bool] = True
     # This is not optional.
     inner: Optional[PetscKSPScheme] = None
     """The actual solver, to be applied after the transformations.
     
     TODO: Should the typing allow for a more general solver?
     """
+
+    def Qright(
+        self, J: FTHM_Solver.BlockMatrixStorage
+    ) -> FTHM_Solver.BlockMatrixStorage:
+        """Assemble the right linear transformation."""
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qright = J.empty_container()[:]
+
+        if self.contact_group not in J.active_groups[0]:
+            # No contact group, hence identity transformation.
+            Qright.mat = sps.eye(Qright.shape[0], format="csr")
+            return Qright
+
+        J55 = J[self.u_intf_group, self.u_intf_group].mat
+
+        J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
+
+        Qright.mat = Qright.mat = sps.eye(Qright.shape[0], format="csr")
+
+        J54 = J[self.u_intf_group, self.contact_group].mat
+
+        tmp = -J55_inv @ J54
+        Qright[self.u_intf_group, self.contact_group] = tmp
+        return Qright
+
+    def Qleft(
+        self, J: FTHM_Solver.BlockMatrixStorage
+    ) -> FTHM_Solver.BlockMatrixStorage:
+        warnings.warn("This has not been tested")
+
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qleft = J.empty_container()[:]
+
+        if self.contact_group not in J.active_groups[0]:
+            Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
+            return Qleft
+
+        J55_inv = inv_block_diag(
+            J[self.u_intf_group, self.u_intf_group].mat, nd=self.nd, lump=False
+        )
+        # J55_inv = inv(J[u_intf_group, u_intf_group].mat)
+        Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
+        Qleft[self.contact_group, self.u_intf_group] = (
+            -J[self.contact_group, self.u_intf_group].mat @ J55_inv
+        )
+        return Qleft
 
     def get_groups(self) -> list[int]:
         return self.inner.get_groups()
@@ -676,6 +723,8 @@ class LinearTransformedScheme:
         if self.left_transformations is None or len(self.left_transformations) == 0:
             Qleft = None
         else:
+            # The steps should be roughly the same as for the right transfor (below).
+            raise NotImplementedError("Have not covered this yet")
             Qleft = self.left_transformations[0](bmat)[groups]
             for tmp in self.left_transformations[1:]:
                 tmp = tmp(bmat)[groups]
@@ -684,6 +733,7 @@ class LinearTransformedScheme:
         if self.right_transformations is None or len(self.right_transformations) == 0:
             Qright = None
         else:
+            Qright = self.Qright(bmat)
             Qright = self.right_transformations[0](bmat)[groups]
             for tmp in self.right_transformations[1:]:
                 tmp = tmp(bmat)[groups]
@@ -698,6 +748,7 @@ class LinearTransformedScheme:
         if self.inner is None:
             raise ValueError("No inner solver provided.")
 
+        # Set up the inner solver.
         solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q)
         self.options = self.inner.options
 
