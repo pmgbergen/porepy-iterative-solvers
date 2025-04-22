@@ -6,10 +6,16 @@ import porepy as pp
 
 from .block_matrix import BlockMatrixStorage, KSPScheme
 from .fixed_stress import make_fs_analytical_slow_new
-from .full_petsc_solver import (LinearTransformedScheme, PetscFieldSplitScheme,
-                                PetscKSPScheme)
-from .iterative_solver import (IterativeLinearSolver, get_equations_group_ids,
-                               get_variables_group_ids)
+from .full_petsc_solver import (
+    LinearTransformedScheme,
+    PetscFieldSplitScheme,
+    PetscKSPScheme,
+)
+from .iterative_solver import (
+    IterativeLinearSolver,
+    get_equations_group_ids,
+    get_variables_group_ids,
+)
 from .mat_utils import csr_ones, csr_to_petsc, inv_block_diag
 
 
@@ -35,6 +41,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             "Force intf.",
             "Flow mat.",
             "Flow frac.",
+            "Flow lower.",
         ]
 
     def group_col_names(self) -> list[str]:
@@ -45,6 +52,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             r"$u_{intf}$",
             r"$p_{3D}$",
             r"$p_{frac}$",
+            r"$p_{lower}$",
         ]
 
     @cached_property
@@ -352,7 +360,12 @@ class IterativeHMSolver(IterativeLinearSolver):
         mech = [2, 3]
         flow = [4, 5, 6]
         config = self.params.get("linear_solver_config", {})
+
         do_linear_transformation: bool = config.get("treat_singularity_contact", True)
+        ksp_monitor_options = (
+            {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
+        )
+        inner_ksp_monitor_options = ksp_monitor_options
 
         return LinearTransformedScheme(
             right_transformations=[
@@ -367,9 +380,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                     "ksp_max_it": config.get("ksp_max_it", 90),
                     "ksp_gmres_restart": config.get("ksp_gmres_restart", 30),
                 }
-                | {"ksp_monitor": None}
-                if config.get("ksp_monitor", True)
-                else {},
+                | ksp_monitor_options,
                 preconditioner=PetscFieldSplitScheme(
                     groups=contact,
                     block_size=self.nd,
@@ -378,7 +389,10 @@ class IterativeHMSolver(IterativeLinearSolver):
                     },
                     elim_options={
                         "pc_type": "pbjacobi",
-                    },
+                        # "ksp_type": "gmres",
+                        # "ksp_rtol": 1e-5,
+                    }
+                    | inner_ksp_monitor_options,
                     keep_options={
                         "mat_schur_complement_ainv_type": "blockdiag",
                     },
@@ -388,8 +402,12 @@ class IterativeHMSolver(IterativeLinearSolver):
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
                         elim_options={
+                            # "ksp_type": "gmres",
+                            # "ksp_rtol": 1e-3,
                             "pc_type": "ilu",
-                        },
+                            "pc_factor_levels": 1,
+                        }
+                        | inner_ksp_monitor_options,
                         complement=PetscFieldSplitScheme(
                             groups=mech,
                             block_size=self.nd,
@@ -403,29 +421,25 @@ class IterativeHMSolver(IterativeLinearSolver):
                                 ).mat,
                                 bsize=1,
                             ),
-                            # fieldsplit_options={
-                            #     "pc_fieldsplit_schur_precondition": "selfp",
-                            # },
                             elim_options={
-                                # "pc_type": "hypre",
-                                # "pc_hypre_type": "boomeramg",
-                                # "pc_hypre_boomeramg_strong_threshold": 0.7,
-                                "pc_type": "hmg",
-                                "hmg_inner_pc_type": "gamg",
-                                "hmg_inner_pc_gamg_threshold": 0.02,
-                                # "hmg_inner_pc_hypre_type": "boomeramg",
-                                # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+                                "pc_type": "gamg",
                                 "mg_levels_ksp_type": "richardson",
-                                "mg_levels_ksp_max_it": 2,
+                                "mg_levels_ksp_max_it": 4,
                                 "mg_levels_pc_type": "ilu",
-                            },
+                                "mg_levels_pc_factor_levels": 1,
+                            }
+                            | inner_ksp_monitor_options,
+                            keep_options={
+                                # "ksp_type": "gmres",
+                                # "ksp_rtol": 1e-3,
+                            }
+                            | inner_ksp_monitor_options,
+                            near_null_space=build_mechanics_near_null_space(self),
+                            ksp_keep_use_pmat=True,
                             complement=PetscFieldSplitScheme(
                                 groups=flow,
                                 elim_options={
-                                    # "pc_type": "hypre",
-                                    # "pc_hypre_type": "boomeramg",
-                                    # "pc_hypre_boomeramg_truncfactor": 0.3,
-                                    # # "pc_hypre_boomeramg_strong_threshold": 0.7,
+                                    # "pc_type": "lu"
                                     "pc_type": "gamg",
                                     "pc_gamg_threshold": 0.02,
                                     "mg_levels_ksp_type": "richardson",

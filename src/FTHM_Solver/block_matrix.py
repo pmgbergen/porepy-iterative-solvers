@@ -710,7 +710,7 @@ class BlockMatrixStorage:
             row_label_pos.append(ystart + (yend - ystart) / 2)
             kwargs = {}
             kwargs["facecolor"] = f"C{i}"
-            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, kwargs=kwargs)
+            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
         ax.xaxis.set_ticks(row_label_pos)
         ax.set_xticklabels(row_names, rotation=45)
         if log:

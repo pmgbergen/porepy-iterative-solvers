@@ -2,6 +2,7 @@ import sys
 import time
 from functools import cached_property
 from typing import Sequence
+import logging
 
 import numpy as np
 import porepy as pp
@@ -10,6 +11,8 @@ import scipy.sparse as sps
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .stats import LinearSolveStats, StatisticsSavingMixin
 
+
+logger = logging.getLogger(__name__)
 
 class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
     """Mixin for iterative linear solvers."""
@@ -127,6 +130,7 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
             ValueError: If the solver construction or solve fails.
 
         """
+        t_0 = time.time()
         # Check that rhs is finite.
         mat, rhs = self.linear_system
         if not np.all(np.isfinite(rhs)):
@@ -192,6 +196,8 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
             if true_residual_nrm_drop >= 1:
                 # TODO: This should be a warning.
                 print("True residual did not decrease")
+
+        logger.info(f"Solved linear system in {time.time() - t_0:.2e} seconds.")
 
         # Write statistics
         self._linear_solve_stats.petsc_converged_reason = info
