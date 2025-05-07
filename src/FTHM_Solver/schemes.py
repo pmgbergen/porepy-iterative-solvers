@@ -402,7 +402,10 @@ class MultiPhysicsPreconditioner:
     """
 
     def __init__(
-        self, components: list[SinglePhysicsPreconditioner], dof_manager: DofManager
+        self,
+        components: list[SinglePhysicsPreconditioner],
+        dof_manager: DofManager,
+        options: dict | None = None,
     ):
         """
         Args:
@@ -411,6 +414,7 @@ class MultiPhysicsPreconditioner:
         """
         self._single_physics_precond = components
         self._dof_manager = dof_manager
+        self._options = options if options is not None else {}
 
     def configure(
         self,
@@ -435,7 +439,7 @@ class MultiPhysicsPreconditioner:
 
             # Generate the actual petsc proconditioner.
             loc_options = single_physics_precond.configure(
-                has_complement=has_complement
+                has_complement=has_complement, opts=self._options
             )
 
             # Get the tag for this group, and prepend it to the options.
