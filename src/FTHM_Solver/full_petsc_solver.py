@@ -631,7 +631,7 @@ class PetscKSPScheme:
         """Return the groups of the preconditioner."""
         return self.preconditioner.get_groups()
 
-    def make_solver(self, mat_orig: BlockMatrixStorage):
+    def make_solver(self, mat_orig: BlockMatrixStorage, options: dict | None = None):
         # Construct a PETSc matrix from the scipy matrix.
         # TODO: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
@@ -641,7 +641,7 @@ class PetscKSPScheme:
 
         # Hard coded options for the KSP solver. TODO: Figure out how this can be
         # configured from the outside.
-        options = {
+        default_options = {
             # "ksp_monitor": None,
             "ksp_type": "gmres",
             "ksp_pc_side": "right",
@@ -649,7 +649,9 @@ class PetscKSPScheme:
             "ksp_max_it": 120,
             "ksp_gmres_cgs_refinement_type": "refine_ifneeded",
             "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
-        } | (self.petsc_options or {})
+        }
+
+        options = default_options | (self.petsc_options or {}) | (options or {})
 
         # Insert the above options into the PETSc options singleton.
         insert_petsc_options(options)
@@ -663,6 +665,7 @@ class PetscKSPScheme:
             options |= self.preconditioner.configure(
                 bmat=mat_orig,
                 petsc_pc=petsc_pc,
+                options=options,
             )
         if self.compute_eigenvalues:
             petsc_ksp.setComputeEigenvalues(True)
