@@ -253,6 +253,13 @@ class SinglePhysicsPreconditioner(ABC):
         """
         pass
 
+    @property
+    def complement_tag(self) -> str:
+        """
+        Return the tag for the complement of the preconditioner.
+        """
+        return self.tag + "_complement"
+
     @abstractmethod
     def _default_options(self) -> dict:
         """
@@ -260,19 +267,40 @@ class SinglePhysicsPreconditioner(ABC):
         """
         pass
 
+    def _default_fieldsplit_options(self) -> dict:
+        """Options for field splits. Provide a separate method for this, since it
+        involves some boilerplate options.
+        """
+        opts = {
+            "pc_type": "fieldsplit",
+            "pc_fieldsplit_type": "schur",
+            "pc_fieldsplit_schur_factorization_type": "upper",
+            "pc_fieldsplit_schur_precondition": "selfp",
+            f"fieldsplit_{self.tag}_ksp_type": "preonly",
+            f"fieldsplit_{self.complement_tag}_ksp_type": "preonly",
+        }
+        return opts
+
     def configure(
         self,
-        # complement: SinglePhysicsPreconditioner | None = None,
         opts: dict | None = None,
-    ) -> AbstractScheme:
-        if self._complement is not None:
-            self._complement.setup(opts)
-
+        has_complement: bool = False,
+    ) -> dict:
         default_opts = self._default_options()
-        loc_opts = default_opts | opts.get(self.key, {})
-        scheme_class = self.scheme()
-        scheme = scheme_class(self.group(), loc_opts)
-        return scheme
+        user_opts = opts.get(self.key, {})
+
+        local_opts = default_opts | user_opts
+
+        if has_complement:
+            fieldsplit_opts = self._default_fieldsplit_options()
+
+            # The local options need to be prefixed with the relevant fieldsplit tag.
+            local_fieldsplit_opts = {
+                f"fieldsplit_{self.tag}_{k}": v for k, v in local_opts.items()
+            }
+            return fieldsplit_opts | local_fieldsplit_opts
+        else:
+            return local_opts
 
 
 class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
@@ -287,13 +315,16 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
     def tag(self) -> str:
         return "interface_darcy_flux"
 
-    def scheme(self, has_complement: bool) -> AbstractScheme:
+    def _default_options(self) -> dict:
+        opts = {"pc_type": "ilu"}
+        return opts
+
+    def configure(self, opts: dict | None = None, has_complement: bool = False) -> dict:
         if not has_complement:
             raise ValueError(
-                "InterfaceDarcyFluxPreconditioner requires a complement scheme."
+                "The interface darcy flux preconditioner requires a complement."
             )
-
-        return FieldSplitScheme(self._opts)
+        return super().configure(opts, has_complement)
 
 
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
@@ -309,16 +340,59 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
         return MassBalanceGroup()
 
     def _default_options(self) -> dict:
-        return {
-            "pc_type": "ilu",
+        local_opts = {
+            "pc_type": "gamg",
+            "pc_gamg_threshold": 0.02,
+            "mg_levels_ksp_type": "richardson",
+            "mg_levels_ksp_max_it": 4,
+            "mg_levels_pc_type": "sor",
+        }
+        return local_opts
+
+
+class MechanicsPreconditioner(SinglePhysicsPreconditioner):
+    @property
+    def key(self) -> str:
+        return "mechanics"
+
+    @property
+    def tag(self) -> str:
+        return "mechanics"
+
+    def group(self):
+        return MechanicsGroup()
+
+    def _default_options(self, has_complement: bool) -> dict:
+        local_opts = {
+            "pc_type": "hypre",
             "ksp_type": "preonly",
         }
+        if has_complement:
+            local_opts["pc_fieldsplit_schur_precondition"] = "selfp"
+            local_opts["pc_fieldsplit_schur_fact"] = "lower"
+        return local_opts
 
-    def scheme(self) -> AbstractScheme:
-        if self._complement is not None:
-            return FieldSplitScheme(self._opts, complement=self._complement)
-        else:
-            return SinglePhysicsScheme(self._opts)
+
+class ContactPreconditioner(SinglePhysicsPreconditioner):
+    @property
+    def key(self) -> str:
+        return "contact"
+
+    @property
+    def tag(self) -> str:
+        return "contact"
+
+    def group(self):
+        return ContactGroup()
+
+    def _default_options(self, has_complement: bool) -> dict:
+        if not has_complement:
+            raise ValueError("The contact preconditioner requires a complement.")
+        local_opts = {
+            "pc_type": "hypre",
+            "ksp_type": "preonly",
+        }
+        return local_opts
 
 
 class MultiPhysicsPreconditioner:
@@ -326,7 +400,9 @@ class MultiPhysicsPreconditioner:
     dictionary (really a fully specified petsc options).
     """
 
-    def __init__(self, components: list[AbstractScheme], dof_manager: DofManager):
+    def __init__(
+        self, components: list[SinglePhysicsPreconditioner], dof_manager: DofManager
+    ):
         """
         Args:
             groups: List of groups of equations and variables.
@@ -338,7 +414,7 @@ class MultiPhysicsPreconditioner:
     def configure(
         self,
         pc,  # PC comes from ksp or similar
-    ) -> list[AbstractScheme]:
+    ) -> dict:
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
         making a bridge from the general settings defined in a scheme to the PETSc
