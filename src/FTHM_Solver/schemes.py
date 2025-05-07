@@ -145,6 +145,7 @@ class DofManager:
 
         current_is = FTHM_Solver.construct_is(bmat, current_id)
         other_is = FTHM_Solver.construct_is(bmat, other_id)
+        return current_is, other_is
 
     def variable_groups(self, model):
         groups = [group.variable_groups(model) for group in self._orderings]
