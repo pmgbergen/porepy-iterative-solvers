@@ -6,10 +6,16 @@ import porepy as pp
 
 from .block_matrix import BlockMatrixStorage, KSPScheme
 from .fixed_stress import make_fs_analytical_slow_new
-from .full_petsc_solver import (LinearTransformedScheme, PetscFieldSplitScheme,
-                                PetscKSPScheme)
-from .iterative_solver import (IterativeLinearSolver, get_equations_group_ids,
-                               get_variables_group_ids)
+from .full_petsc_solver import (
+    LinearTransformedScheme,
+    PetscFieldSplitScheme,
+    PetscKSPScheme,
+)
+from .iterative_solver import (
+    IterativeLinearSolver,
+    get_equations_group_ids,
+    get_variables_group_ids,
+)
 from .mat_utils import csr_ones, csr_to_petsc, inv_block_diag
 
 

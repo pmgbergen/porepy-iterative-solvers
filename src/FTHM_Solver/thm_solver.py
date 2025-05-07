@@ -7,9 +7,13 @@ import scipy.sparse
 
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme
 from .fixed_stress import make_fs_analytical_slow_new
-from .full_petsc_solver import (LinearTransformedScheme, PcPythonPermutation,
-                                PetscCompositeScheme, PetscFieldSplitScheme,
-                                PetscKSPScheme)
+from .full_petsc_solver import (
+    LinearTransformedScheme,
+    PcPythonPermutation,
+    PetscCompositeScheme,
+    PetscFieldSplitScheme,
+    PetscKSPScheme,
+)
 from .hm_solver import IterativeHMSolver
 from .iterative_solver import get_equations_group_ids, get_variables_group_ids
 from .mat_utils import csr_to_petsc
