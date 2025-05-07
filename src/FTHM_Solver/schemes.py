@@ -217,57 +217,6 @@ class DofManager:
         )
 
 
-class AbstractScheme:
-    """
-    Abstract class for defining a scheme.
-    """
-
-    def __init__(self, opts: dict):
-        """
-        Args:
-            eq_names: List of equation names.
-            opts: Dictionary of options for the solver.
-        """
-        self._opts = opts
-
-    def options(self) -> dict:
-        return self._opts
-
-    @property
-    def near_null_space(self) -> np.ndarray | None:
-        """
-        Return the near null space for the scheme.
-        """
-        return None
-
-    @property
-    def ksp_keep_use_pmat(self) -> bool:
-        """
-        Return whether to keep the preconditioner matrix.
-        """
-        return False
-
-
-class SinglePhysicsScheme(AbstractScheme):
-    def __init__(self, opts: dict):
-        """
-        Args:
-            eq_names: List of equation names.
-            opts: Dictionary of options for the solver.
-        """
-        super().__init__(opts)
-
-
-class FieldSplitScheme(AbstractScheme):
-    def __init__(self, opts: dict):
-        """
-        Args:
-            eq_names: List of equation names.
-            opts: Dictionary of options for the solver.
-        """
-        super().__init__(opts)
-
-
 class SinglePhysicsPreconditioner(ABC):
     """
     Abstract class for defining a preconditioner.
@@ -280,14 +229,6 @@ class SinglePhysicsPreconditioner(ABC):
             opts: Dictionary of options for the preconditioner.
             complement: Complementary scheme.
         """
-
-    @abstractmethod
-    def scheme(self, has_complement: bool) -> Type[AbstractScheme]:
-        """
-        Return the class scheme for the preconditioner. Should include handling of the
-        complement.
-        """
-        pass
 
     @abstractmethod
     def group(self):
@@ -356,9 +297,6 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self, complement: SinglePhysicsPreconditioner | None = None):
-        self._complement = complement
-
     @property
     def key(self) -> str:
         return "mass_balance"
