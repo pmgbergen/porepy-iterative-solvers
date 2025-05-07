@@ -26,6 +26,7 @@ __all__ = [
     "SolverScheme",
     "PreconditionerScheme",
     "LinearTransformedScheme",
+    "construct_is",
 ]
 
 
