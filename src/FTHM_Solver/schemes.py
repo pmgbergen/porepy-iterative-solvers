@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Type, Callable
+from typing import Callable
 from dataclasses import dataclass
 import porepy as pp
-from abc import ABC, abstractmethod, abstractproperty
-import FTHM_Solver.hm_solver
-from petsc4py import PETSc
-import FTHM_Solver
+from abc import ABC, abstractmethod
 
+from .block_matrix import BlockMatrixStorage
+from .full_petsc_solver import construct_is, PetscKSPScheme
+
+from . import hm_solver
+from .iterative_solver import (
+    get_equations_group_ids,
+    get_variables_group_ids,
+)
+from petsc4py import PETSc
+
+
+__all__ = [
+    "MassBalanceGroup",
+    "InterfaceFluxGroup",
+    "MechanicsGroup",
+    "ContactGroup",
+    "DofManager",
+    "SinglePhysicsPreconditioner",
+    "InterfaceDarcyFluxPreconditioner",
+    "MassBalancePreconditioner",
+    "MechanicsPreconditioner",
+    "ContactPreconditioner",
+    "MultiPhysicsPreconditioner",
+    "IterativeSolverMixin",
+    "mass_balance_factory",
+]
 
 """Below are methods that are used to create specific schemes for different equations.
 Note that these consider PETSc configurations, and have no responsibility for
@@ -134,7 +157,7 @@ class DofManager:
         self,
         current_group: AbstractGroup,
         other_groups: list[AbstractGroup],
-        bmat: FTHM_Solver.BlockMatrixStorage,
+        bmat: BlockMatrixStorage,
     ):
         # Not sure if this belongs here, but it is tempting to put it here and not in
         # the composer.
@@ -143,13 +166,13 @@ class DofManager:
         current_id = self._group_id(current_group)
         other_id = [self._group_id(group) for group in other_groups]
 
-        current_is = FTHM_Solver.construct_is(bmat, current_id)
-        other_is = FTHM_Solver.construct_is(bmat, other_id)
+        current_is = construct_is(bmat, current_id)
+        other_is = construct_is(bmat, other_id)
         return current_is, other_is
 
     def variable_groups(self, model):
         groups = [group.variable_groups(model) for group in self._orderings]
-        return FTHM_Solver.get_variables_group_ids(groups)
+        return get_variables_group_ids(groups)
 
     def _identify_contact_group(self, model):
         # Identify the contact group in the equation groups
@@ -173,9 +196,7 @@ class DofManager:
         self._equation_groups = equation_groups_by_name
 
         # Convert to numbers (i.e., block ids).
-        equation_groups_by_number = FTHM_Solver.get_equations_group_ids(
-            equation_groups_by_name
-        )
+        equation_groups_by_number = get_equations_group_ids(equation_groups_by_name)
 
         contact_group = self._identify_contact_group(model)
         # If there is no contact group, return the original equation groups.
@@ -184,11 +205,11 @@ class DofManager:
 
         # Temporary construct to get the correct contact equations groups. To be
         # refactored.
-        tmp_solver = FTHM_Solver.hm_solver.IterativeHMSolver()
+        tmp_solver = hm_solver.IterativeHMSolver()
         reordered_groups = tmp_solver._correct_contact_equations_groups(
             equation_groups_by_number, contact_group
         )
-        return
+        return reordered_groups
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
@@ -199,7 +220,7 @@ class DofManager:
 
         # Temporary construct to get the correct contact equations groups. To be
         # refactored.
-        tmp_solver = FTHM_Solver.hm_solver.IterativeHMSolver()
+        tmp_solver = hm_solver.IterativeHMSolver()
         dofs = tmp_solver.eq_dofs
         return dofs
 
@@ -213,7 +234,7 @@ class DofManager:
         See also eq_dofs_by_blocks, which is used to reorder contact equations within
         the equation block format.
         """
-        return FTHM_Solver.hm_solver.make_reorder_contact(
+        return hm_solver.make_reorder_contact(
             model, self._identify_contact_group(model)
         )
 
@@ -518,9 +539,7 @@ class IterativeSolverMixin:
         dof_manager = DofManager(self.equation_system, precond_list)
         precond = MultiPhysicsPreconditioner(precond_list, dof_manager)
 
-        ksp_factory = FTHM_Solver.PetscKSPScheme(
-            preconditioner=precond, options=solver_options
-        )
+        ksp_factory = PetscKSPScheme(preconditioner=precond, options=solver_options)
         try:
             solver = ksp_factory.make_solver(mat)
         except Exception as e:
@@ -555,7 +574,7 @@ class IterativeSolverMixin:
 
         scheme_maker = self._linear_solver_scheme_maker
 
-        bmat = FTHM_Solver.BlockMatrixStorage(
+        bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
             global_dofs_row=scheme_maker.eq_dofs,
             global_dofs_col=scheme_maker.var_dofs,
