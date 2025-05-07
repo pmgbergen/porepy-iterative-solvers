@@ -5,7 +5,7 @@ from . import (
     iterative_solver,
     fluid_mass_balance_solver,
     momentum_balance_solver,
-    scheme,
+    schemes,
 )
 
 from .block_matrix import *
@@ -14,7 +14,7 @@ from .mat_utils import *
 from .iterative_solver import *
 from .fluid_mass_balance_solver import *
 from .momentum_balance_solver import *
-from .scheme import *
+from .schemes import *
 
 __all__ = []
 __all__.extend(full_petsc_solver.__all__)
@@ -23,4 +23,4 @@ __all__.extend(mat_utils.__all__)
 __all__.extend(iterative_solver.__all__)
 __all__.extend(fluid_mass_balance_solver.__all__)
 __all__.extend(momentum_balance_solver.__all__)
-__all__.extend(scheme.__all__)
+__all__.extend(schemes.__all__)
