@@ -431,8 +431,6 @@ class MultiPhysicsPreconditioner:
 
         options = {}
 
-        is_complement = None
-
         for counter, single_physics_precond in enumerate(self._single_physics_precond):
             # Define a scheme for the group
             has_complement = counter < len(self._single_physics_precond) - 1
@@ -512,11 +510,17 @@ class IterativeSolverMixin:
         precond_factory: Callable[[], MultiPhysicsPreconditioner] = self.params[
             "linear_solver"
         ]["preconditioner_factory"]
+        solver_options = self.params["linear_solver"].get("options", {})
         if precond_factory is None:
             raise ValueError("Preconditioner factory is not set")
-        precond = precond_factory()
+        precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
 
-        ksp_factory = FTHM_Solver.PetscKSPScheme(preconditioner=precond)
+        dof_manager = DofManager(self.equation_system, precond_list)
+        precond = MultiPhysicsPreconditioner(precond_list, dof_manager)
+
+        ksp_factory = FTHM_Solver.PetscKSPScheme(
+            preconditioner=precond, options=solver_options
+        )
         try:
             solver = ksp_factory.make_solver(mat)
         except Exception as e:
