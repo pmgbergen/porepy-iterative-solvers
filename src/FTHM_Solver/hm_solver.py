@@ -42,6 +42,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             "Flow mat.",
             "Flow frac.",
             "Flow lower.",
+            "Well",
         ]
 
     def group_col_names(self) -> list[str]:
@@ -53,6 +54,7 @@ class IterativeHMSolver(IterativeLinearSolver):
             r"$p_{3D}$",
             r"$p_{frac}$",
             r"$p_{lower}$",
+            "Well",
         ]
 
     @cached_property
@@ -85,6 +87,7 @@ class IterativeHMSolver(IterativeLinearSolver):
         sd_frac = self.mdg.subdomains(dim=dim_max - 1)
         intf = self.mdg.interfaces()
         intf_frac = self.mdg.interfaces(dim=dim_max - 1)
+        codim_2_interfaces = self.mdg.interfaces(codim=2)
 
         return get_variables_group_ids(
             model=self,
@@ -96,6 +99,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                 [self.pressure(sd_ambient)],  # 4
                 [self.pressure(sd_frac)],  # 5
                 [self.pressure(sd_intersec)],  # 6
+                [self.well_flux(codim_2_interfaces)],
             ],
         )
 
@@ -145,6 +149,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                     [("mass_balance_equation", sd_ambient)],  # 4
                     [("mass_balance_equation", sd_frac)],  # 5
                     [("mass_balance_equation", sd_intersec)],  # 6
+                    [("well_flux_equation", intf)],
                 ],
             ),
             contact_group=self.CONTACT_GROUP,
@@ -359,13 +364,15 @@ class IterativeHMSolver(IterativeLinearSolver):
         intf = [1]
         mech = [2, 3]
         flow = [4, 5, 6]
+        well = [7]
         config = self.params.get("linear_solver_config", {})
 
         do_linear_transformation: bool = config.get("treat_singularity_contact", True)
         ksp_monitor_options = (
             {"ksp_monitor": None} if config.get("ksp_monitor", True) else {}
         )
-        inner_ksp_monitor_options = ksp_monitor_options
+        # inner_ksp_monitor_options = ksp_monitor_options
+        inner_ksp_monitor_options = {}
 
         return LinearTransformedScheme(
             right_transformations=[
@@ -397,7 +404,7 @@ class IterativeHMSolver(IterativeLinearSolver):
                         "mat_schur_complement_ainv_type": "blockdiag",
                     },
                     complement=PetscFieldSplitScheme(
-                        groups=intf,
+                        groups=intf + well,
                         fieldsplit_options={
                             "pc_fieldsplit_schur_precondition": "selfp",
                         },
