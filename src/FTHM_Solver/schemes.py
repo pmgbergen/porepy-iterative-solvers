@@ -491,7 +491,10 @@ class MultiPhysicsPreconditioner:
 
 
 def mass_balance_factory():
-    return InterfaceDarcyFluxPreconditioner(MassBalancePreconditioner())
+    return [InterfaceDarcyFluxPreconditioner(), MassBalancePreconditioner()]
+
+
+# def hm_factory():
 
 
 class IterativeSolverMixin:
