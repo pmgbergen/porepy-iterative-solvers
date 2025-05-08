@@ -245,14 +245,6 @@ class SinglePhysicsPreconditioner(ABC):
     """
 
     @abstractmethod
-    def __init__(self):
-        """
-        Args:
-            opts: Dictionary of options for the preconditioner.
-            complement: Complementary scheme.
-        """
-
-    @abstractmethod
     def group(self):
         """
         Return the group for the preconditioner.
