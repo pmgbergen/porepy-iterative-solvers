@@ -358,6 +358,20 @@ class SinglePhysicsPreconditioner(ABC):
         """
         return self.tag + "_complement"
 
+    @property
+    def ksp_keep_use_pmat(self) -> bool:
+        """
+        Return whether to keep the preconditioner matrix.
+        """
+        return False
+
+    @property
+    def near_null_space(self) -> np.ndarray | None:
+        """
+        Return the near null space for the preconditioner.
+        """
+        return None
+
     @abstractmethod
     def _default_options(self) -> dict:
         """
