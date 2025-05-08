@@ -664,8 +664,8 @@ class PetscKSPScheme:
         if self.preconditioner is not None:
             options |= self.preconditioner.configure(
                 bmat=mat_orig,
-                petsc_pc=petsc_pc,
-                options=options,
+                pc=petsc_pc,
+                user_options=options,
             )
         if self.compute_eigenvalues:
             petsc_ksp.setComputeEigenvalues(True)
