@@ -286,17 +286,20 @@ class DofManager:
 
         return eq_dofs_corrected
 
-    def var_dofs_by_blocks(self, model):
-        """Get the variable dofs for the model, in the form of a list of numbers,
-        one per variable-domain pair. If the contact group is present, it will be
-        reordered so that the normal and tangential equations for each fracture cell
-        form a digonal block.
+    def var_dofs_by_blocks(self, model) -> list[np.ndarray]:
+        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
+        (how they are arranged in the model).
+
+        Returns:
+            List of numpy arrays. Each array contains the global degrees of freedom for
+                one variable on one grid and provides the fine-scale (actual column
+                indices) of the variable.
+
         """
-        # Temporary construct to get the correct contact equations groups. To be
-        # refactored.
-        tmp_solver = hm_solver.IterativeHMSolver()
-        dofs = tmp_solver.var_dofs
-        return dofs
+        var_dofs: list[np.ndarray] = []
+        for var in model.equation_system.variables:
+            var_dofs.append(model.equation_system.dofs_of([var]))
+        return var_dofs
 
     def eq_rows_permutation(self, model):
         """Get a permutation vector for the full linear system of equations. This is
