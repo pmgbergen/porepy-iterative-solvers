@@ -511,7 +511,9 @@ class MultiPhysicsPreconditioner:
 
     def configure(
         self,
+        bmat: BlockMatrixStorage,
         pc,  # PC comes from ksp or similar
+        user_options: dict | None = None,
     ) -> dict:
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
@@ -521,7 +523,7 @@ class MultiPhysicsPreconditioner:
         Args:
             model: The model instance specifying the problem to be solved.
         """
-
+        user_options = user_options if user_options is not None else {}
         options = {}
 
         for counter, single_physics_precond in enumerate(self._single_physics_precond):
@@ -530,7 +532,7 @@ class MultiPhysicsPreconditioner:
 
             # Generate the actual petsc proconditioner.
             loc_options = single_physics_precond.configure(
-                has_complement=has_complement, opts=self._options
+                has_complement=has_complement, opts=user_options
             )
 
             # Get the tag for this group, and prepend it to the options.
@@ -544,9 +546,9 @@ class MultiPhysicsPreconditioner:
 
             # Get the IS for the group, but only if complement is not None.
             is_this, is_complement = self._dof_manager.petsc_is(
-                single_physics_precond.group(),
+                single_physics_precond,
                 self._single_physics_precond[counter + 1 :],
-                self.bmat,
+                bmat,
             )
             complement_tag = tag + "_complement"
 
@@ -612,7 +614,7 @@ class IterativeSolverMixin:
             preconditioner=self._solver_components.preconditioner,
         )
         try:
-            solver = ksp_factory.make_solver(mat, solver_options)
+            solver = ksp_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
