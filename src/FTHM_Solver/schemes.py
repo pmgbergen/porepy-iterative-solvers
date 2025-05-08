@@ -642,7 +642,7 @@ class IterativeSolverMixin:
                 "Failed to create solver with the provided preconditioner."
             ) from e
 
-        rhs_loc = mat.project_rhs_to_local(rhs)
+        rhs_loc = self.bmat.project_rhs_to_local(rhs)
         x_loc = solver.solve(rhs_loc)
 
         info = solver.ksp.getConvergedReason()
@@ -652,7 +652,7 @@ class IterativeSolverMixin:
                 "Check the solver options and the problem setup."
             )
 
-        x = mat.project_solution_to_global(x_loc)
+        x = self.bmat.project_solution_to_global(x_loc)
 
         return np.atleast_1d(x)
 
