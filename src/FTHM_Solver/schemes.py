@@ -612,10 +612,9 @@ class IterativeSolverMixin:
 
         ksp_factory = PetscKSPScheme(
             preconditioner=self._solver_components.preconditioner,
-            options=solver_options,
         )
         try:
-            solver = ksp_factory.make_solver(mat)
+            solver = ksp_factory.make_solver(mat, solver_options)
         except Exception as e:
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
