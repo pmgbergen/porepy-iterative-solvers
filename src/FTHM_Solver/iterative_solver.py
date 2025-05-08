@@ -50,26 +50,6 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         return var_dofs
 
     @cached_property
-    def eq_dofs(self) -> list[np.ndarray]:
-        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
-        EquationSystem.
-
-        Returns:
-            List of numpy arrays. Each list entry correspond to one equation on one
-                grid, and provides the fine-scale (actual row indices) of the equation.
-
-        """
-        eq_dofs: list[np.ndarray] = []
-        offset = 0
-        for data in self.equation_system._equation_image_space_composition.values():
-            local_offset = 0
-            for dofs in data.values():
-                eq_dofs.append(dofs + offset)
-                local_offset += len(dofs)
-            offset += local_offset
-        return eq_dofs
-
-    @cached_property
     def variable_groups(self) -> list[list[int]]:
         raise NotImplementedError("This method should be implemented in the subclass.")
 
