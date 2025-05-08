@@ -34,22 +34,6 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
     """The current Jacobian."""
 
     @cached_property
-    def var_dofs(self) -> list[np.ndarray]:
-        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
-        (how they are arranged in the model).
-
-        Returns:
-            List of numpy arrays. Each array contains the global degrees of freedom for
-                one variable on one grid and provides the fine-scale (actual column
-                indices) of the variable.
-
-        """
-        var_dofs: list[np.ndarray] = []
-        for var in self.equation_system.variables:
-            var_dofs.append(self.equation_system.dofs_of([var]))
-        return var_dofs
-
-    @cached_property
     def variable_groups(self) -> list[list[int]]:
         raise NotImplementedError("This method should be implemented in the subclass.")
 
