@@ -149,7 +149,7 @@ class DofManager:
         self._group_to_block_ids = {}
 
     def _group_id(self, group: AbstractGroup) -> int:
-        return self._equation_groups.index(group)
+        return self._equation_groups[group.__class__]
 
     def petsc_is(
         self,
@@ -161,8 +161,8 @@ class DofManager:
         # the composer.
 
         # Indices of the block ids
-        current_id = self._group_id(current_group)
-        other_id = [self._group_id(group) for group in other_groups]
+        current_id = [self._group_id(current_group.group())]
+        other_id = [self._group_id(group.group()) for group in other_groups]
 
         current_is = construct_is(bmat, current_id)
         other_is = construct_is(bmat, other_id)
@@ -191,7 +191,11 @@ class DofManager:
         equation_groups_by_name = [
             group.equation_groups(model) for group in self._orderings
         ]
-        self._equation_groups = equation_groups_by_name
+        # Use the class name of the group as the key for the dictionary..
+        # This is a bit of a hack, but it works for now.
+        self._equation_groups = {
+            group.__class__: i for i, group in enumerate(self._orderings)
+        }
 
         # Convert to numbers (i.e., block ids).
         equation_groups_by_number = get_equations_group_ids(
