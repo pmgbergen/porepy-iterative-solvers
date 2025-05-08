@@ -70,16 +70,14 @@ class MassBalanceGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains()
         return [
-            [("mass_balance_equation", subdomains)],
+            ("mass_balance_equation", subdomains),
         ]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         subdomains = model.mdg.subdomains()
-        return [
-            [model.pressure(subdomains)],
-        ]
+        return [model.pressure(subdomains)]
 
 
 class InterfaceFluxGroup(AbstractGroup):
@@ -88,13 +86,13 @@ class InterfaceFluxGroup(AbstractGroup):
 
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
-        return [[("interface_darcy_flux_equation", interfaces)]]
+        return [("interface_darcy_flux_equation", interfaces)]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         interfaces = model.mdg.interfaces()
-        return [[model.interface_darcy_flux(interfaces)]]
+        return [model.interface_darcy_flux(interfaces)]
 
 
 class MechanicsGroup(AbstractGroup):
@@ -103,8 +101,8 @@ class MechanicsGroup(AbstractGroup):
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
 
         return [
-            [("momentum_balance_equation", subdomains)],
-            [("interface_force_balance_equation", interfaces)],
+            ("momentum_balance_equation", subdomains),
+            ("interface_force_balance_equation", interfaces),
         ]
 
     def variable_groups(
@@ -113,8 +111,8 @@ class MechanicsGroup(AbstractGroup):
         subdomains = model.mdg.subdomains(dim=model.nd)
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
         return [
-            [model.displacement(subdomains)],
-            [model.interface_force_balance(interfaces)],
+            model.displacement(subdomains),
+            model.interface_force_balance(interfaces),
         ]
 
 
@@ -130,7 +128,7 @@ class ContactGroup(AbstractGroup):
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        return [[model.contact_traction(subdomains)]]
+        return [model.contact_traction(subdomains)]
 
 
 class DofManager:
