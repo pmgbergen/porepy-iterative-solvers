@@ -521,6 +521,12 @@ def mass_balance_factory():
 # def hm_factory():
 
 
+@dataclass
+class LinearSolverComponents:
+    dof_manager: DofManager
+    preconditioner: MultiPhysicsPreconditioner
+
+
 class IterativeSolverMixin:
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
@@ -528,18 +534,12 @@ class IterativeSolverMixin:
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
-        precond_factory: Callable[[], MultiPhysicsPreconditioner] = self.params[
-            "linear_solver"
-        ]["preconditioner_factory"]
         solver_options = self.params["linear_solver"].get("options", {})
-        if precond_factory is None:
-            raise ValueError("Preconditioner factory is not set")
-        precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
 
-        dof_manager = DofManager(self.equation_system, precond_list)
-        precond = MultiPhysicsPreconditioner(precond_list, dof_manager)
-
-        ksp_factory = PetscKSPScheme(preconditioner=precond, options=solver_options)
+        ksp_factory = PetscKSPScheme(
+            preconditioner=self._solver_components.preconditioner,
+            options=solver_options,
+        )
         try:
             solver = ksp_factory.make_solver(mat)
         except Exception as e:
@@ -564,8 +564,10 @@ class IterativeSolverMixin:
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
 
+        dof_manager = self._solver_components.dof_manager
+        # Get the linear system from the equation system.
+
         # TODO: Replace this with a different type of plugin
-        row_permutation = self._linear_solver_scheme_maker.row_indices()
         mat, rhs = self.linear_system
 
         # Apply the `contact_permutation`.
@@ -585,3 +587,23 @@ class IterativeSolverMixin:
         )
 
         self.bmat = bmat
+
+    def _initialize_linear_solver(self):
+        # Set up preconditioner.
+        precond_factory: Callable[[], MultiPhysicsPreconditioner] = self.params[
+            "linear_solver"
+        ]["preconditioner_factory"]
+        if precond_factory is None:
+            raise ValueError("Preconditioner factory is not set")
+        precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
+
+        ordering_list = [precond.group() for precond in precond_list]
+
+        dof_manager = DofManager(self.equation_system, ordering_list)
+        precond = MultiPhysicsPreconditioner(precond_list, dof_manager)
+
+        solver_components = LinearSolverComponents(
+            dof_manager=dof_manager,
+            preconditioner=precond,
+        )
+        self._solver_components = solver_components
