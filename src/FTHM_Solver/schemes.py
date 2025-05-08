@@ -172,7 +172,7 @@ class DofManager:
 
     def variable_groups(self, model):
         groups = [group.variable_groups(model) for group in self._orderings]
-        return get_variables_group_ids(groups)
+        return get_variables_group_ids(model, groups)
 
     def _identify_contact_group(self, model):
         # Identify the contact group in the equation groups
@@ -196,7 +196,9 @@ class DofManager:
         self._equation_groups = equation_groups_by_name
 
         # Convert to numbers (i.e., block ids).
-        equation_groups_by_number = get_equations_group_ids(equation_groups_by_name)
+        equation_groups_by_number = get_equations_group_ids(
+            model, equation_groups_by_name
+        )
 
         contact_group = self._identify_contact_group(model)
         # If there is no contact group, return the original equation groups.
