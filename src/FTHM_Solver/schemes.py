@@ -9,7 +9,7 @@ import porepy as pp
 from abc import ABC, abstractmethod
 
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import construct_is, PetscKSPScheme
+from .full_petsc_solver import construct_is, PetscKSPScheme, insert_petsc_options
 
 from . import hm_solver
 from .iterative_solver import (
@@ -555,7 +555,8 @@ class MultiPhysicsPreconditioner:
                 bmat,
             )
             complement_tag = tag + "_complement"
-
+            insert_petsc_options(tagged_options)
+            pc.setFromOptions()
             pc.setFieldSplitIS((tag, is_this), (complement_tag, is_complement))
 
             pc.setUp()
