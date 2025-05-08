@@ -646,7 +646,7 @@ class IterativeSolverMixin:
         x_loc = solver.solve(rhs_loc)
 
         info = solver.ksp.getConvergedReason()
-        if info != 0:
+        if info <= 0:
             raise RuntimeError(
                 f"Solver did not converge. Reason: {info}. "
                 "Check the solver options and the problem setup."
