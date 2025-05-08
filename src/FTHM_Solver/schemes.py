@@ -224,6 +224,18 @@ class DofManager:
         dofs = tmp_solver.eq_dofs
         return dofs
 
+    def var_dofs_by_blocks(self, model):
+        """Get the variable dofs for the model, in the form of a list of numbers,
+        one per variable-domain pair. If the contact group is present, it will be
+        reordered so that the normal and tangential equations for each fracture cell
+        form a digonal block.
+        """
+        # Temporary construct to get the correct contact equations groups. To be
+        # refactored.
+        tmp_solver = hm_solver.IterativeHMSolver()
+        dofs = tmp_solver.var_dofs
+        return dofs
+
     def eq_rows_permutation(self, model):
         """Get a permutation vector for the full linear system of equations. This is
         used to reorder the equations so that the contact equations for single fracture
@@ -234,9 +246,12 @@ class DofManager:
         See also eq_dofs_by_blocks, which is used to reorder contact equations within
         the equation block format.
         """
-        return hm_solver.make_reorder_contact(
-            model, self._identify_contact_group(model)
-        )
+        contact_group = self._identify_contact_group(model)
+        # If there is no contact group, return the original equation groups.
+        if contact_group == -1:
+            return np.arange(model.equation_system.num_dofs())
+
+        return hm_solver.make_reorder_contact(model, contact_group)
 
 
 class SinglePhysicsPreconditioner(ABC):
@@ -563,19 +578,17 @@ class IterativeSolverMixin:
         mat, rhs = self.linear_system
 
         # Apply the `contact_permutation`.
-        mat = mat[row_permutation]
-        rhs = rhs[row_permutation]
-
-        scheme_maker = self._linear_solver_scheme_maker
+        mat = mat[dof_manager.eq_rows_permutation(self)]
+        rhs = rhs[dof_manager.eq_rows_permutation(self)]
 
         bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
-            global_dofs_row=scheme_maker.eq_dofs,
-            global_dofs_col=scheme_maker.var_dofs,
-            groups_to_blocks_row=scheme_maker.equation_groups,
-            groups_to_blocks_col=scheme_maker.variable_groups,
-            group_names_row=self.group_row_names(),  # TODO: Move to the scheme
-            group_names_col=self.group_col_names(),
+            global_dofs_row=dof_manager.eq_dofs_by_blocks(self),
+            global_dofs_col=dof_manager.var_dofs_by_blocks(self),
+            groups_to_blocks_row=dof_manager.equation_groups(self),
+            groups_to_blocks_col=dof_manager.variable_groups(self),
+            # group_names_row=self.group_row_names(),
+            # group_names_col=self.group_col_names(),
         )
 
         self.bmat = bmat
