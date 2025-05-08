@@ -630,7 +630,10 @@ class IterativeSolverMixin:
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
-        solver_options = self.params["linear_solver"].get("options", {})
+        # By default, print the residual information to screen (ksp_monitor=None).
+        solver_options = self.params["linear_solver"].get(
+            "options", {"ksp_monitor": None}
+        )
 
         ksp_factory = PetscKSPScheme(
             preconditioner=self._solver_components.preconditioner,
