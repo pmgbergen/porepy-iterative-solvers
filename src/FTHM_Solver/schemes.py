@@ -544,6 +544,8 @@ class MultiPhysicsPreconditioner:
         user_options = user_options if user_options is not None else {}
         options = {}
 
+        prefix = ""
+
         for counter, single_physics_precond in enumerate(self._single_physics_precond):
             # Define a scheme for the group
             has_complement = counter < len(self._single_physics_precond) - 1
@@ -554,8 +556,7 @@ class MultiPhysicsPreconditioner:
             )
 
             # Get the tag for this group, and prepend it to the options.
-            tag = single_physics_precond.tag
-            tagged_options = {f"{tag}_{k}": v for k, v in loc_options.items()}
+            tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
 
             if not has_complement:
                 # If there is no complement, we can use the options directly.
@@ -568,6 +569,7 @@ class MultiPhysicsPreconditioner:
                 self._single_physics_precond[counter + 1 :],
                 bmat,
             )
+            tag = single_physics_precond.tag
             complement_tag = tag + "_complement"
             insert_petsc_options(tagged_options)
             pc.setFromOptions()
@@ -603,6 +605,7 @@ class MultiPhysicsPreconditioner:
             # Note that, due to the tagging system, this may override some options that were
             # set above.
             pc = pc_complement
+            prefix = f"{prefix}fieldsplit_{complement_tag}_"
 
         raise ValueError("Should have reached an empty complement")
 
