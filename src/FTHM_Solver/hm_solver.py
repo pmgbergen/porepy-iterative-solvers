@@ -393,68 +393,6 @@ class IterativeHMSolver(IterativeLinearSolver):
         )
 
 
-def make_reorder_contact(model: IterativeHMSolver, contact_group: int) -> np.ndarray:
-    """Permutate the contact mechanics equations to a cell-wise block structure.
-
-     The PorePy arrangement is:
-
-        [C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k],
-
-    where `C_n` is a normal component, `C_y` and `C_z` are two tangential
-    components. The superscript corresponds to cell index. We permute it to
-
-        `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
-
-    Parameters:
-        model: The PorePy model.
-        contact_group: The group index of the contact mechanics equations.
-
-    Raises:
-        ValueError: If the model dimension is not 2 or 3.
-
-    Returns:
-
-
-    """
-    reorder = np.arange(model.equation_system.num_dofs())
-
-    # Short cut if no contact mechanics, hence no reordering.
-    if len(model.equation_groups[contact_group]) == 0:
-        return reorder
-
-    # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
-    dofs_contact = np.concatenate(
-        [model.eq_dofs[i] for i in model.equation_groups[contact_group]]
-    )
-
-    # The start and end indices of all contact mechanics equations.
-    dofs_contact_start = dofs_contact[0]
-    dofs_contact_end = dofs_contact[-1] + 1
-
-    # The number of cells in the contact mechanics equations.
-    num_contact_cells = len(dofs_contact) // model.nd
-
-    # 2d and 3d have respectively 1 and 2 tangential components, hence the branch.
-    if model.nd == 2:
-        # Rearrange the dofs into cell-wise blocks.
-        dofs_contact_0 = dofs_contact[:num_contact_cells]
-        dofs_contact_1 = dofs_contact[num_contact_cells:]
-        reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
-            [dofs_contact_0, dofs_contact_1]
-        ).ravel("F")
-    elif model.nd == 3:
-        # Do the same as in 2d, also for the second tangential component.
-        dofs_contact_0 = dofs_contact[:num_contact_cells]
-        dofs_contact_1 = dofs_contact[num_contact_cells::2]
-        dofs_contact_2 = dofs_contact[num_contact_cells + 1 :: 2]
-        reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
-            [dofs_contact_0, dofs_contact_1, dofs_contact_2]
-        ).ravel("F")
-    else:
-        raise ValueError("Model dimension must be 2 or 3.")
-    return reorder
-
-
 def build_mechanics_near_null_space(
     model: IterativeHMSolver, include_sd=True, include_intf=True
 ):
