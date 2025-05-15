@@ -303,6 +303,53 @@ class DofManager:
 
         return eq_dofs_corrected
 
+    def _correct_contact_equations_groups(
+        self, equation_groups: list[list[int]], contact_group: int
+    ) -> list[list[int]]:
+        """The block ordering from PorePy assigns different block indices to the normal
+        and tangential components of the contact equations. This method corrects this
+        indexing by assigning a single block index for each fracture.
+
+        The method further adjusts the indices of the other equation groups to account
+        for the reduced number of blocks.
+
+        Parameters:
+            equation_groups: The uncorrected equation groups.
+            contact_group: The group index of the contact mechanics equations.
+
+        Returns:
+            The corrected equation groups.
+
+        See also:
+            _correct_contact_eq_dofs for rearrane of the individual dofs related to
+                contact (as opposed to the equation blocks handled here).
+
+        """
+        if len(equation_groups[contact_group]) == 0:
+            return equation_groups
+
+        # Create a copy of the equation groups to avoid modifying the original.
+        eq_groups_corrected = [x.copy() for x in equation_groups]
+
+        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        # Index of the first block after the contact group. This and all subsequent
+        # indexes will be reduced by the number of fractures (e.g., the number of
+        # block equations that have been removed).
+        block_after_contact = max(equation_groups[contact_group]) + 1
+
+        # Change the number of blocks in the contact group to the number of fractures,
+        # since we have merged the normal and tangential components.
+        eq_groups_corrected[contact_group] = equation_groups[contact_group][:num_fracs]
+
+        # For all other groups with block index after the contact group, reduce the
+        # block index by the number of fractures.
+        for blocks in eq_groups_corrected:
+            for i in range(len(blocks)):
+                if blocks[i] >= block_after_contact:
+                    blocks[i] -= num_fracs
+
+        return eq_groups_corrected
+
     def var_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
         (how they are arranged in the model).
