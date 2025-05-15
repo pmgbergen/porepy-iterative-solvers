@@ -120,8 +120,8 @@ class ContactGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
         return [
-            [("normal_fracture_deformation_equation", subdomains)],
-            [("tangential_fracture_deformation_equation", subdomains)],
+            ("normal_fracture_deformation_equation", subdomains),
+            ("tangential_fracture_deformation_equation", subdomains),
         ]
 
     def variable_groups(
@@ -178,7 +178,7 @@ class DofManager:
             if len(group.equation_groups(model)) == 0:
                 continue
             for block in group.equation_groups(model):
-                if block[0][0] == "normal_fracture_deformation_equation":
+                if block[0] == "normal_fracture_deformation_equation":
                     return i
         return -1
 
