@@ -187,29 +187,6 @@ class IterativeHMSolver(IterativeLinearSolver):
             unpermuted_eq_dofs, contact_group=self.CONTACT_GROUP
         )
 
-    def Qright(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
-        """Assemble the right linear transformation."""
-        J = self.bmat
-        # Sorted according to groups. If not done, the matrix can be in porepy order,
-        # which does not guarantee that diagonal groups are truly on diagonals.
-        Qright = J.empty_container()[:]
-
-        if contact_group not in J.active_groups[0]:
-            Qright.mat = csr_ones(Qright.shape[0])
-            return Qright
-
-        J55 = J[u_intf_group, u_intf_group].mat
-
-        J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
-
-        Qright.mat = csr_ones(Qright.shape[0])
-
-        J54 = J[u_intf_group, contact_group].mat
-
-        tmp = -J55_inv @ J54
-        Qright[u_intf_group, contact_group] = tmp
-        return Qright
-
     def Qleft(self, contact_group: int, u_intf_group: int) -> BlockMatrixStorage:
         """Assemble the left linear transformation."""
         J = self.bmat

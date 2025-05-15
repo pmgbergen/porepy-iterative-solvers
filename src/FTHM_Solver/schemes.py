@@ -16,6 +16,8 @@ from .iterative_solver import (
     get_equations_group_ids,
     get_variables_group_ids,
 )
+from .mat_utils import csr_ones, inv_block_diag
+
 from petsc4py import PETSc
 
 
@@ -738,6 +740,29 @@ def mass_balance_factory():
 
 
 # def hm_factory():
+
+
+def contact_transform(J, row_group: int, col_group: int, nd: int):
+    """Assemble the right linear transformation."""
+    # Sorted according to groups. If not done, the matrix can be in porepy order,
+    # which does not guarantee that diagonal groups are truly on diagonals.
+    Qright = J.empty_container()[:]
+
+    if row_group not in J.active_groups[0]:
+        Qright.mat = csr_ones(Qright.shape[0])
+        return Qright
+
+    J55 = J[col_group, col_group].mat
+
+    J55_inv = inv_block_diag(J55, nd=nd, lump=False)
+
+    Qright.mat = csr_ones(Qright.shape[0])
+
+    J54 = J[col_group, row_group].mat
+
+    tmp = -J55_inv @ J54
+    Qright[col_group, row_group] = tmp
+    return Qright
 
 
 @dataclass
