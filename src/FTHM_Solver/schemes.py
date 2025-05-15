@@ -172,7 +172,7 @@ class DofManager:
         groups = [group.variable_groups(model) for group in self._orderings]
         return get_variables_group_ids(model, groups)
 
-    def _identify_contact_group(self, model):
+    def identify_contact_group(self, model):
         # Identify the contact group in the equation groups
         for i, group in enumerate(self._orderings):
             if len(group.equation_groups(model)) == 0:
@@ -202,7 +202,7 @@ class DofManager:
             model, equation_groups_by_name
         )
 
-        contact_group = self._identify_contact_group(model)
+        contact_group = self.identify_contact_group(model)
         # If there is no contact group, return the original equation groups.
         if contact_group == -1:
             return equation_groups_by_number
@@ -230,7 +230,7 @@ class DofManager:
                 local_offset += len(dofs)
             offset += local_offset
 
-        contact_group = self._identify_contact_group(model)
+        contact_group = self.identify_contact_group(model)
         if contact_group > -1:
             # If there is no contact group, return the original equation dofs.
             return self._correct_contact_eq_dofs(eq_dofs, contact_group)
@@ -315,7 +315,7 @@ class DofManager:
         See also eq_dofs_by_blocks, which is used to reorder contact equations within
         the equation block format.
         """
-        contact_group = self._identify_contact_group(model)
+        contact_group = self.identify_contact_group(model)
         # If there is no contact group, return the original equation groups.
         if contact_group == -1:
             return np.arange(model.equation_system.num_dofs())
