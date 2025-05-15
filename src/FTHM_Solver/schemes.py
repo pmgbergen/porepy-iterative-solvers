@@ -112,7 +112,7 @@ class MechanicsGroup(AbstractGroup):
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
         return [
             model.displacement(subdomains),
-            model.interface_force_balance(interfaces),
+            model.interface_displacement(interfaces),
         ]
 
 
