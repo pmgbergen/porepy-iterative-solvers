@@ -182,6 +182,19 @@ class DofManager:
                     return i
         return -1
 
+    def identify_u_intf_group(self, model):
+        # Identify the interface group in the equation groups
+        i = 0
+        for group in self._orderings:
+            if len(group.variable_groups(model)) == 0:
+                continue
+            for var in group.variable_groups(model):
+                if var.name == model.interface_displacement_variable:
+                    return i
+                else:
+                    i += 1
+        return -1
+
     def equation_groups(self, model):
         """Get the equation groups for the model, in the form of a list of
         a list of numbers. If the contact group is present, it will be
