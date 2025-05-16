@@ -71,15 +71,13 @@ class AbstractGroup(ABC):
 class MassBalanceGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains()
-        return [
-            ("mass_balance_equation", subdomains),
-        ]
+        return [[("mass_balance_equation", subdomains)]]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         subdomains = model.mdg.subdomains()
-        return [model.pressure(subdomains)]
+        return [[model.pressure(subdomains)]]
 
 
 class InterfaceFluxGroup(AbstractGroup):
@@ -88,13 +86,13 @@ class InterfaceFluxGroup(AbstractGroup):
 
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
-        return [("interface_darcy_flux_equation", interfaces)]
+        return [[("interface_darcy_flux_equation", interfaces)]]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         interfaces = model.mdg.interfaces()
-        return [model.interface_darcy_flux(interfaces)]
+        return [[model.interface_darcy_flux(interfaces)]]
 
 
 class MechanicsGroup(AbstractGroup):
@@ -102,9 +100,12 @@ class MechanicsGroup(AbstractGroup):
         subdomains = model.mdg.subdomains(dim=model.nd)
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
 
+        # Define two groups of equations, one for momentum balance in the matrix and one
+        # for force balance on the highest-dimensional interfaces. The mechanics
+        # preconditioner will treat these groups jointly.
         return [
-            ("momentum_balance_equation", subdomains),
-            ("interface_force_balance_equation", interfaces),
+            [("momentum_balance_equation", subdomains)],
+            [("interface_force_balance_equation", interfaces)],
         ]
 
     def variable_groups(
@@ -112,25 +113,34 @@ class MechanicsGroup(AbstractGroup):
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         subdomains = model.mdg.subdomains(dim=model.nd)
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
+
+        # Define two groups of variables, one for the displacement in the matrix and one
+        # for the interface displacement.
         return [
-            model.displacement(subdomains),
-            model.interface_displacement(interfaces),
+            [model.displacement(subdomains)],
+            [model.interface_displacement(interfaces)],
         ]
 
 
 class ContactGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
+        # Define a single group of equations to be solved together: The normal and
+        # tangential deformation equations for the contact mechanics.
         return [
-            ("normal_fracture_deformation_equation", subdomains),
-            ("tangential_fracture_deformation_equation", subdomains),
+            [
+                ("normal_fracture_deformation_equation", subdomains),
+                ("tangential_fracture_deformation_equation", subdomains),
+            ]
         ]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        return [model.contact_traction(subdomains)]
+        # There is a single group of variables for the contact mechanics, which is the
+        # contact traction.
+        return [[model.contact_traction(subdomains)]]
 
 
 class DofManager:
@@ -151,7 +161,7 @@ class DofManager:
         self._group_to_block_ids = {}
 
     def _group_id(self, group: AbstractGroup) -> int:
-        return self._equation_groups[group.__class__]
+        return self._solver_groups[group.__class__]
 
     def petsc_is(
         self,
@@ -163,16 +173,21 @@ class DofManager:
         # the composer.
 
         # Indices of the block ids
-        current_id = [self._group_id(current_group.group())]
-        other_id = [self._group_id(group.group()) for group in other_groups]
+        current_id = self._group_id(current_group.group())
+        other_id = []
+        for group in other_groups:
+            # Get the block id for the group.
+            other_id += self._group_id(group.group())
 
         current_is = construct_is(bmat, current_id)
         other_is = construct_is(bmat, other_id)
         return current_is, other_is
 
     def variable_groups(self, model):
-        groups = [group.variable_groups(model) for group in self._orderings]
-        return get_variables_group_ids(model, groups)
+        var_groups = []
+        for group in self._orderings:
+            var_groups += group.variable_groups(model)
+        return get_variables_group_ids(model, var_groups)
 
     def identify_contact_group(self, model):
         # Identify the contact group in the equation groups
@@ -180,7 +195,7 @@ class DofManager:
             if len(group.equation_groups(model)) == 0:
                 continue
             for block in group.equation_groups(model):
-                if block[0] == "normal_fracture_deformation_equation":
+                if block[0][0] == "normal_fracture_deformation_equation":
                     return i
         return -1
 
@@ -191,7 +206,7 @@ class DofManager:
             if len(group.variable_groups(model)) == 0:
                 continue
             for var in group.variable_groups(model):
-                if var.name == model.interface_displacement_variable:
+                if var[0].name == model.interface_displacement_variable:
                     return i
                 else:
                     i += 1
@@ -203,14 +218,26 @@ class DofManager:
         reordered so that the normal and tangential equations are together.
         """
         # Get the equation groups for the model (in name-domain format)
-        equation_groups_by_name = [
-            group.equation_groups(model) for group in self._orderings
-        ]
+
+        # Mapping from the ordering (which represents the block solver/preconditioner)
+        # to the combination of equation groups that the preconditioner will handle
+        # jointly.
+        solver_groups = {}
+
+        equation_groups_by_name = []
+        counter = 0
+        for group in self._orderings:
+            groups_loc = group.equation_groups(model)
+            equation_groups_by_name += groups_loc
+            solver_groups[group.__class__] = [
+                i for i in range(counter, counter + len(groups_loc))
+            ]
+
+            counter += len(groups_loc)
+
         # Use the class name of the group as the key for the dictionary..
         # This is a bit of a hack, but it works for now.
-        self._equation_groups = {
-            group.__class__: i for i, group in enumerate(self._orderings)
-        }
+        self._solver_groups = solver_groups
 
         # Convert to numbers (i.e., block ids).
         equation_groups_by_number = get_equations_group_ids(
