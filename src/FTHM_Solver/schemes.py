@@ -819,6 +819,7 @@ def contact_transform(J, row_group: int, col_group: int, nd: int):
 class LinearSolverComponents:
     dof_manager: DofManager
     preconditioner: MultiPhysicsPreconditioner
+    ksp_factory: PetscKSPScheme
 
 
 class IterativeSolverMixin:
@@ -832,10 +833,8 @@ class IterativeSolverMixin:
         solver_options = self.params["linear_solver"].get(
             "options", {"ksp_monitor": None}
         )
-
-        ksp_factory = PetscKSPScheme(
-            preconditioner=self._solver_components.preconditioner,
-        )
+        ksp_factory = self._solver_components.ksp_factory
+        solver = ksp_factory.make_solver(self.bmat, solver_options)
         try:
             solver = ksp_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
@@ -924,5 +923,6 @@ class IterativeSolverMixin:
         solver_components = LinearSolverComponents(
             dof_manager=dof_manager,
             preconditioner=precond,
+            ksp_factory=solver_factory,
         )
         self._solver_components = solver_components
