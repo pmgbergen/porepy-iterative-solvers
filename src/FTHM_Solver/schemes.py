@@ -894,7 +894,32 @@ class IterativeSolverMixin:
         ordering_list = [precond.group() for precond in precond_list]
 
         dof_manager = DofManager(self.equation_system, ordering_list)
-        precond = MultiPhysicsPreconditioner(precond_list, dof_manager)
+        precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self.nd)
+
+        contact_ind = dof_manager.identify_contact_group(self)
+
+        ksp_factory = PetscKSPScheme(preconditioner=precond)
+        if contact_ind > -1:
+            # If there is a contact group, we need to use a linear solver that takes
+            # care of potential singularities in the contact block.
+            u_intf_ind = dof_manager.identify_u_intf_group(self)
+
+            block_transform = [
+                lambda bmat: contact_transform(bmat, contact_ind, u_intf_ind, self.nd)
+            ]
+
+            solver_factory = LinearTransformedScheme(
+                nd=self.nd,
+                contact_group=contact_ind,
+                u_intf_group=u_intf_ind,
+                # preconditioner=precond,
+                inner=ksp_factory,
+                right_transformations=block_transform,
+            )
+
+        else:
+            # A standard KSP solver will do.
+            solver_factory = ksp_factory
 
         solver_components = LinearSolverComponents(
             dof_manager=dof_manager,
