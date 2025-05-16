@@ -249,11 +249,8 @@ class DofManager:
         if contact_group == -1:
             return equation_groups_by_number
 
-        # Temporary construct to get the correct contact equations groups. To be
-        # refactored.
-        tmp_solver = hm_solver.IterativeHMSolver()
-        reordered_groups = tmp_solver._correct_contact_equations_groups(
-            equation_groups_by_number, contact_group
+        reordered_groups = self._correct_contact_equations_groups(
+            model, equation_groups_by_number, contact_group
         )
         return reordered_groups
 
@@ -275,12 +272,12 @@ class DofManager:
         contact_group = self.identify_contact_group(model)
         if contact_group > -1:
             # If there is no contact group, return the original equation dofs.
-            return self._correct_contact_eq_dofs(eq_dofs, contact_group)
+            return self._correct_contact_eq_dofs(model, eq_dofs, contact_group)
 
         return eq_dofs
 
     def _correct_contact_eq_dofs(
-        self, unpermuted_eq_dofs: list[np.ndarray], contact_group: int
+        self, model, unpermuted_eq_dofs: list[np.ndarray], contact_group: int
     ) -> list[np.ndarray | None]:
         """Rearrange the unknowns (row indices) so that the contact equations are in a
         cell-wise block structure.
@@ -298,15 +295,15 @@ class DofManager:
 
         """
         # Short cut if no contact mechanics, hence no reordering.
-        if len(self.equation_groups[contact_group]) == 0:
+        if len(self.equation_groups(model)[contact_group]) == 0:
             # Ignore mypy error, list[np.ndarray] is a subset of list[np.ndarray |
             # None].
             return unpermuted_eq_dofs  # type: ignore[return-value]
 
         # We assume that normal equations go first. TODO: Can we make this more robust,
         # or else put an assert here.
-        normal_blocks = self.equation_groups[contact_group]
-        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        normal_blocks = self.equation_groups(model)[contact_group]
+        num_fracs = len(model.mdg.subdomains(dim=model.nd - 1))
 
         # EK: I believe this is an assumption that the tangential equations are right
         # after the normal equations.
@@ -325,15 +322,18 @@ class DofManager:
         offset = unpermuted_eq_dofs[normal_blocks[0]][0]
         for nb in normal_blocks:
             # Create indices for the normal and tangential components of the contact.
-            # There will be self.nd equations for each block.
-            inds = offset + np.arange(unpermuted_eq_dofs[nb].size * self.nd)
+            # There will be model.nd equations for each block.
+            inds = offset + np.arange(unpermuted_eq_dofs[nb].size * model.nd)
             offset = inds[-1] + 1
             eq_dofs_corrected[nb] = np.array(inds)
 
         return eq_dofs_corrected
 
     def _correct_contact_equations_groups(
-        self, equation_groups: list[list[int]], contact_group: int
+        self,
+        model: pp.PorePyModel,
+        equation_groups: list[list[int]],
+        contact_group: int,
     ) -> list[list[int]]:
         """The block ordering from PorePy assigns different block indices to the normal
         and tangential components of the contact equations. This method corrects this
@@ -360,7 +360,7 @@ class DofManager:
         # Create a copy of the equation groups to avoid modifying the original.
         eq_groups_corrected = [x.copy() for x in equation_groups]
 
-        num_fracs = len(self.mdg.subdomains(dim=self.nd - 1))
+        num_fracs = len(model.mdg.subdomains(dim=model.nd - 1))
         # Index of the first block after the contact group. This and all subsequent
         # indexes will be reduced by the number of fractures (e.g., the number of
         # block equations that have been removed).
@@ -439,12 +439,15 @@ class DofManager:
         reorder = np.arange(model.equation_system.num_dofs())
 
         # Short cut if no contact mechanics, hence no reordering.
-        if len(model.equation_groups[contact_group]) == 0:
+        if len(self.equation_groups(model)[contact_group]) == 0:
             return reorder
 
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
-            [model.eq_dofs[i] for i in model.equation_groups[contact_group]]
+            [
+                self.eq_dofs_by_blocks(model)[i]
+                for i in self.equation_groups(model)[contact_group]
+            ]
         )
 
         # The start and end indices of all contact mechanics equations.
