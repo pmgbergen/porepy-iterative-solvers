@@ -733,6 +733,10 @@ class MultiPhysicsPreconditioner:
             if not has_complement:
                 # If there is no complement, we can use the options directly.
                 options |= tagged_options
+                insert_petsc_options(options)
+                pc.setFromOptions()
+                pc.setUp()
+
                 return options
 
             block_size = 1 if single_physics_precond.unit_block_size else self._nd
