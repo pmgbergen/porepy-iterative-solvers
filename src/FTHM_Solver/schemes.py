@@ -527,6 +527,13 @@ class SinglePhysicsPreconditioner(ABC):
         """
         return None
 
+    @property
+    def unit_block_size(self) -> bool:
+        """
+        Return the number of dimensions for the preconditioner.
+        """
+        return True
+
     @abstractmethod
     def _default_options(self) -> dict:
         """
@@ -629,7 +636,11 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def group(self):
         return MechanicsGroup()
 
-    def _default_options(self, has_complement: bool) -> dict:
+    @property
+    def unit_block_size(self) -> bool:
+        return False
+
+    def _default_options(self) -> dict:
         local_opts = {
             "pc_type": "hypre",
             "ksp_type": "preonly",
@@ -648,6 +659,10 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
     @property
     def tag(self) -> str:
         return "contact"
+
+    @property
+    def unit_block_size(self) -> bool:
+        return False
 
     def group(self):
         return ContactGroup()
@@ -671,6 +686,7 @@ class MultiPhysicsPreconditioner:
         self,
         components: list[SinglePhysicsPreconditioner],
         dof_manager: DofManager,
+        nd: int,
         options: dict | None = None,
     ):
         """
@@ -680,6 +696,7 @@ class MultiPhysicsPreconditioner:
         """
         self._single_physics_precond = components
         self._dof_manager = dof_manager
+        self._nd = nd
         self._options = options if options is not None else {}
 
     def configure(
@@ -718,12 +735,15 @@ class MultiPhysicsPreconditioner:
                 options |= tagged_options
                 return options
 
+            block_size = 1 if single_physics_precond.unit_block_size else self._nd
+
             # Get the IS for the group, but only if complement is not None.
             is_this, is_complement = self._dof_manager.petsc_is(
                 single_physics_precond,
                 self._single_physics_precond[counter + 1 :],
                 bmat,
             )
+            is_complement.setBlockSize(block_size)
             tag = single_physics_precond.tag
             complement_tag = tag + "_complement"
             insert_petsc_options(tagged_options)
@@ -747,7 +767,7 @@ class MultiPhysicsPreconditioner:
                 null_space_vectors = []
                 for b in self.near_null_space:
                     null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
-                    null_space_vec_petsc.setSizes(b.shape[0], self.block_size)
+                    null_space_vec_petsc.setSizes(b.shape[0], block_size)
                     null_space_vec_petsc.setUp()
                     null_space_vec_petsc.setArray(b)
                     null_space_vectors.append(null_space_vec_petsc)
