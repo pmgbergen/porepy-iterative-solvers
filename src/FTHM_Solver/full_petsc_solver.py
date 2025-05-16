@@ -685,14 +685,11 @@ class LinearTransformedScheme:
     u_intf_group: int
     """The group that is the interface group."""
 
-    left_transformations: Optional[bool] = False
+    inner: PetscKSPScheme = None
+    """The actual solver, to be applied after the transformations."""
+
+    left_transformations: Optional[bool] = None
     right_transformations: Optional[bool] = True
-    # This is not optional.
-    inner: Optional[PetscKSPScheme] = None
-    """The actual solver, to be applied after the transformations.
-    
-    TODO: Should the typing allow for a more general solver?
-    """
 
     def Qright(
         self, J: FTHM_Solver.BlockMatrixStorage
@@ -746,10 +743,10 @@ class LinearTransformedScheme:
         return self.inner.get_groups()
 
     def make_solver(
-        self, mat_orig: BlockMatrixStorage
+        self, mat_orig: BlockMatrixStorage, options: dict | None = None
     ) -> PetscKrylovSolver | LinearSolverWithTransformations:
-        groups = self.get_groups()
-        bmat = mat_orig[groups]
+        # groups = self.get_groups()
+        bmat = mat_orig  # [groups]
 
         if self.left_transformations is None or len(self.left_transformations) == 0:
             Qleft = None
@@ -764,10 +761,10 @@ class LinearTransformedScheme:
         if self.right_transformations is None or len(self.right_transformations) == 0:
             Qright = None
         else:
-            Qright = self.Qright(bmat)
-            Qright = self.right_transformations[0](bmat)[groups]
+            # Qright = self.Qright(bmat)
+            Qright = self.right_transformations[0](bmat)  # [groups]
             for tmp in self.right_transformations[1:]:
-                tmp = tmp(bmat)[groups]
+                tmp = tmp(bmat)  # [groups]
                 Qright.mat @= tmp.mat
 
         bmat_Q = bmat
@@ -780,7 +777,7 @@ class LinearTransformedScheme:
             raise ValueError("No inner solver provided.")
 
         # Set up the inner solver.
-        solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q)
+        solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q, options=options)
         self.options = self.inner.options
 
         if Qleft is not None or Qright is not None:
