@@ -521,18 +521,17 @@ class SinglePhysicsPreconditioner(ABC):
         return False
 
     @property
-    def near_null_space(self) -> np.ndarray | None:
-        """
-        Return the near null space for the preconditioner.
-        """
-        return None
-
-    @property
     def unit_block_size(self) -> bool:
         """
         Return the number of dimensions for the preconditioner.
         """
         return True
+
+    def near_null_space(self, model: pp.PorePyModel) -> np.ndarray | None:
+        """
+        Return the near null space for the preconditioner.
+        """
+        return None
 
     @abstractmethod
     def _default_options(self) -> dict:
@@ -650,6 +649,9 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
             local_opts["pc_fieldsplit_schur_fact"] = "lower"
         return local_opts
 
+    def near_null_space(self, model):
+        return hm_solver.build_mechanics_near_null_space(model)
+
 
 class ContactPreconditioner(SinglePhysicsPreconditioner):
     @property
@@ -686,7 +688,7 @@ class MultiPhysicsPreconditioner:
         self,
         components: list[SinglePhysicsPreconditioner],
         dof_manager: DofManager,
-        nd: int,
+        model: pp.PorePyModel,
         options: dict | None = None,
     ):
         """
@@ -696,7 +698,8 @@ class MultiPhysicsPreconditioner:
         """
         self._single_physics_precond = components
         self._dof_manager = dof_manager
-        self._nd = nd
+        self._nd = model.nd
+        self._model = model
         self._options = options if options is not None else {}
 
     def configure(
@@ -767,9 +770,9 @@ class MultiPhysicsPreconditioner:
                 # TODO: Is it correct to use the same matrix for both arguments?
                 ksp_complement.setOperators(pmat, pmat)
 
-            if single_physics_precond.near_null_space is not None:
+            if single_physics_precond.near_null_space(self) is not None:
                 null_space_vectors = []
-                for b in self.near_null_space:
+                for b in single_physics_precond.near_null_space:
                     null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
                     null_space_vec_petsc.setSizes(b.shape[0], block_size)
                     null_space_vec_petsc.setUp()
@@ -901,7 +904,7 @@ class IterativeSolverMixin:
         ordering_list = [precond.group() for precond in precond_list]
 
         dof_manager = DofManager(self.equation_system, ordering_list)
-        precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self.nd)
+        precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
 
         contact_ind = dof_manager.identify_contact_group(self)
 
