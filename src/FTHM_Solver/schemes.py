@@ -789,6 +789,10 @@ def mass_balance_factory():
     return [InterfaceDarcyFluxPreconditioner(), MassBalancePreconditioner()]
 
 
+def momentum_balance_factory():
+    return [ContactPreconditioner(), MechanicsPreconditioner()]
+
+
 # def hm_factory():
 
 
