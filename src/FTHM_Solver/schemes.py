@@ -642,11 +642,14 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def _default_options(self) -> dict:
         local_opts = {
             "pc_type": "hypre",
-            "ksp_type": "preonly",
+            "hmg_inner_pc_type": "gamg",
+            "hmg_inner_pc_gamg_threshold": 0.02,
+            # "hmg_inner_pc_hypre_type": "boomeramg",
+            # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+            "mg_levels_ksp_type": "richardson",
+            "mg_levels_ksp_max_it": 2,
+            "mg_levels_pc_type": "ilu",
         }
-        if has_complement:
-            local_opts["pc_fieldsplit_schur_precondition"] = "selfp"
-            local_opts["pc_fieldsplit_schur_fact"] = "lower"
         return local_opts
 
     def near_null_space(self, model):
@@ -666,15 +669,20 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
     def unit_block_size(self) -> bool:
         return False
 
-    def group(self):
-        return ContactGroup()
+    def _default_fieldsplit_options(self):
+        opts = super()._default_fieldsplit_options()
+        opts.update(
+            {
+                f"fieldsplit_{self.complement_tag}_mat_schur_complement_ainv_type": "blockdiag"
+            }
+        )
+        return opts
 
-    def _default_options(self, has_complement: bool) -> dict:
-        if not has_complement:
-            raise ValueError("The contact preconditioner requires a complement.")
+    def _default_options(self) -> dict:
         local_opts = {
-            "pc_type": "hypre",
-            "ksp_type": "preonly",
+            "pc_type": "pbjacobi",
+            # TODO: Not sure this will come through in the right way
+            # "mat_schur_complement_ainv_type": "blockdiag",
         }
         return local_opts
 
