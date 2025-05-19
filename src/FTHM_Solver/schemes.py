@@ -116,6 +116,62 @@ class MassBalanceGroup(AbstractGroup):
         return [model.pressure_variable]
 
 
+class MassBalanceDimSplitGroup(AbstractGroup):
+    """Group for the mass balance equation, with matrix, fractures and intersections
+    split into different groups. This is needed for fixed-stress type preconditioners,
+    where the stabilization term differs according to the dimension of the subdomains.
+    """
+
+    def subdomains(self, model: pp.PorePyModel):
+        matrix_subdomains = model.mdg.subdomains(dim=model.nd)
+        fracture_subdomains = model.mdg.subdomains(dim=model.nd - 1)
+        intersection_subdomains = [
+            sd for sd in model.mdg.subdomains() if sd.dim < model.nd - 1
+        ]
+        return matrix_subdomains, fracture_subdomains, intersection_subdomains
+
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
+            self.subdomains(model)
+        )
+        return [
+            [(EquationNames.MASS_BALANCE_MATRIX.value, matrix_subdomains)],
+            [(EquationNames.MASS_BALANCE_FRACTURES.value, fracture_subdomains)],
+            [
+                (
+                    EquationNames.MASS_BALANCE_INTERSECTIONS.value,
+                    intersection_subdomains,
+                )
+            ],
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
+            self.subdomains(model)
+        )
+        return [
+            [model.pressure(matrix_subdomains)],
+            [model.pressure(fracture_subdomains)],
+            [model.pressure(intersection_subdomains)],
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return [
+            EquationNames.MASS_BALANCE_MATRIX.value,
+            EquationNames.MASS_BALANCE_FRACTURES.value,
+            EquationNames.MASS_BALANCE_INTERSECTIONS.value,
+        ]
+
+    def variable_names(self, model) -> list[str]:
+        return [
+            model.pressure_variable + "_matrix",
+            model.pressure_variable + "_fractures",
+            model.pressure_variable + "_intersections",
+        ]
+
+
 class InterfaceFluxGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
