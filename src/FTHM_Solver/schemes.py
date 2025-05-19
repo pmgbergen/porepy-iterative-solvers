@@ -669,6 +669,9 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
     def unit_block_size(self) -> bool:
         return False
 
+    def group(self):
+        return ContactGroup()
+
     def _default_fieldsplit_options(self):
         opts = super()._default_fieldsplit_options()
         opts.update(
