@@ -761,7 +761,7 @@ class MultiPhysicsPreconditioner:
                 self._single_physics_precond[counter + 1 :],
                 bmat,
             )
-            is_complement.setBlockSize(block_size)
+            is_this.setBlockSize(block_size)
             tag = single_physics_precond.tag
             complement_tag = tag + "_complement"
             insert_petsc_options(tagged_options)
