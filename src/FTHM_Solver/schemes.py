@@ -901,7 +901,8 @@ class IterativeSolverMixin:
             # group_names_col=self.group_col_names(),
         )
 
-        self.bmat = bmat
+        # TODO: Figure out if the [:] is really needed.
+        self.bmat = bmat[:]
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
