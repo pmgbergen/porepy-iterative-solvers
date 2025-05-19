@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 import numpy as np
 from typing import Callable
 from dataclasses import dataclass
@@ -50,6 +51,21 @@ essentially bearers of options for the solver.
 """
 
 
+class EquationNames(Enum):
+    """Enum for the names of the equations in the model."""
+
+    MASS_BALANCE = "mass_balance_equation"
+    MASS_BALANCE_MATRIX = "mass_balance_equation"
+    MASS_BALANCE_FRACTURES = "mass_balance_equation"
+    MASS_BALANCE_INTERSECTIONS = "mass_balance_equation"
+    INTERFACE_FLUX = "interface_darcy_flux_equation"
+    MECHANICS = "momentum_balance_equation"
+    INTERFACE_FORCE_BALANCE = "interface_force_balance_equation"
+    CONTACT = "contact_mechanics_equation"
+    CONTACT_NORMAL = "normal_fracture_deformation_equation"
+    CONTACT_TANGENTIAL = "tangential_fracture_deformation_equation"
+
+
 class AbstractGroup(ABC):
     """
     Abstract class for defining a group of equations and variables. This serves two
@@ -85,7 +101,7 @@ class AbstractGroup(ABC):
 class MassBalanceGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains()
-        return [[("mass_balance_equation", subdomains)]]
+        return [[(EquationNames.MASS_BALANCE.value, subdomains)]]
 
     def variable_groups(
         self, model: pp.PorePyModel
@@ -94,7 +110,7 @@ class MassBalanceGroup(AbstractGroup):
         return [[model.pressure(subdomains)]]
 
     def equation_names(self, model) -> list[str]:
-        return ["mass_balance_equation"]
+        return [EquationNames.MASS_BALANCE.value]
 
     def variable_names(self, model) -> list[str]:
         return [model.pressure_variable]
@@ -103,7 +119,7 @@ class MassBalanceGroup(AbstractGroup):
 class InterfaceFluxGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
-        return [[("interface_darcy_flux_equation", interfaces)]]
+        return [[(EquationNames.INTERFACE_FLUX.value, interfaces)]]
 
     def variable_groups(
         self, model: pp.PorePyModel
@@ -112,7 +128,7 @@ class InterfaceFluxGroup(AbstractGroup):
         return [[model.interface_darcy_flux(interfaces)]]
 
     def equation_names(self, model) -> list[str]:
-        return ["interface_darcy_flux_equation"]
+        return [EquationNames.INTERFACE_FLUX.value]
 
     def variable_names(self, model) -> list[str]:
         return [model.interface_darcy_flux_variable]
@@ -127,8 +143,8 @@ class MechanicsGroup(AbstractGroup):
         # for force balance on the highest-dimensional interfaces. The mechanics
         # preconditioner will treat these groups jointly.
         return [
-            [("momentum_balance_equation", subdomains)],
-            [("interface_force_balance_equation", interfaces)],
+            [(EquationNames.MECHANICS.value, subdomains)],
+            [(EquationNames.INTERFACE_FORCE_BALANCE.value, interfaces)],
         ]
 
     def variable_groups(
@@ -145,7 +161,10 @@ class MechanicsGroup(AbstractGroup):
         ]
 
     def equation_names(self, model) -> list[str]:
-        return ["momentum_balance_equation", "interface_force_balance_equation"]
+        return [
+            EquationNames.MECHANICS.value,
+            EquationNames.INTERFACE_FORCE_BALANCE.value,
+        ]
 
     def variable_names(self, model) -> list[str]:
         return [model.displacement_variable, model.interface_displacement_variable]
@@ -158,8 +177,8 @@ class ContactGroup(AbstractGroup):
         # tangential deformation equations for the contact mechanics.
         return [
             [
-                ("normal_fracture_deformation_equation", subdomains),
-                ("tangential_fracture_deformation_equation", subdomains),
+                (EquationNames.CONTACT_NORMAL.value, subdomains),
+                (EquationNames.CONTACT_TANGENTIAL.value, subdomains),
             ]
         ]
 
@@ -172,7 +191,7 @@ class ContactGroup(AbstractGroup):
         return [[model.contact_traction(subdomains)]]
 
     def equation_names(self, model) -> list[str]:
-        return ["contact_mechanics_equation"]
+        return [EquationNames.CONTACT.value]
 
     def variable_names(self, model) -> list[str]:
         return [model.contact_traction_variable]
