@@ -73,6 +73,14 @@ class AbstractGroup(ABC):
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         pass
 
+    @abstractmethod
+    def equation_names(self, model) -> list[str]:
+        pass
+
+    @abstractmethod
+    def variable_names(self, model) -> list[str]:
+        pass
+
 
 class MassBalanceGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
@@ -85,11 +93,14 @@ class MassBalanceGroup(AbstractGroup):
         subdomains = model.mdg.subdomains()
         return [[model.pressure(subdomains)]]
 
+    def equation_names(self, model) -> list[str]:
+        return ["mass_balance_equation"]
+
+    def variable_names(self, model) -> list[str]:
+        return [model.pressure_variable]
+
 
 class InterfaceFluxGroup(AbstractGroup):
-    _variables = ["interface_darcy_flux"]
-    _equations = ["interface_darcy_flux_equation"]
-
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
         return [[("interface_darcy_flux_equation", interfaces)]]
@@ -99,6 +110,12 @@ class InterfaceFluxGroup(AbstractGroup):
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         interfaces = model.mdg.interfaces()
         return [[model.interface_darcy_flux(interfaces)]]
+
+    def equation_names(self, model) -> list[str]:
+        return ["interface_darcy_flux_equation"]
+
+    def variable_names(self, model) -> list[str]:
+        return [model.interface_darcy_flux_variable]
 
 
 class MechanicsGroup(AbstractGroup):
@@ -127,6 +144,12 @@ class MechanicsGroup(AbstractGroup):
             [model.interface_displacement(interfaces)],
         ]
 
+    def equation_names(self, model) -> list[str]:
+        return ["momentum_balance_equation", "interface_force_balance_equation"]
+
+    def variable_names(self, model) -> list[str]:
+        return [model.displacement_variable, model.interface_displacement_variable]
+
 
 class ContactGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
@@ -147,6 +170,12 @@ class ContactGroup(AbstractGroup):
         # There is a single group of variables for the contact mechanics, which is the
         # contact traction.
         return [[model.contact_traction(subdomains)]]
+
+    def equation_names(self, model) -> list[str]:
+        return ["contact_mechanics_equation"]
+
+    def variable_names(self, model) -> list[str]:
+        return [model.contact_traction_variable]
 
 
 class DofManager:
@@ -259,6 +288,18 @@ class DofManager:
             model, equation_groups_by_number, contact_group
         )
         return reordered_groups
+
+    def equation_names(self, model):
+        names = []
+        for group in self._orderings:
+            names += group.equation_names(model)
+        return names
+
+    def variable_names(self, model):
+        names = []
+        for group in self._orderings:
+            names += group.variable_names(model)
+        return names
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
@@ -909,8 +950,8 @@ class IterativeSolverMixin:
             global_dofs_col=dof_manager.var_dofs_by_blocks(self),
             groups_to_blocks_row=dof_manager.equation_groups(self),
             groups_to_blocks_col=dof_manager.variable_groups(self),
-            # group_names_row=self.group_row_names(),
-            # group_names_col=self.group_col_names(),
+            group_names_row=dof_manager.equation_names(self),
+            group_names_col=dof_manager.variable_names(self),
         )
 
         # TODO: Figure out if the [:] is really needed.
