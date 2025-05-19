@@ -892,7 +892,7 @@ class IterativeSolverMixin:
         rhs = rhs[dof_manager.eq_rows_permutation(self)]
 
         bmat = BlockMatrixStorage(
-            mat=self.linear_system[0],
+            mat=mat,
             global_dofs_row=dof_manager.eq_dofs_by_blocks(self),
             global_dofs_col=dof_manager.var_dofs_by_blocks(self),
             groups_to_blocks_row=dof_manager.equation_groups(self),
