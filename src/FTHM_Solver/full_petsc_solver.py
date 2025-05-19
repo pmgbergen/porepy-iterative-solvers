@@ -746,7 +746,7 @@ class LinearTransformedScheme:
         self, mat_orig: BlockMatrixStorage, options: dict | None = None
     ) -> PetscKrylovSolver | LinearSolverWithTransformations:
         # groups = self.get_groups()
-        bmat = mat_orig  # [groups]
+        bmat = mat_orig[:]  # [groups]
 
         if self.left_transformations is None or len(self.left_transformations) == 0:
             Qleft = None
