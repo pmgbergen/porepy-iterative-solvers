@@ -656,13 +656,13 @@ class SinglePhysicsPreconditioner(ABC):
         return None
 
     @abstractmethod
-    def _default_options(self, model: pp.PorePyModel) -> dict:
+    def _default_options(self, model: pp.PorePyModel, dof_manager) -> dict:
         """
         Return the default options for the preconditioner.
         """
         pass
 
-    def _default_fieldsplit_options(self, model: pp.PorePyModel) -> dict:
+    def _default_fieldsplit_options(self, model: pp.PorePyModel, dof_manager) -> dict:
         """Options for field splits. Provide a separate method for this, since it
         involves some boilerplate options.
         """
@@ -679,16 +679,17 @@ class SinglePhysicsPreconditioner(ABC):
     def configure(
         self,
         model: pp.PorePyModel,
+        dof_manager: pp.DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
-        default_opts = self._default_options(model)
+        default_opts = self._default_options(model, dof_manager)
         user_opts = opts.get(self.key, {})
 
         local_opts = default_opts | user_opts
 
         if has_complement:
-            fieldsplit_opts = self._default_fieldsplit_options(model)
+            fieldsplit_opts = self._default_fieldsplit_options(model, dof_manager)
 
             # The local options need to be prefixed with the relevant fieldsplit tag.
             local_fieldsplit_opts = {
@@ -711,13 +712,14 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
     def tag(self) -> str:
         return "interface_darcy_flux"
 
-    def _default_options(self, model) -> dict:
+    def _default_options(self, model, dof_manager) -> dict:
         opts = {"pc_type": "ilu"}
         return opts
 
     def configure(
         self,
         model: pp.PorePyModel,
+        dof_manager: pp.DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
@@ -725,7 +727,7 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
             raise ValueError(
                 "The interface darcy flux preconditioner requires a complement."
             )
-        return super().configure(opts, has_complement)
+        return super().configure(model, dof_manager, opts, has_complement)
 
 
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
@@ -740,7 +742,7 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
     def group(self):
         return MassBalanceGroup()
 
-    def _default_options(self, model) -> dict:
+    def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "pc_type": "gamg",
             "pc_gamg_threshold": 0.02,
@@ -749,6 +751,11 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
             "mg_levels_pc_type": "sor",
         }
         return local_opts
+
+
+class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
+    def group(self):
+        return MassBalanceDimSplitGroup()
 
 
 class MechanicsPreconditioner(SinglePhysicsPreconditioner):
@@ -767,7 +774,7 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def unit_block_size(self) -> bool:
         return False
 
-    def _default_options(self, model) -> dict:
+    def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "pc_type": "hypre",
             "hmg_inner_pc_type": "gamg",
@@ -800,8 +807,8 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
     def group(self):
         return ContactGroup()
 
-    def _default_fieldsplit_options(self, model):
-        opts = super()._default_fieldsplit_options(model)
+    def _default_fieldsplit_options(self, model, dof_manager) -> dict:
+        opts = super()._default_fieldsplit_options(model, dof_manager)
         opts.update(
             {
                 f"fieldsplit_{self.complement_tag}_mat_schur_complement_ainv_type": "blockdiag"
@@ -809,7 +816,7 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         )
         return opts
 
-    def _default_options(self, model) -> dict:
+    def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "pc_type": "pbjacobi",
             # TODO: Not sure this will come through in the right way
@@ -866,7 +873,10 @@ class MultiPhysicsPreconditioner:
 
             # Generate the actual petsc proconditioner.
             loc_options = single_physics_precond.configure(
-                model=self._model, has_complement=has_complement, opts=user_options
+                model=self._model,
+                dof_manager=self._dof_manager,
+                has_complement=has_complement,
+                opts=user_options,
             )
 
             # Get the tag for this group, and prepend it to the options.
