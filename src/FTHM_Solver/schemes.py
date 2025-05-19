@@ -9,7 +9,12 @@ import porepy as pp
 from abc import ABC, abstractmethod
 
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import construct_is, PetscKSPScheme, insert_petsc_options
+from .full_petsc_solver import (
+    construct_is,
+    PetscKSPScheme,
+    insert_petsc_options,
+    LinearTransformedScheme,
+)
 
 from . import hm_solver
 from .iterative_solver import (
@@ -35,6 +40,7 @@ __all__ = [
     "MultiPhysicsPreconditioner",
     "IterativeSolverMixin",
     "mass_balance_factory",
+    "momentum_balance_factory",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -856,7 +862,7 @@ class IterativeSolverMixin:
             "options", {"ksp_monitor": None}
         )
         ksp_factory = self._solver_components.ksp_factory
-        solver = ksp_factory.make_solver(self.bmat, solver_options)
+        # solver = ksp_factory.make_solver(self.bmat, solver_options)
         try:
             solver = ksp_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
