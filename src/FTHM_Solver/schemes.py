@@ -270,7 +270,10 @@ class DofManager:
         self._equation_system = equation_system
         self._orderings = orderings
 
-        self._group_to_block_ids = {}
+    @property
+    def groups(self) -> list[AbstractGroup]:
+        """Return the groups of equations and variables."""
+        return self._orderings
 
     def group_id(self, group: AbstractGroup) -> int:
         return self._solver_groups[group.__class__]
@@ -941,6 +944,8 @@ class MultiPhysicsPreconditioner:
 
         prefix = ""
 
+        dof_manager = self._dof_manager
+
         for counter, single_physics_precond in enumerate(self._single_physics_precond):
             # Define a scheme for the group
             has_complement = counter < len(self._single_physics_precond) - 1
@@ -965,13 +970,20 @@ class MultiPhysicsPreconditioner:
 
                 return options
 
+            elim_group = dof_manager.group_id(dof_manager.groups[counter])
+            keep_group = []
+            for i in range(counter + 1, len(self._single_physics_precond)):
+                keep_group += dof_manager.group_id(dof_manager.groups[i])
+
+            empty_bmat = bmat.empty_container()[elim_group + keep_group]
+
             block_size = 1 if single_physics_precond.unit_block_size else self._nd
 
             # Get the IS for the group, but only if complement is not None.
             is_this, is_complement = self._dof_manager.petsc_is(
                 single_physics_precond,
                 self._single_physics_precond[counter + 1 :],
-                bmat,
+                empty_bmat,
             )
             is_this.setBlockSize(block_size)
             tag = single_physics_precond.tag
