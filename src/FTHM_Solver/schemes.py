@@ -1005,9 +1005,9 @@ class MultiPhysicsPreconditioner:
                 # TODO: Is it correct to use the same matrix for both arguments?
                 ksp_complement.setOperators(pmat, pmat)
 
-            if single_physics_precond.near_null_space(self) is not None:
+            if single_physics_precond.near_null_space(self._model) is not None:
                 null_space_vectors = []
-                for b in single_physics_precond.near_null_space:
+                for b in single_physics_precond.near_null_space(self._model):
                     null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
                     null_space_vec_petsc.setSizes(b.shape[0], block_size)
                     null_space_vec_petsc.setUp()
