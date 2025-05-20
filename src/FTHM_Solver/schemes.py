@@ -16,13 +16,14 @@ from .full_petsc_solver import (
     insert_petsc_options,
     LinearTransformedScheme,
 )
+from .fixed_stress import make_fs_analytical_slow_new
 
 from . import hm_solver
 from .iterative_solver import (
     get_equations_group_ids,
     get_variables_group_ids,
 )
-from .mat_utils import csr_ones, inv_block_diag
+from .mat_utils import csr_ones, inv_block_diag, csr_to_petsc
 
 from petsc4py import PETSc
 
@@ -42,6 +43,7 @@ __all__ = [
     "IterativeSolverMixin",
     "mass_balance_factory",
     "momentum_balance_factory",
+    "hm_factory",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -791,6 +793,78 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
         return hm_solver.build_mechanics_near_null_space(model)
 
 
+class FixedStressPreconditioner(MechanicsPreconditioner):
+    def _pressure_matrix_group(self, model, dof_manager):
+        # Get the pressure matrix group
+        equation_names = dof_manager.equation_names(model)
+        if EquationNames.MASS_BALANCE_MATRIX.value in equation_names:
+            # This is split into a matrix and lower dimension group
+            return equation_names.index(EquationNames.MASS_BALANCE_MATRIX.value)
+        elif EquationNames.MASS_BALANCE in equation_names:
+            # No matrix-lowerdim split, assume there is a single group for mass balance
+            # and that this is associated with the matrix.
+            return equation_names.index(EquationNames.MASS_BALANCE.value)
+        else:
+            raise ValueError(
+                "No mass balance equation found in the model. "
+                "This is required for the fixed stress preconditioner."
+            )
+
+    def _pressure_fracture_group(self, model, dof_manager):
+        # Get the pressure matrix group
+        equation_names = dof_manager.equation_names(model)
+        if EquationNames.MASS_BALANCE_FRACTURES.value in equation_names:
+            # This is split into a matrix and lower dimension group
+            return equation_names.index(EquationNames.MASS_BALANCE_FRACTURES.value)
+        else:
+            # No lower dimensional group was found. Assume there are no fractures, and
+            # set things up so that no stabilization will be added.
+            return -1
+
+    def _pressure_intersection_group(self, model, dof_manager):
+        # Get the pressure matrix group
+        equation_names = dof_manager.equation_names(model)
+        if EquationNames.MASS_BALANCE_INTERSECTIONS.value in equation_names:
+            # This is split into a matrix and lower dimension group
+            return equation_names.index(EquationNames.MASS_BALANCE_INTERSECTIONS.value)
+        else:
+            # No lower dimensional group was found. Assume there are no fractures, and
+            # set things up so that no stabilization will be added.
+            return -1
+
+    def _flow_groups(self, model, dof_manager):
+        # Get all groups associated with the flow equations. This will at least include
+        # the pressure matrix group, and possibly also the fracture and intersection
+        # groups.
+        group = [self._pressure_matrix_group(model, dof_manager)]
+        fracture_group = self._pressure_fracture_group(model, dof_manager)
+        if fracture_group > -1:
+            group.append(fracture_group)
+        intersection_group = self._pressure_intersection_group(model, dof_manager)
+        if intersection_group > -1:
+            group.append(intersection_group)
+        return group
+
+    def _default_fieldsplit_options(self, model, dof_manager):
+        opts = super()._default_fieldsplit_options(model, dof_manager)
+
+        inverter = (
+            lambda bmat: csr_to_petsc(
+                make_fs_analytical_slow_new(
+                    model,
+                    bmat,
+                    p_mat_group=self._pressure_matrix_group(model, dof_manager),
+                    p_frac_group=self._pressure_fracture_group(model, dof_manager),
+                    groups=self._flow_groups(model, dof_manager),
+                ).mat,
+                bsize=1,
+            ),
+        )
+        # How to get this into the preconditioner scheme? See full_petsc template
+        opts.update({"invert": inverter})
+        return opts
+
+
 class ContactPreconditioner(SinglePhysicsPreconditioner):
     @property
     def key(self) -> str:
@@ -949,7 +1023,13 @@ def momentum_balance_factory():
     return [ContactPreconditioner(), MechanicsPreconditioner()]
 
 
-# def hm_factory():
+def hm_factory():
+    return [
+        ContactPreconditioner(),
+        InterfaceDarcyFluxPreconditioner(),
+        FixedStressPreconditioner(),
+        MassBalanceDimSplitPreconditioner(),
+    ]
 
 
 def contact_transform(J, row_group: int, col_group: int, nd: int):
