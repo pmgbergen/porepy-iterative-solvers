@@ -272,7 +272,7 @@ class DofManager:
 
         self._group_to_block_ids = {}
 
-    def _group_id(self, group: AbstractGroup) -> int:
+    def group_id(self, group: AbstractGroup) -> int:
         return self._solver_groups[group.__class__]
 
     def petsc_is(
@@ -285,11 +285,11 @@ class DofManager:
         # the composer.
 
         # Indices of the block ids
-        current_id = self._group_id(current_group.group())
+        current_id = self.group_id(current_group.group())
         other_id = []
         for group in other_groups:
             # Get the block id for the group.
-            other_id += self._group_id(group.group())
+            other_id += self.group_id(group.group())
 
         current_is = construct_is(bmat, current_id)
         other_is = construct_is(bmat, other_id)
