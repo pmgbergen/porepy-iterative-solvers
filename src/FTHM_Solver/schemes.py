@@ -667,6 +667,12 @@ class SinglePhysicsPreconditioner(ABC):
         """
         pass
 
+    def inverter(self, model: pp.PorePyModel, dof_manager) -> Callable:
+        """
+        Return the inverter for the preconditioner.
+        """
+        return None
+
     def _default_fieldsplit_options(self, model: pp.PorePyModel, dof_manager) -> dict:
         """Options for field splits. Provide a separate method for this, since it
         involves some boilerplate options.
@@ -797,75 +803,52 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
 
 
 class FixedStressPreconditioner(MechanicsPreconditioner):
-    def _pressure_matrix_group(self, model, dof_manager):
-        # Get the pressure matrix group
-        equation_names = dof_manager.equation_names(model)
-        if EquationNames.MASS_BALANCE_MATRIX.value in equation_names:
-            # This is split into a matrix and lower dimension group
-            return equation_names.index(EquationNames.MASS_BALANCE_MATRIX.value)
-        elif EquationNames.MASS_BALANCE in equation_names:
-            # No matrix-lowerdim split, assume there is a single group for mass balance
-            # and that this is associated with the matrix.
-            return equation_names.index(EquationNames.MASS_BALANCE.value)
-        else:
-            raise ValueError(
-                "No mass balance equation found in the model. "
-                "This is required for the fixed stress preconditioner."
-            )
-
-    def _pressure_fracture_group(self, model, dof_manager):
-        # Get the pressure matrix group
-        equation_names = dof_manager.equation_names(model)
-        if EquationNames.MASS_BALANCE_FRACTURES.value in equation_names:
-            # This is split into a matrix and lower dimension group
-            return equation_names.index(EquationNames.MASS_BALANCE_FRACTURES.value)
-        else:
-            # No lower dimensional group was found. Assume there are no fractures, and
-            # set things up so that no stabilization will be added.
-            return -1
-
-    def _pressure_intersection_group(self, model, dof_manager):
-        # Get the pressure matrix group
-        equation_names = dof_manager.equation_names(model)
-        if EquationNames.MASS_BALANCE_INTERSECTIONS.value in equation_names:
-            # This is split into a matrix and lower dimension group
-            return equation_names.index(EquationNames.MASS_BALANCE_INTERSECTIONS.value)
-        else:
-            # No lower dimensional group was found. Assume there are no fractures, and
-            # set things up so that no stabilization will be added.
-            return -1
-
     def _flow_groups(self, model, dof_manager):
         # Get all groups associated with the flow equations. This will at least include
         # the pressure matrix group, and possibly also the fracture and intersection
         # groups.
-        group = [self._pressure_matrix_group(model, dof_manager)]
-        fracture_group = self._pressure_fracture_group(model, dof_manager)
-        if fracture_group > -1:
-            group.append(fracture_group)
-        intersection_group = self._pressure_intersection_group(model, dof_manager)
-        if intersection_group > -1:
-            group.append(intersection_group)
-        return group
 
-    def _default_fieldsplit_options(self, model, dof_manager):
-        opts = super()._default_fieldsplit_options(model, dof_manager)
+        equation_names = dof_manager.equation_names(model)
+        target_ind = [
+            i
+            for i, x in enumerate(equation_names)
+            if x == EquationNames.MASS_BALANCE.value
+        ]
+        return target_ind
 
-        inverter = (
-            lambda bmat: csr_to_petsc(
+    def inverter(self, model: pp.PorePyModel, dof_manager) -> Callable:
+        """Get the inverter for the fixed stress preconditioner.
+
+        This class relies on two hard-coded assumptions:
+            1. The physics to be stabilized is the mass balance equation. If we ever
+               need fixed stress for, say, thermal diffusion, a different approach is
+               needed to identify the relevant groups.
+            2. The mass balance group is split into first, the matrix group, second, the
+                fracture group, and third, the intersection group.
+        """
+
+        flow_group = self._flow_groups(model, dof_manager)
+        if len(flow_group) == 0:
+            raise ValueError(
+                "No flow group found in the model. This is required for the fixed stress preconditioner."
+            )
+        elif len(flow_group) == 1:
+            # This is a fixed-dimensional problem.
+            raise NotImplementedError(
+                "The fixed stress preconditioner is not yet implemented for fixed-dimensional problems."
+            )
+        else:  # len(flow_group) > 1
+            # This is a mixed-dimensional problem, use the md scheme
+            return lambda bmat: csr_to_petsc(
                 make_fs_analytical_slow_new(
                     model,
                     bmat,
-                    p_mat_group=self._pressure_matrix_group(model, dof_manager),
-                    p_frac_group=self._pressure_fracture_group(model, dof_manager),
-                    groups=self._flow_groups(model, dof_manager),
+                    p_mat_group=flow_group[0],
+                    p_frac_group=flow_group[1],
+                    groups=flow_group,
                 ).mat,
                 bsize=1,
-            ),
-        )
-        # How to get this into the preconditioner scheme? See full_petsc template
-        opts.update({"invert": inverter})
-        return opts
+            )
 
 
 class ContactPreconditioner(SinglePhysicsPreconditioner):
@@ -991,6 +974,14 @@ class MultiPhysicsPreconditioner:
             insert_petsc_options(tagged_options)
             pc.setFromOptions()
             pc.setFieldSplitIS((tag, is_this), (complement_tag, is_complement))
+
+            inverter = single_physics_precond.inverter(self._model, dof_manager)
+            if inverter is not None:
+                S = pc.getOperators()[1].createSubMatrix(is_complement, is_complement)
+                petsc_stab = inverter(bmat)
+                S.axpy(1, petsc_stab)
+
+                pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
             pc.setUp()
 
