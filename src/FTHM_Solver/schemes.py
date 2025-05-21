@@ -887,6 +887,35 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         return local_opts
 
 
+class CompositePreconditioner(SinglePhysicsPreconditioner):
+    """A class for a composite (e.g., multi-stage) preconditioner for a block."""
+
+    def __init__(self, groups, solvers):
+        self._groups = groups
+        self.solvers = solvers
+
+    @property
+    def key(self) -> str:
+        return "composite_" + "_".join([g.key for g in self._groups])
+
+    @property
+    def tag(self) -> str:
+        return "composite_" + "_".join([g.tag for g in self._groups])
+
+    def group(self):
+        # TODO: Parsing this will give problems in the multiphysics preconditioner,
+        # which expects a single group. Perhaps also in the DofManager.
+        return self._groups
+
+    def _default_options(self, model, dof_manager) -> dict:
+        local_opts = {
+            "pc_type": "composite",
+            "pc_composite_type": "multiplicative",
+            "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
+        }
+        return local_opts
+
+
 class MultiPhysicsPreconditioner:
     """Translate a general scheme to a specific PETSc preconditioner, specified as a
     dictionary (really a fully specified petsc options).
@@ -915,7 +944,7 @@ class MultiPhysicsPreconditioner:
         bmat: BlockMatrixStorage,
         pc,  # PC comes from ksp or similar
         user_options: dict | None = None,
-    ) -> dict:
+    ) -> dict:  # TODO: Return None?
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
         making a bridge from the general settings defined in a scheme to the PETSc
@@ -942,12 +971,31 @@ class MultiPhysicsPreconditioner:
                 has_complement=has_complement,
                 opts=user_options,
             )
+            tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
+
+            if isinstance(single_physics_precond, CompositePreconditioner):
+                # Set up the composite preconditioner so that we can get hold of the
+                # sub-preconditioners and configure them as well.
+                insert_petsc_options(tagged_options)
+                pc.setFromOptions()
+                pc.setUp()
+                for i, sub_solver in enumerate(single_physics_precond.solvers):
+                    loc_options = sub_solver.configure(
+                        model=self._model,
+                        dof_manager=self._dof_manager,
+                        has_complement=has_complement,
+                        opts=user_options,
+                    )
+                    tagged_loc_options = {
+                        f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
+                    }
+                    tagged_options |= tagged_loc_options
 
             # Get the tag for this group, and prepend it to the options.
-            tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
 
             if not has_complement:
                 # If there is no complement, we can use the options directly.
+                # TODO: Can we merge this and the below insert_petsc_options?
                 options |= tagged_options
                 insert_petsc_options(options)
                 pc.setFromOptions()
