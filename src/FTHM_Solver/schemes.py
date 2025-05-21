@@ -816,7 +816,9 @@ class FixedStressPreconditioner(MechanicsPreconditioner):
         ]
         return target_ind
 
-    def inverter(self, model: pp.PorePyModel, dof_manager) -> Callable:
+    def inverter(
+        self, model: pp.PorePyModel, dof_manager: DofManager, groups: list[int]
+    ) -> Callable:
         """Get the inverter for the fixed stress preconditioner.
 
         This class relies on two hard-coded assumptions:
@@ -845,7 +847,7 @@ class FixedStressPreconditioner(MechanicsPreconditioner):
                     bmat,
                     p_mat_group=flow_group[0],
                     p_frac_group=flow_group[1],
-                    groups=flow_group,
+                    groups=groups,
                 ).mat,
                 bsize=1,
             )
@@ -975,7 +977,13 @@ class MultiPhysicsPreconditioner:
             pc.setFromOptions()
             pc.setFieldSplitIS((tag, is_this), (complement_tag, is_complement))
 
-            inverter = single_physics_precond.inverter(self._model, dof_manager)
+            # Invoke the inverter, if any. This is where the fixed-stress approximation
+            # for hydromechanical problems is applied. Note to self: Need to send in
+            # all remaining groups to the inverter to make sure the returned matrix is
+            # correct.
+            inverter = single_physics_precond.inverter(
+                self._model, dof_manager, elim_group + keep_group
+            )
             if inverter is not None:
                 S = pc.getOperators()[1].createSubMatrix(is_complement, is_complement)
                 petsc_stab = inverter(bmat)
