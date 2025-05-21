@@ -935,6 +935,31 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         return local_opts
 
 
+class CPRStage2(SinglePhysicsPreconditioner):
+    def __init__(self, groups):
+        self._groups = groups
+
+    @property
+    def key(self) -> str:
+        return "cpr"
+
+    @property
+    def tag(self) -> str:
+        return "cpr"
+
+    def group(self):
+        return self._groups
+
+    def _default_options(self, model, dof_manager) -> dict:
+        local_opts = {
+            "pc_type": "cprilu",
+            "pc_cprilu_levels": 2,
+            "pc_cprilu_fill": 0.1,
+            "pc_cprilu_zeropivot": 1e-12,
+        }
+        return local_opts
+
+
 class CompositePreconditioner(SinglePhysicsPreconditioner):
     """A class for a composite (e.g., multi-stage) preconditioner for a block."""
 
@@ -1137,6 +1162,21 @@ def hm_factory():
         InterfaceDarcyFluxPreconditioner(),
         FixedStressPreconditioner(),
         MassBalanceDimSplitPreconditioner(),
+    ]
+
+
+def thm_factory():
+    cpr_1 = MassBalanceDimSplitPreconditioner()
+    cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
+    cpr = CompositePreconditioner(
+        groups=[cpr_1.group(), cpr_2.group()], solvers=[cpr_1, cpr_2]
+    )
+
+    return [
+        ContactPreconditioner(),
+        InterfaceDarcyFluxPreconditioner(),
+        FixedStressPreconditioner(),
+        cpr,
     ]
 
 
