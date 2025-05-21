@@ -60,6 +60,10 @@ class EquationNames(Enum):
     MASS_BALANCE_MATRIX = "mass_balance_equation"
     MASS_BALANCE_FRACTURES = "mass_balance_equation"
     MASS_BALANCE_INTERSECTIONS = "mass_balance_equation"
+    ENERGY_BALANCE = "energy_balance_equation"
+    ENERGY_BALANCE_MATRIX = "energy_balance_equation"
+    ENERGY_BALANCE_FRACTURES = "energy_balance_equation"
+    ENERGY_BALANCE_INTERSECTIONS = "energy_balance_equation"
     INTERFACE_FLUX = "interface_darcy_flux_equation"
     MECHANICS = "momentum_balance_equation"
     INTERFACE_FORCE_BALANCE = "interface_force_balance_equation"
@@ -118,23 +122,24 @@ class MassBalanceGroup(AbstractGroup):
         return [model.pressure_variable]
 
 
+def _split_subdomains_by_dimension(model: pp.PorePyModel):
+    matrix_subdomains = model.mdg.subdomains(dim=model.nd)
+    fracture_subdomains = model.mdg.subdomains(dim=model.nd - 1)
+    intersection_subdomains = [
+        sd for sd in model.mdg.subdomains() if sd.dim < model.nd - 1
+    ]
+    return matrix_subdomains, fracture_subdomains, intersection_subdomains
+
+
 class MassBalanceDimSplitGroup(AbstractGroup):
     """Group for the mass balance equation, with matrix, fractures and intersections
     split into different groups. This is needed for fixed-stress type preconditioners,
     where the stabilization term differs according to the dimension of the subdomains.
     """
 
-    def subdomains(self, model: pp.PorePyModel):
-        matrix_subdomains = model.mdg.subdomains(dim=model.nd)
-        fracture_subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        intersection_subdomains = [
-            sd for sd in model.mdg.subdomains() if sd.dim < model.nd - 1
-        ]
-        return matrix_subdomains, fracture_subdomains, intersection_subdomains
-
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            self.subdomains(model)
+            _split_subdomains_by_dimension(model)
         )
         return [
             [(EquationNames.MASS_BALANCE_MATRIX.value, matrix_subdomains)],
@@ -151,7 +156,7 @@ class MassBalanceDimSplitGroup(AbstractGroup):
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            self.subdomains(model)
+            _split_subdomains_by_dimension(model)
         )
         return [
             [model.pressure(matrix_subdomains)],
@@ -171,6 +176,49 @@ class MassBalanceDimSplitGroup(AbstractGroup):
             model.pressure_variable + "_matrix",
             model.pressure_variable + "_fractures",
             model.pressure_variable + "_intersections",
+        ]
+
+
+class EnergyBalanceDimSplitGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
+            _split_subdomains_by_dimension(model)
+        )
+        return [
+            [(EquationNames.ENERGY_BALANCE_MATRIX.value, matrix_subdomains)],
+            [(EquationNames.ENERGY_BALANCE_FRACTURES.value, fracture_subdomains)],
+            [
+                (
+                    EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
+                    intersection_subdomains,
+                )
+            ],
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
+            _split_subdomains_by_dimension(model)
+        )
+        return [
+            [model.temperature(matrix_subdomains)],
+            [model.temperature(fracture_subdomains)],
+            [model.temperature(intersection_subdomains)],
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return [
+            EquationNames.ENERGY_BALANCE_MATRIX.value,
+            EquationNames.ENERGY_BALANCE_FRACTURES.value,
+            EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
+        ]
+
+    def variable_names(self, model) -> list[str]:
+        return [
+            model.temperature_variable + "_matrix",
+            model.temperature_variable + "_fractures",
+            model.temperature_variable + "_intersections",
         ]
 
 
