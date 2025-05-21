@@ -965,17 +965,18 @@ class MultiPhysicsPreconditioner:
             block_size = 1 if single_physics_precond.unit_block_size else self._nd
 
             # Get the IS for the group, but only if complement is not None.
-            is_this, is_complement = self._dof_manager.petsc_is(
+            is_elim, is_keep = self._dof_manager.petsc_is(
                 single_physics_precond,
                 self._single_physics_precond[counter + 1 :],
                 empty_bmat,
             )
-            is_this.setBlockSize(block_size)
-            tag = single_physics_precond.tag
-            complement_tag = tag + "_complement"
+            is_elim.setBlockSize(block_size)
+            keep_tag = single_physics_precond.tag
+            elim_tag = keep_tag + "_complement"
+
             insert_petsc_options(tagged_options)
             pc.setFromOptions()
-            pc.setFieldSplitIS((tag, is_this), (complement_tag, is_complement))
+            pc.setFieldSplitIS((keep_tag, is_elim), (elim_tag, is_keep))
 
             # Invoke the inverter, if any. This is where the fixed-stress approximation
             # for hydromechanical problems is applied. Note to self: Need to send in
@@ -985,7 +986,7 @@ class MultiPhysicsPreconditioner:
                 self._model, dof_manager, elim_group + keep_group
             )
             if inverter is not None:
-                S = pc.getOperators()[1].createSubMatrix(is_complement, is_complement)
+                S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
                 petsc_stab = inverter(bmat)
                 S.axpy(1, petsc_stab)
 
@@ -996,13 +997,13 @@ class MultiPhysicsPreconditioner:
             ksp_elim = pc.getFieldSplitSubKSP()[0]
             pc_group = ksp_elim.getPC()
 
-            ksp_complement = pc.getFieldSplitSubKSP()[1]
-            pc_complement = ksp_complement.getPC()
+            ksp_keep = pc.getFieldSplitSubKSP()[1]
+            pc_keep = ksp_keep.getPC()
 
             if single_physics_precond.ksp_keep_use_pmat:
-                _, pmat = ksp_complement.getOperators()
+                _, pmat = ksp_keep.getOperators()
                 # TODO: Is it correct to use the same matrix for both arguments?
-                ksp_complement.setOperators(pmat, pmat)
+                ksp_keep.setOperators(pmat, pmat)
 
             if single_physics_precond.near_null_space(self._model) is not None:
                 null_space_vectors = []
@@ -1020,8 +1021,8 @@ class MultiPhysicsPreconditioner:
             # and update (override) the options with the options returned by the complement.
             # Note that, due to the tagging system, this may override some options that were
             # set above.
-            pc = pc_complement
-            prefix = f"{prefix}fieldsplit_{complement_tag}_"
+            pc = pc_keep
+            prefix = f"{prefix}fieldsplit_{elim_tag}_"
 
         raise ValueError("Should have reached an empty complement")
 
