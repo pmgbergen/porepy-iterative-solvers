@@ -322,29 +322,44 @@ class DofManager:
         self._equation_system = equation_system
         self._orderings = orderings
 
+        # Mapping from the ordering (which represents the block solver/preconditioner)
+        # to the combination of equation groups that the preconditioner will handle
+        # jointly.
+        solver_groups = {}
+
+        counter = 0
+        for group, slv in zip(orderings, solvers):
+            groups_loc = group.equation_groups(model)
+            solver_groups[slv] = [i for i in range(counter, counter + len(groups_loc))]
+
+            counter += len(groups_loc)
+
+        self._solver_groups = solver_groups
+
     @property
     def groups(self) -> list[AbstractGroup]:
         """Return the groups of equations and variables."""
         return self._orderings
 
-    def group_id(self, group: AbstractGroup) -> int:
-        return self._solver_groups[group.__class__]
+    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
+        return self._solver_groups[solver]
 
     def petsc_is(
         self,
-        current_group: AbstractGroup,
-        other_groups: list[AbstractGroup],
+        current_solver: AbstractGroup,
+        other_solver: list[AbstractGroup],
         bmat: BlockMatrixStorage,
     ):
         # Not sure if this belongs here, but it is tempting to put it here and not in
         # the composer.
 
         # Indices of the block ids
-        current_id = self.group_id(current_group.group())
+        current_id = self.blocks_of_solver(current_solver)
+
         other_id = []
-        for group in other_groups:
+        for group in other_solver:
             # Get the block id for the group.
-            other_id += self.group_id(group.group())
+            other_id += self.blocks_of_solver(group)
 
         current_is = construct_is(bmat, current_id)
         other_is = construct_is(bmat, other_id)
@@ -386,25 +401,12 @@ class DofManager:
         """
         # Get the equation groups for the model (in name-domain format)
 
-        # Mapping from the ordering (which represents the block solver/preconditioner)
-        # to the combination of equation groups that the preconditioner will handle
-        # jointly.
-        solver_groups = {}
-
         equation_groups_by_name = []
         counter = 0
         for group in self._orderings:
             groups_loc = group.equation_groups(model)
             equation_groups_by_name += groups_loc
-            solver_groups[group.__class__] = [
-                i for i in range(counter, counter + len(groups_loc))
-            ]
-
             counter += len(groups_loc)
-
-        # Use the class name of the group as the key for the dictionary..
-        # This is a bit of a hack, but it works for now.
-        self._solver_groups = solver_groups
 
         # Convert to numbers (i.e., block ids).
         equation_groups_by_number = get_equations_group_ids(
@@ -1080,10 +1082,14 @@ class MultiPhysicsPreconditioner:
 
                 return options
 
-            elim_group = dof_manager.group_id(dof_manager.groups[counter])
+            elim_group = dof_manager.blocks_of_solver(
+                self._single_physics_precond[counter]
+            )
             keep_group = []
             for i in range(counter + 1, len(self._single_physics_precond)):
-                keep_group += dof_manager.group_id(dof_manager.groups[i])
+                keep_group += dof_manager.blocks_of_solver(
+                    self._single_physics_precond[i]
+                )
 
             empty_bmat = bmat.empty_container()[elim_group + keep_group]
 
