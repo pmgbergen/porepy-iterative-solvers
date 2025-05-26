@@ -721,7 +721,12 @@ class SinglePhysicsPreconditioner(ABC):
         """
         pass
 
-    def inverter(self, model: pp.PorePyModel, dof_manager) -> Callable:
+    def inverter(
+        self,
+        model: pp.PorePyModel,
+        dof_manager: DofManager,
+        groups: list[AbstractGroup],
+    ) -> Callable:
         """
         Return the inverter for the preconditioner.
         """
