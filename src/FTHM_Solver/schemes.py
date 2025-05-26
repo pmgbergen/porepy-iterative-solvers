@@ -30,7 +30,7 @@ from petsc4py import PETSc
 
 __all__ = [
     "MassBalanceGroup",
-    "InterfaceFluxGroup",
+    "InterfaceDarcyFluxGroup",
     "MechanicsGroup",
     "ContactGroup",
     "DofManager",
@@ -64,7 +64,11 @@ class EquationNames(Enum):
     ENERGY_BALANCE_MATRIX = "energy_balance_equation"
     ENERGY_BALANCE_FRACTURES = "energy_balance_equation"
     ENERGY_BALANCE_INTERSECTIONS = "energy_balance_equation"
-    INTERFACE_FLUX = "interface_darcy_flux_equation"
+    INTERFACE_DARCY_FLUX = "interface_darcy_flux_equation"
+
+    INTERFACE_ENTHALPY_FLUX = "interface_enthalpy_flux_equation"
+    INTERFACE_FOURIER_FLUX = "interface_fourier_flux_equation"
+
     MECHANICS = "momentum_balance_equation"
     INTERFACE_FORCE_BALANCE = "interface_force_balance_equation"
     CONTACT = "contact_mechanics_equation"
@@ -222,10 +226,10 @@ class EnergyBalanceDimSplitGroup(AbstractGroup):
         ]
 
 
-class InterfaceFluxGroup(AbstractGroup):
+class InterfaceDarcyFluxGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
-        return [[(EquationNames.INTERFACE_FLUX.value, interfaces)]]
+        return [[(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)]]
 
     def variable_groups(
         self, model: pp.PorePyModel
@@ -234,10 +238,44 @@ class InterfaceFluxGroup(AbstractGroup):
         return [[model.interface_darcy_flux(interfaces)]]
 
     def equation_names(self, model) -> list[str]:
-        return [EquationNames.INTERFACE_FLUX.value]
+        return [EquationNames.INTERFACE_DARCY_FLUX.value]
 
     def variable_names(self, model) -> list[str]:
         return [model.interface_darcy_flux_variable]
+
+
+class InterfaceEnergyFluxGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+        interfaces = model.mdg.interfaces()
+        return [
+            [
+                (EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces),
+                (EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces),
+            ]
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        interfaces = model.mdg.interfaces()
+        return [
+            [
+                model.interface_enthalpy_flux(interfaces),
+                model.interface_fourier_flux(interfaces),
+            ]
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return [
+            EquationNames.INTERFACE_ENTHALPY_FLUX.value,
+            EquationNames.INTERFACE_FOURIER_FLUX.value,
+        ]
+
+    def variable_names(self, model) -> list[str]:
+        return [
+            model.interface_enthalpy_flux_variable,
+            model.interface_fourier_flux_variable,
+        ]
 
 
 class MechanicsGroup(AbstractGroup):
@@ -776,7 +814,7 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
         return "interface_darcy_flux"
 
     def group(self):
-        return InterfaceFluxGroup()
+        return InterfaceDarcyFluxGroup()
 
     @property
     def tag(self) -> str:
@@ -796,6 +834,36 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
         if not has_complement:
             raise ValueError(
                 "The interface darcy flux preconditioner requires a complement."
+            )
+        return super().configure(model, dof_manager, opts, has_complement)
+
+
+class InterfaceEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
+    @property
+    def key(self) -> str:
+        return "interface_energy_flux"
+
+    def group(self):
+        return InterfaceEnergyFluxGroup()
+
+    @property
+    def tag(self) -> str:
+        return "interface_energy_flux"
+
+    def _default_options(self, model, dof_manager) -> dict:
+        opts = {"pc_type": "ilu"}
+        return opts
+
+    def configure(
+        self,
+        model: pp.PorePyModel,
+        dof_manager: pp.DofManager,
+        opts: dict | None = None,
+        has_complement: bool = False,
+    ) -> dict:
+        if not has_complement:
+            raise ValueError(
+                "The interface energy flux preconditioner requires a complement."
             )
         return super().configure(model, dof_manager, opts, has_complement)
 
