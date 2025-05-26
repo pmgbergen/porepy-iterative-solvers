@@ -953,7 +953,7 @@ class CPRStage2(SinglePhysicsPreconditioner):
     def tag(self) -> str:
         return "cpr"
 
-    def group(self):
+    def group(self) -> list[AbstractGroup]:
         return self._groups
 
     def _default_options(self, model, dof_manager) -> dict:
@@ -969,8 +969,7 @@ class CPRStage2(SinglePhysicsPreconditioner):
 class CompositePreconditioner(SinglePhysicsPreconditioner):
     """A class for a composite (e.g., multi-stage) preconditioner for a block."""
 
-    def __init__(self, groups, solvers):
-        self._groups = groups
+    def __init__(self, solvers):
         self.solvers = solvers
 
     @property
@@ -981,10 +980,15 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
     def tag(self) -> str:
         return "composite_" + "_".join([g.tag for g in self._groups])
 
-    def group(self):
-        # TODO: Parsing this will give problems in the multiphysics preconditioner,
-        # which expects a single group. Perhaps also in the DofManager.
-        return self._groups
+    def group(self) -> list[AbstractGroup]:
+        # The group is a combination of the groups of the solvers.
+        g = []
+        for solver in self.solvers:
+            g += solver.group()
+
+        # Remove duplicates
+        g = list(set(g))
+        return g
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
@@ -1178,9 +1182,7 @@ def hm_factory():
 def thm_factory():
     cpr_1 = MassBalanceDimSplitPreconditioner()
     cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
-    cpr = CompositePreconditioner(
-        groups=[cpr_1.group(), cpr_2.group()], solvers=[cpr_1, cpr_2]
-    )
+    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
     return [
         ContactPreconditioner(),
