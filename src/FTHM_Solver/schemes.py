@@ -313,7 +313,11 @@ class DofManager:
     """
 
     def __init__(
-        self, equation_system: pp.EquationSystem, orderings: list[AbstractGroup]
+        self,
+        equation_system: pp.EquationSystem,
+        model: pp.PorePyModel,
+        orderings: list[AbstractGroup],
+        solvers: list[SinglePhysicsPreconditioner],
     ):
         self._equation_system = equation_system
         self._orderings = orderings
@@ -1281,7 +1285,9 @@ class IterativeSolverMixin:
 
         ordering_list = [precond.group() for precond in precond_list]
 
-        dof_manager = DofManager(self.equation_system, ordering_list)
+        dof_manager = DofManager(
+            self.equation_system, self, ordering_list, precond_list
+        )
         precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
 
         contact_ind = dof_manager.identify_contact_group(self)
