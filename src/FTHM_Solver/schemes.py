@@ -1104,7 +1104,7 @@ class MultiPhysicsPreconditioner:
             # all remaining groups to the inverter to make sure the returned matrix is
             # correct.
             inverter = single_physics_precond.inverter(
-                self._model, dof_manager, elim_group + keep_group
+                self._model, dof_manager, keep_group
             )
             if inverter is not None:
                 S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
