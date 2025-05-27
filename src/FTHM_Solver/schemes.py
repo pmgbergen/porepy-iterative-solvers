@@ -248,10 +248,8 @@ class InterfaceEnergyFluxGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         interfaces = model.mdg.interfaces()
         return [
-            [
-                (EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces),
-                (EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces),
-            ]
+            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
+            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
         ]
 
     def variable_groups(
@@ -259,10 +257,8 @@ class InterfaceEnergyFluxGroup(AbstractGroup):
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         interfaces = model.mdg.interfaces()
         return [
-            [
-                model.interface_enthalpy_flux(interfaces),
-                model.interface_fourier_flux(interfaces),
-            ]
+            [model.interface_enthalpy_flux(interfaces)],
+            [model.interface_fourier_flux(interfaces)],
         ]
 
     def equation_names(self, model) -> list[str]:
