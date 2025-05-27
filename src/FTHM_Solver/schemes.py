@@ -44,6 +44,7 @@ __all__ = [
     "mass_balance_factory",
     "momentum_balance_factory",
     "hm_factory",
+    "thm_factory",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -1333,11 +1334,14 @@ def hm_factory():
 def thm_factory():
     cpr_1 = MassBalanceDimSplitPreconditioner()
     cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
+    # TODO: The CPR preconditioner should also include a reordering from fieldsplit
+    # to cellsplit.
     cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
     return [
         ContactPreconditioner(),
         InterfaceDarcyFluxPreconditioner(),
+        InterfaceEnergyFluxPreconditioner(),
         FixedStressPreconditioner(),
         cpr,
     ]
