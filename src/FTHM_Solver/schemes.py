@@ -355,28 +355,17 @@ class DofManager:
     ):
         self._equation_system = equation_system
         self._orderings = orderings
-
-        # Mapping from the ordering (which represents the block solver/preconditioner)
-        # to the combination of equation groups that the preconditioner will handle
-        # jointly.
-        solver_groups = {}
-
-        counter = 0
-        for group, slv in zip(orderings, solvers):
-            groups_loc = group.equation_groups(model)
-            solver_groups[slv] = [i for i in range(counter, counter + len(groups_loc))]
-
-            counter += len(groups_loc)
-
-        self._solver_groups = solver_groups
+        eq_groups, var_goups, slv_groups = self._process_block_information(
+            model, solvers
+        )
+        self._equation_groups = eq_groups
+        self._variable_groups = var_goups
+        self._solver_groups = slv_groups
 
     @property
     def groups(self) -> list[AbstractGroup]:
         """Return the groups of equations and variables."""
         return self._orderings
-
-    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
-        return self._solver_groups[solver]
 
     def petsc_is(
         self,
@@ -399,11 +388,148 @@ class DofManager:
         other_is = construct_is(bmat, other_id)
         return current_is, other_is
 
-    def variable_groups(self, model):
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        return self._variable_groups
+
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[int]]:
+        return self._equation_groups
+
+    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
+        return self._solver_groups[solver]
+
+    def _process_block_information(self, model: pp.PorePyModel, solvers):
+        """Construct groups of equations, variables and solvers from the orderings and
+        solvers.
+
+        This method should be called as part of the DofManager initialization. It
+        process information on the orderings and solvers to arrive at the following:
+
+        1. A list of equation groups, where each group defines a set of equations (using
+           the block indices of the BlockMatrixStorage) that will be preconditioned
+           together. Together, the list spans the full set of equations in the model at
+           hand.
+        2. A list of variable groups, where each group defines a set of variables that
+           will be preconditioned together. Together, the list spans the full set of
+           variables in the model at hand.
+        3. A dictionary that maps each solver to the indices of the equation groups it
+           will solve. This is used to identify which equations are solved by which
+           solver, and to construct the appropriate preconditioner for each solver.
+
+        """
+        # The construction consists of two main steps: First, iterate over the orderings
+        # and gather the equation and variable groups defined by them. This may involve
+        # uniquifying the groups (relevant if the preconditioner is a PETSc Composite,
+        # which may contain several overlapping groups). In this process, we also
+        # construct the map from solvers to block indices. Second, the groups of
+        # variables and equations are expanded from a lists of domains (PorePy
+        # subdomains and interfaces) into individual variables and equations. For the
+        # equations, we also do some reordering needed to merge the contact equations in
+        # the normal and tangential directions into a single block, and thereby reveal
+        # the underlying block diagonal structure of this equation.
+
+        # Data structures for variables, equations and the solver map.
         var_groups = []
+        equations_by_name = []
+        solver_indices = {}
+        # Counter of block indices, used to assign block indices to the solver map.
+        counter = 0
+
+        # Iterate over the orderings, gather the equation an variable groups define
+        # there. It is assumed that the orderings define non-intersecting sets of
+        # equations and variables that together span the system of equations to be
+        # solved. However, an ordering can return a list, corresponding to a multistage
+        # preconditioner (a Composite preconditioner in PETSc terminology). This list
+        # may contain multiple intersecting groups, that needs to be parsed into a
+        # single, non-intersecting set of equations and variables. NOTE that it is still
+        # assumed that the items in this list do not intersect with other groups (in the
+        # outer list, orderings).
+        for group, slv in zip(self._orderings, solvers):
+            if isinstance(group, list):
+                # This is a list of groups, which may contain identical items. First
+                # gather them all.
+                tmp_var_groups = []
+                tmp_equations_by_name = []
+                for g in group:
+                    tmp_var_groups += g.variable_groups(model)
+                    tmp_equations_by_name += g.equation_groups(model)
+
+                # Find the indices of the subsets that will define a unique set of
+                # variables and equations. By assumption, the variables and equations in
+                # the tmp_x lists match, so that we can use any of them to find indices
+                # that define a unique sublist. It is by far simplest to use the
+                # variables, since we can rely on their hash values to find the sublist
+                # (while the equation list is a confused mess of lists and tuples, which
+                # fortunately works).
+
+                # The implementation below assumes that each variable group contains a
+                # single variable. Expanding this should be doable, but it has not yet
+                # been necessary.
+                assert all(len(x) == 1 for x in tmp_var_groups)
+
+                # Find the sorting indices of the unique variable groups.
+                hash_values = [hash(item[0]) for item in tmp_var_groups]
+                _, sorting_indices = np.unique(hash_values, return_index=True)
+                # Sort the indices to ensure a consistent order.
+                sorting_indices.sort()
+
+                # Extract unique sublists.
+                groups_loc = []
+                vars_loc = []
+                for ind in sorting_indices:
+                    vars_loc.append(tmp_var_groups[ind])
+                    groups_loc.append(tmp_equations_by_name[ind])
+
+            else:
+                # This is a single group, we can add its variables and equations.
+                groups_loc = group.equation_groups(model)
+                vars_loc = group.variable_groups(model)
+
+            # Append the groups to the main lists, and update the solver indices.
+            equations_by_name += groups_loc
+            var_groups += vars_loc
+            solver_indices[slv] = list(range(counter, counter + len(groups_loc)))
+            counter += len(groups_loc)
+
+        # Done with the first step. Next, expand the groups by calling on relevant
+        # helper methods.
+        var_groups = get_variables_group_ids(model, var_groups)
+        equation_groups_by_number = get_equations_group_ids(model, equations_by_name)
+
+        # Permute the contact equations if present.
+        contact_group = self.identify_contact_group(model)
+        if contact_group == -1:
+            reordered_groups = equation_groups_by_number
+        else:
+            reordered_groups = self._correct_contact_equations_groups(
+                model, equation_groups_by_number, contact_group
+            )
+        return reordered_groups, var_groups, solver_indices
+
+    def equation_names(self, model):
+        names = []
         for group in self._orderings:
-            var_groups += group.variable_groups(model)
-        return get_variables_group_ids(model, var_groups)
+            if isinstance(group, list):
+                # If the group is a list, we assume it contains multiple groups.
+                # TODO: Unification needed here.
+                for g in group:
+                    names += g.equation_names(model)
+            else:
+                names += group.equation_names(model)
+        return names
+
+    def variable_names(self, model):
+        names = []
+        for group in self._orderings:
+            if isinstance(group, list):
+                # If the group is a list, we assume it contains multiple groups.
+                # TODO: Unification needed here.
+                for g in group:
+                    names += g.variable_names(model)
+            else:
+                names += group.variable_names(model)
+        return names
 
     def identify_contact_group(self, model):
         # Identify the contact group in the equation groups
@@ -427,47 +553,6 @@ class DofManager:
                 else:
                     i += 1
         return -1
-
-    def equation_groups(self, model):
-        """Get the equation groups for the model, in the form of a list of
-        a list of numbers. If the contact group is present, it will be
-        reordered so that the normal and tangential equations are together.
-        """
-        # Get the equation groups for the model (in name-domain format)
-
-        equation_groups_by_name = []
-        counter = 0
-        for group in self._orderings:
-            groups_loc = group.equation_groups(model)
-            equation_groups_by_name += groups_loc
-            counter += len(groups_loc)
-
-        # Convert to numbers (i.e., block ids).
-        equation_groups_by_number = get_equations_group_ids(
-            model, equation_groups_by_name
-        )
-
-        contact_group = self.identify_contact_group(model)
-        # If there is no contact group, return the original equation groups.
-        if contact_group == -1:
-            return equation_groups_by_number
-
-        reordered_groups = self._correct_contact_equations_groups(
-            model, equation_groups_by_number, contact_group
-        )
-        return reordered_groups
-
-    def equation_names(self, model):
-        names = []
-        for group in self._orderings:
-            names += group.equation_names(model)
-        return names
-
-    def variable_names(self, model):
-        names = []
-        for group in self._orderings:
-            names += group.variable_names(model)
-        return names
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
