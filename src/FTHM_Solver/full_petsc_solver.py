@@ -973,6 +973,8 @@ class PcPythonPermutation:
         self.petsc_is_perm.destroy()
         self.b.destroy()
 
+    # Methods below are all petsc delegates (follows petsc api). Nothing special here.
+
     def view(self, pc: PETSc.PC, viewer: PETSc.Viewer) -> None:
         self.petsc_pc.view(viewer)
 
