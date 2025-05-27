@@ -783,12 +783,11 @@ class SinglePhysicsPreconditioner(ABC):
     Abstract class for defining a preconditioner.
     """
 
-    @abstractmethod
     def group(self):
         """
         Return the group for the preconditioner.
         """
-        pass
+        return self._group
 
     @property
     @abstractmethod
@@ -890,12 +889,12 @@ class SinglePhysicsPreconditioner(ABC):
 
 
 class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = InterfaceDarcyFluxGroup()
+
     @property
     def key(self) -> str:
         return "interface_darcy_flux"
-
-    def group(self):
-        return InterfaceDarcyFluxGroup()
 
     @property
     def tag(self) -> str:
@@ -920,12 +919,12 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 
 class InterfaceEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = InterfaceEnergyFluxGroup()
+
     @property
     def key(self) -> str:
         return "interface_energy_flux"
-
-    def group(self):
-        return InterfaceEnergyFluxGroup()
 
     @property
     def tag(self) -> str:
@@ -950,6 +949,9 @@ class InterfaceEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = MassBalanceGroup()
+
     @property
     def key(self) -> str:
         return "mass_balance"
@@ -957,9 +959,6 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
     @property
     def tag(self) -> str:
         return "mass_balance"
-
-    def group(self):
-        return MassBalanceGroup()
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
@@ -973,11 +972,14 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
 
 class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
-    def group(self):
-        return MassBalanceDimSplitGroup()
+    def __init__(self):
+        self._group = MassBalanceDimSplitGroup()
 
 
 class MechanicsPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = MechanicsGroup()
+
     @property
     def key(self) -> str:
         return "mechanics"
@@ -985,9 +987,6 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     @property
     def tag(self) -> str:
         return "mechanics"
-
-    def group(self):
-        return MechanicsGroup()
 
     @property
     def unit_block_size(self) -> bool:
@@ -1062,6 +1061,9 @@ class FixedStressPreconditioner(MechanicsPreconditioner):
 
 
 class ContactPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = ContactGroup()
+
     @property
     def key(self) -> str:
         return "contact"
@@ -1097,7 +1099,7 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
 
 class CPRStage2(SinglePhysicsPreconditioner):
     def __init__(self, groups):
-        self._groups = groups
+        self._group = groups
 
     @property
     def key(self) -> str:
@@ -1106,9 +1108,6 @@ class CPRStage2(SinglePhysicsPreconditioner):
     @property
     def tag(self) -> str:
         return "cpr"
-
-    def group(self) -> list[AbstractGroup]:
-        return self._groups
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
@@ -1126,23 +1125,21 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self, solvers):
         self.solvers = solvers
 
+        g = []
+        for solver in self.solvers:
+            group = solver.group()
+            if not isinstance(group, list):
+                group = [group]
+            g += group
+        self._group = g
+
     @property
     def key(self) -> str:
-        return "composite_" + "_".join([g.key for g in self._groups])
+        return "composite_" + "_".join([slv.key for slv in self.solvers])
 
     @property
     def tag(self) -> str:
         return "composite_" + "_".join([g.tag for g in self._groups])
-
-    def group(self) -> list[AbstractGroup]:
-        # The group is a combination of the groups of the solvers.
-        g = []
-        for solver in self.solvers:
-            g += solver.group()
-
-        # Remove duplicates
-        g = list(set(g))
-        return g
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
