@@ -15,7 +15,9 @@ from .full_petsc_solver import (
     PetscKSPScheme,
     insert_petsc_options,
     LinearTransformedScheme,
+    PcPythonPermutation,
 )
+from .thm_solver import make_pt_permutation
 from .fixed_stress import make_fs_analytical_slow_new
 
 from . import hm_solver
@@ -1183,6 +1185,9 @@ class CPRStage2(SinglePhysicsPreconditioner):
         }
         return local_opts
 
+    # def python_preconditioner(self, bmat: BlockMatrixStorage, dof_manager: DofManager):
+    #     lambda bmat: PcPythonPermutation(bmat, block_size=2)
+
 
 class CompositePreconditioner(SinglePhysicsPreconditioner):
     """A class for a composite (e.g., multi-stage) preconditioner for a block."""
@@ -1272,6 +1277,17 @@ class MultiPhysicsPreconditioner:
             )
             tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
 
+            # if loc_options.get("pc_type") == "python":
+            #     # EK cannot wrap his head around what this would mean, so we rule it out
+            #     # for now.
+            #     assert not has_complement
+            #     python_pc = single_physics_precond.python_preconditioner(
+            #         bmat, dof_manager
+            #     )
+            #     python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+            #     pc.setType("python")
+            #     pc.setPythonContext(python_pc)
+
             if isinstance(single_physics_precond, CompositePreconditioner):
                 # Set up the composite preconditioner so that we can get hold of the
                 # sub-preconditioners and configure them as well.
@@ -1285,6 +1301,15 @@ class MultiPhysicsPreconditioner:
                         has_complement=has_complement,
                         opts=user_options,
                     )
+                    # if loc_options.get("pc_type") == "python":
+                    #     # EK cannot wrap his head around what this would mean, so we
+                    #     # rule it out for now.
+                    #     assert not has_complement
+                    #     python_pc = sub_solver.python_preconditioner(bmat, dof_manager)
+                    #     python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+                    #     pc.setType("python")
+                    #     pc.setPythonContext(python_pc)
+
                     tagged_loc_options = {
                         f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
                     }
