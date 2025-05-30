@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from time import time
+
+from warnings import warn
+
 from enum import Enum
 import numpy as np
 from typing import Callable
@@ -17,8 +21,8 @@ from .full_petsc_solver import (
     LinearTransformedScheme,
     PcPythonPermutation,
 )
-from .thm_solver import make_pt_permutation
 from .fixed_stress import make_fs_analytical_slow_new
+from .thm_solver import make_pt_permutation
 
 from . import hm_solver
 from .iterative_solver import (
@@ -1029,11 +1033,9 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "gamg",
-            "pc_gamg_threshold": 0.02,
-            "mg_levels_ksp_type": "richardson",
-            "mg_levels_ksp_max_it": 4,
-            "mg_levels_pc_type": "sor",
+            "pc_type": "hypre",
+            "pc_hypre_type": "boomeramg",
+            "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
         return local_opts
 
@@ -1061,14 +1063,14 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "hypre",
-            "hmg_inner_pc_type": "gamg",
-            "hmg_inner_pc_gamg_threshold": 0.02,
-            # "hmg_inner_pc_hypre_type": "boomeramg",
-            # "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
+            "pc_type": "hmg",
+            "hmg_inner_pc_type": "hypre",
+            "hmg_inner_pc_hypre_type": "boomeramg",
+            "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
             "mg_levels_ksp_type": "richardson",
             "mg_levels_ksp_max_it": 2,
-            "mg_levels_pc_type": "ilu",
+            # 3D model has bad grid
+            "mg_levels_pc_type": "ilu" if model.nd == 3 else "sor",
         }
         return local_opts
 
@@ -1178,10 +1180,11 @@ class CPRStage2(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "cprilu",
-            "pc_cprilu_levels": 2,
-            "pc_cprilu_fill": 0.1,
-            "pc_cprilu_zeropivot": 1e-12,
+            "ksp_type": "preonly",
+            "pc_type": "ilu",
+            # "pc_cprilu_levels": 2,
+            # "pc_cprilu_fill": 0.1,
+            # "pc_cprilu_zeropivot": 1e-12,
         }
         return local_opts
 
@@ -1213,6 +1216,7 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
+            # "ksp_type": "preonly",
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
             "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
@@ -1321,7 +1325,6 @@ class MultiPhysicsPreconditioner:
             if not has_complement:
                 # If there is no complement, we can use the options directly.
                 # TODO: Can we merge this and the below insert_petsc_options?
-                options |= tagged_options
                 insert_petsc_options(options)
                 pc.setFromOptions()
                 pc.setUp()
@@ -1366,7 +1369,6 @@ class MultiPhysicsPreconditioner:
                 S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
                 petsc_stab = inverter(bmat)
                 S.axpy(1, petsc_stab)
-
                 pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
             pc.setUp()
