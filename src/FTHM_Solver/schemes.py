@@ -1033,7 +1033,7 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "hypre",
+            "pc_type": "lu",
             "pc_hypre_type": "boomeramg",
             "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
@@ -1063,7 +1063,8 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "hmg",
+            "ksp_type": "preonly",
+            "pc_type": "lu",
             "hmg_inner_pc_type": "hypre",
             "hmg_inner_pc_hypre_type": "boomeramg",
             "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
@@ -1181,7 +1182,7 @@ class CPRStage2(SinglePhysicsPreconditioner):
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "ksp_type": "preonly",
-            "pc_type": "ilu",
+            "pc_type": "lu",
             # "pc_cprilu_levels": 2,
             # "pc_cprilu_fill": 0.1,
             # "pc_cprilu_zeropivot": 1e-12,
@@ -1212,11 +1213,11 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "comp" + "_".join([g.tag for g in self._groups])
+        return "comp"  # + "_".join([g.tag for g in self._groups])
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            # "ksp_type": "preonly",
+            "ksp_type": "preonly",
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
             "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
@@ -1435,13 +1436,15 @@ def thm_factory():
     cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
     # TODO: The CPR preconditioner should also include a reordering from fieldsplit
     # to cellsplit.
-    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
+    cpr = CompositePreconditioner(solvers=[cpr_2])
 
     return [
         ContactPreconditioner(),
-        InterfaceMassEnergyFluxPreconditioner(),
+        # InterfaceMassEnergyFluxPreconditioner(),
+        InterfaceDarcyFluxPreconditioner(),
+        InterfaceEnergyFluxPreconditioner(),
         FixedStressPreconditioner(),
-        cpr,
+        cpr_2,
     ]
 
 
