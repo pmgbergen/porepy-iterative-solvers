@@ -811,7 +811,7 @@ class SinglePhysicsPreconditioner(ABC):
         """
         Return the tag for the complement of the preconditioner.
         """
-        return self.tag + "_complement"
+        return self.tag + "_cpl"
 
     @property
     def ksp_keep_use_pmat(self) -> bool:
@@ -899,7 +899,7 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "interface_darcy_flux"
+        return "intf_darcy_flx"
 
     def _default_options(self, model, dof_manager) -> dict:
         opts = {"pc_type": "ilu"}
@@ -929,7 +929,7 @@ class InterfaceEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "interface_energy_flux"
+        return "intf_energy_flx"
 
     def _default_options(self, model, dof_manager) -> dict:
         opts = {"pc_type": "ilu"}
@@ -959,7 +959,7 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "mass_balance"
+        return "mass_bal"
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
@@ -987,7 +987,7 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "mechanics"
+        return "mech"
 
     @property
     def unit_block_size(self) -> bool:
@@ -1140,7 +1140,7 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def tag(self) -> str:
-        return "composite_" + "_".join([g.tag for g in self._groups])
+        return "comp" + "_".join([g.tag for g in self._groups])
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
@@ -1228,6 +1228,7 @@ class MultiPhysicsPreconditioner:
 
             # Get the tag for this group, and prepend it to the options.
 
+            options |= tagged_options
             if not has_complement:
                 # If there is no complement, we can use the options directly.
                 # TODO: Can we merge this and the below insert_petsc_options?
@@ -1259,7 +1260,7 @@ class MultiPhysicsPreconditioner:
             )
             is_elim.setBlockSize(block_size)
             keep_tag = single_physics_precond.tag
-            elim_tag = keep_tag + "_complement"
+            elim_tag = single_physics_precond.complement_tag
 
             insert_petsc_options(tagged_options)
             pc.setFromOptions()
@@ -1286,6 +1287,13 @@ class MultiPhysicsPreconditioner:
 
             ksp_keep = pc.getFieldSplitSubKSP()[1]
             pc_keep = ksp_keep.getPC()
+
+            if len(pc_keep.getOptionsPrefix()) > 126:
+                # PETSc has a limit on the prefix length, which seems to be 127
+                # characters. If the prefix is too long, we raise a warning.
+                msg = "The prefix for the PETSc preconditioner is too long. "
+                msg += "Check the configuration of the preconditioner."
+                warn(msg)
 
             if single_physics_precond.ksp_keep_use_pmat:
                 _, pmat = ksp_keep.getOperators()
