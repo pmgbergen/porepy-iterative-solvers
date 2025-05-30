@@ -275,6 +275,40 @@ class InterfaceEnergyFluxGroup(AbstractGroup):
         ]
 
 
+class InterfaceMassEnergyFluxGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+        interfaces = model.mdg.interfaces()
+        return [
+            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
+            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
+            [(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)],
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        interfaces = model.mdg.interfaces()
+        return [
+            [model.interface_enthalpy_flux(interfaces)],
+            [model.interface_fourier_flux(interfaces)],
+            [model.interface_darcy_flux(interfaces)],
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return [
+            EquationNames.INTERFACE_ENTHALPY_FLUX.value,
+            EquationNames.INTERFACE_FOURIER_FLUX.value,
+            EquationNames.INTERFACE_DARCY_FLUX.value,
+        ]
+
+    def variable_names(self, model) -> list[str]:
+        return [
+            model.interface_enthalpy_flux_variable,
+            model.interface_fourier_flux_variable,
+            model.interface_darcy_flux_variable,
+        ]
+
+
 class MechanicsGroup(AbstractGroup):
     def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
         subdomains = model.mdg.subdomains(dim=model.nd)
@@ -949,6 +983,36 @@ class InterfaceEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
         return super().configure(model, dof_manager, opts, has_complement)
 
 
+class InterfaceMassEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = InterfaceMassEnergyFluxGroup()
+
+    @property
+    def key(self) -> str:
+        return "interface_mass_energy_flux"
+
+    @property
+    def tag(self) -> str:
+        return "intf_mass_energy_flx"
+
+    def _default_options(self, model, dof_manager) -> dict:
+        opts = {"pc_type": "ilu"}
+        return opts
+
+    def configure(
+        self,
+        model: pp.PorePyModel,
+        dof_manager: pp.DofManager,
+        opts: dict | None = None,
+        has_complement: bool = False,
+    ) -> dict:
+        if not has_complement:
+            raise ValueError(
+                "The interface mass energy flux preconditioner requires a complement."
+            )
+        return super().configure(model, dof_manager, opts, has_complement)
+
+
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
         self._group = MassBalanceGroup()
@@ -1348,8 +1412,7 @@ def thm_factory():
 
     return [
         ContactPreconditioner(),
-        InterfaceDarcyFluxPreconditioner(),
-        InterfaceEnergyFluxPreconditioner(),
+        InterfaceMassEnergyFluxPreconditioner(),
         FixedStressPreconditioner(),
         cpr,
     ]
