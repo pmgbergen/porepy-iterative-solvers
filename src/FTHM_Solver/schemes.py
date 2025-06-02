@@ -535,7 +535,7 @@ class DofManager:
 
         # Done with the first step. Next, expand the groups by calling on relevant
         # helper methods.
-        var_groups = get_variables_group_ids(model, var_groups)
+        var_groups_by_number = get_variables_group_ids(model, var_groups)
         equation_groups_by_number = get_equations_group_ids(model, equations_by_name)
 
         # Permute the contact equations if present.
@@ -546,7 +546,7 @@ class DofManager:
             reordered_groups = self._correct_contact_equations_groups(
                 model, equation_groups_by_number, contact_group
             )
-        return reordered_groups, var_groups, solver_indices
+        return reordered_groups, var_groups_by_number, solver_indices
 
     def equation_names(self, model):
         names = []
