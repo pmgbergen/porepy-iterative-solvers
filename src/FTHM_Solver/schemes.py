@@ -5,9 +5,11 @@ from __future__ import annotations
 from time import time
 
 from warnings import warn
+from pathlib import Path
 
 from enum import Enum
 import numpy as np
+import scipy.sparse as sps
 from typing import Callable
 from dataclasses import dataclass
 import porepy as pp
@@ -1619,3 +1621,14 @@ class IterativeSolverMixin:
             ksp_factory=solver_factory,
         )
         self._solver_components = solver_components
+
+    def save_matrix_state(self):
+        save_path = Path("./matrices")
+        save_path.mkdir(exist_ok=True)
+        mat, rhs = self.linear_system
+        name = "matrix"
+        print("Saving matrix", name)
+        mat_id = f"{name}.npz"
+        rhs_id = f"{name}_rhs.npy"
+        sps.save_npz(save_path / mat_id, self.bmat.mat)
+        np.save(save_path / rhs_id, rhs)
