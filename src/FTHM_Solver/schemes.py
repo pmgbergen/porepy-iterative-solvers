@@ -586,13 +586,21 @@ class DofManager:
         # Identify the interface group in the equation groups
         i = 0
         for group in self._orderings:
-            if len(group.variable_groups(model)) == 0:
-                continue
-            for var in group.variable_groups(model):
-                if var[0].name == model.interface_displacement_variable:
-                    return i
-                else:
-                    i += 1
+            if isinstance(group, list):
+                for sub_group in group:
+                    if len(sub_group.variable_groups(model)) == 0:
+                        continue
+                    for var in sub_group.variable_groups(model):
+                        if var[0].name == model.interface_displacement_variable:
+                            return i
+            else:
+                if len(group.variable_groups(model)) == 0:
+                    continue
+                for var in group.variable_groups(model):
+                    if var[0].name == model.interface_displacement_variable:
+                        return i
+                    else:
+                        i += 1
         return -1
 
     def eq_dofs_by_blocks(self, model):
