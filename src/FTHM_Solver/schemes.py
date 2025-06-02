@@ -1053,6 +1053,32 @@ class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
         self._group = MassBalanceDimSplitGroup()
 
 
+class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self):
+        self._group = MassBalanceGroup()
+
+    @property
+    def key(self) -> str:
+        return "energy_balance"
+
+    @property
+    def tag(self) -> str:
+        return "energy_bal"
+
+    def _default_options(self, model, dof_manager) -> dict:
+        local_opts = {
+            "pc_type": "lu",
+            "pc_hypre_type": "boomeramg",
+            "pc_hypre_boomeramg_strong_threshold": 0.7,
+        }
+        return local_opts
+
+
+class EnergyBalanceDimSplitPreconditioner(EnergyBalancePreconditioner):
+    def __init__(self):
+        self._group = EnergyBalanceDimSplitGroup()
+
+
 class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
         self._group = MechanicsGroup()
