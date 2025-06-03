@@ -1095,7 +1095,7 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "lu",
+            "pc_type": "hypre",
             "pc_hypre_type": "boomeramg",
             "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
@@ -1121,7 +1121,7 @@ class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "pc_type": "lu",
+            "pc_type": "hypre",
             "pc_hypre_type": "boomeramg",
             "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
@@ -1152,7 +1152,7 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "ksp_type": "preonly",
-            "pc_type": "lu",
+            "pc_type": "hmg",
             "hmg_inner_pc_type": "hypre",
             "hmg_inner_pc_hypre_type": "boomeramg",
             "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
@@ -1528,11 +1528,13 @@ def thm_factory():
 
     return [
         ContactPreconditioner(),
-        # InterfaceMassEnergyFluxPreconditioner(),
-        InterfaceDarcyFluxPreconditioner(),
-        InterfaceEnergyFluxPreconditioner(),
+        InterfaceMassEnergyFluxPreconditioner(),
+        # InterfaceDarcyFluxPreconditioner(),
+        # InterfaceEnthalpyFluxPreconditioner(),
+        # InterfaceFourierFluxPreconditioner(),
         FixedStressPreconditioner(),
-        cpr_2,
+        MassBalanceDimSplitPreconditioner(),
+        EnergyBalanceDimSplitPreconditioner(),
     ]
 
 
