@@ -627,6 +627,13 @@ class DofManager:
                         i += 1
         return -1
 
+    def identify_energy_balance_group(self, model):
+        indices = []
+        for i, group in enumerate(self.equation_names(model)):
+            if group == EquationNames.ENERGY_BALANCE.value:
+                indices.append(i)
+        return indices
+
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
         one per equation-domain pair. If the contact group is present, it will be
@@ -1538,7 +1545,7 @@ def thm_factory():
     ]
 
 
-def contact_transform(J, row_group: int, col_group: int, nd: int):
+def transform_contact_block(J, row_group: int, col_group: int, nd: int):
     """Assemble the right linear transformation."""
     # Sorted according to groups. If not done, the matrix can be in porepy order,
     # which does not guarantee that diagonal groups are truly on diagonals.
@@ -1559,6 +1566,24 @@ def contact_transform(J, row_group: int, col_group: int, nd: int):
     tmp = -J55_inv @ J54
     Qright[col_group, row_group] = tmp
     return Qright
+
+
+def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
+    """Assemble the right linear transformation for scaling energy fluxes."""
+    # Sorted according to groups. If not done, the matrix can be in porepy order,
+    # which does not guarantee that diagonal groups are truly on diagonals.
+    Q = J.empty_container()[:]
+
+    subdomains = model.mdg.subdomains()
+    vols = 1.0 / model.equation_system.evaluate(model.specific_volume(subdomains))
+
+    Q.mat = sps.eye(Q.shape[0], format="csr")
+    if len(subdomains) == 0:
+        # No subdomains, hence no scaling.
+        return Q
+    Q[row_groups] = sps.diags(vols, format="csr")
+
+    return Q
 
 
 @dataclass
@@ -1647,22 +1672,34 @@ class IterativeSolverMixin:
         contact_ind = dof_manager.identify_contact_group(self)
 
         ksp_factory = PetscKSPScheme(preconditioner=precond)
+        contact_transform, thermal_transform = None, None
         if contact_ind > -1:
             # If there is a contact group, we need to use a linear solver that takes
             # care of potential singularities in the contact block.
             u_intf_ind = dof_manager.identify_u_intf_group(self)
 
-            block_transform = [
-                lambda bmat: contact_transform(bmat, contact_ind, u_intf_ind, self.nd)
+            contact_transform = [
+                lambda bmat: transform_contact_block(
+                    bmat, contact_ind, u_intf_ind, self.nd
+                )
+            ]
+        if any(
+            [name.startswith("energy") for name in dof_manager.equation_names(self)]
+        ):
+            row = dof_manager.identify_energy_balance_group(self)
+            thermal_transform = [
+                lambda bmat: scale_energy_transform(bmat, row_groups=row, model=self)
             ]
 
+        if contact_transform is not None or thermal_transform is not None:
             solver_factory = LinearTransformedScheme(
                 nd=self.nd,
                 contact_group=contact_ind,
                 u_intf_group=u_intf_ind,
                 # preconditioner=precond,
                 inner=ksp_factory,
-                right_transformations=block_transform,
+                right_transformations=contact_transform,
+                left_transformations=thermal_transform,
             )
 
         else:
