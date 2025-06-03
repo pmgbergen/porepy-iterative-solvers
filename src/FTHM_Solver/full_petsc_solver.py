@@ -752,10 +752,9 @@ class LinearTransformedScheme:
             Qleft = None
         else:
             # The steps should be roughly the same as for the right transfor (below).
-            raise NotImplementedError("Have not covered this yet")
-            Qleft = self.left_transformations[0](bmat)[groups]
+            Qleft = self.left_transformations[0](bmat)
             for tmp in self.left_transformations[1:]:
-                tmp = tmp(bmat)[groups]
+                tmp = tmp(bmat)
                 Qleft.mat @= tmp.mat
 
         if self.right_transformations is None or len(self.right_transformations) == 0:
