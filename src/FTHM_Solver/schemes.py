@@ -1395,6 +1395,8 @@ class MultiPhysicsPreconditioner:
                 pc.setFromOptions()
                 pc.setUp()
                 for i, sub_solver in enumerate(single_physics_precond.solvers):
+                    sub_pc = pc.getCompositePC(i)
+                    sub_pc.setOperators(*pc.getOperators())
                     loc_options = sub_solver.configure(
                         model=self._model,
                         dof_manager=self._dof_manager,
@@ -1413,6 +1415,9 @@ class MultiPhysicsPreconditioner:
                     tagged_loc_options = {
                         f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
                     }
+                    insert_petsc_options(tagged_loc_options)
+                    sub_pc.setFromOptions()
+                    sub_pc.setUp()
                     tagged_options |= tagged_loc_options
 
             # Get the tag for this group, and prepend it to the options.
