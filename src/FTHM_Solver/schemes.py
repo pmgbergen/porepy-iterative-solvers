@@ -1621,9 +1621,7 @@ class IterativeSolverMixin:
             raise ValueError("RHS contains NaN or Inf values")
 
         # By default, print the residual information to screen (ksp_monitor=None).
-        solver_options = self.params["linear_solver"].get(
-            "options", {"ksp_monitor": None}
-        )
+        solver_options = self.params["linear_solver"].get("options", {})
         ksp_factory = self._solver_components.ksp_factory
         # solver = ksp_factory.make_solver(self.bmat, solver_options)
         t0 = time()
