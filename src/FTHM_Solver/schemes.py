@@ -420,12 +420,13 @@ class DofManager:
     ):
         self._equation_system = equation_system
         self._orderings = orderings
-        eq_groups, var_goups, slv_groups = self._process_block_information(
-            model, solvers
+        eq_groups, var_goups, slv_groups, name_to_group_ind = (
+            self._process_block_information(model, solvers)
         )
         self._equation_groups = eq_groups
         self._variable_groups = var_goups
         self._solver_groups = slv_groups
+        self._name_to_group_indices = name_to_group_ind
 
     @property
     def groups(self) -> list[AbstractGroup]:
@@ -562,7 +563,10 @@ class DofManager:
         var_groups_by_number = get_variables_group_ids(model, var_groups)
         equation_groups_by_number = get_equations_group_ids(model, equations_by_name)
 
-        # Permute the contact equations if present.
+        # Permute the contact equations if present. NOTE: It would have been preferrable
+        # to use the name_to_group_indices map, constructed just below, to identify the
+        # contact group, but this is not yet available at this point. Refactoring may be
+        # a good idea.
         contact_group = self.identify_contact_group(model)
         if contact_group == -1:
             reordered_groups = equation_groups_by_number
@@ -570,7 +574,21 @@ class DofManager:
             reordered_groups = self._correct_contact_equations_groups(
                 model, equation_groups_by_number, contact_group
             )
-        return reordered_groups, var_groups_by_number, solver_indices
+
+        name_to_group_index_map = {}
+        for i, item in enumerate(equations_by_name):
+            name = item[0][0]
+            # Add the equation name to the group.
+            if name not in name_to_group_index_map:
+                name_to_group_index_map[name] = []
+            name_to_group_index_map[name].append(i)
+
+        return (
+            reordered_groups,
+            var_groups_by_number,
+            solver_indices,
+            name_to_group_index_map,
+        )
 
     def equation_names(self, model):
         names = []
@@ -628,11 +646,7 @@ class DofManager:
         return -1
 
     def identify_energy_balance_group(self, model):
-        indices = []
-        for i, group in enumerate(self.equation_names(model)):
-            if group == EquationNames.ENERGY_BALANCE.value:
-                indices.append(i)
-        return indices
+        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
