@@ -1599,6 +1599,12 @@ class LinearSolverComponents:
 
 
 class IterativeSolverMixin:
+    # Temporary storage for the iterative solver results.
+    _petsc_converged_reason = []
+    _krylov_iters = []
+    _construction_time = []
+    _solve_time = []
+
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
         mat, rhs = self.linear_system
@@ -1611,6 +1617,7 @@ class IterativeSolverMixin:
         )
         ksp_factory = self._solver_components.ksp_factory
         # solver = ksp_factory.make_solver(self.bmat, solver_options)
+        t0 = time()
         try:
             solver = ksp_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
@@ -1618,8 +1625,12 @@ class IterativeSolverMixin:
                 "Failed to create solver with the provided preconditioner."
             ) from e
 
+        self._construction_time.append(time() - t0)
+
         rhs_loc = self.bmat.project_rhs_to_local(rhs)
+        t0 = time()
         x_loc = solver.solve(rhs_loc)
+        self._solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
         if info <= 0:
@@ -1629,6 +1640,8 @@ class IterativeSolverMixin:
             )
 
         x = self.bmat.project_solution_to_global(x_loc)
+        self._petsc_converged_reason.append(info)
+        self._krylov_iters.append(len(solver.get_residuals()))
 
         return np.atleast_1d(x)
 
