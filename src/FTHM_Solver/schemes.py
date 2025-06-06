@@ -1315,7 +1315,7 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
             "ksp_type": "preonly",
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
-            "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
+            # "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
         }
         return local_opts
 
@@ -1395,14 +1395,23 @@ class MultiPhysicsPreconditioner:
                 pc.setFromOptions()
                 pc.setUp()
                 for i, sub_solver in enumerate(single_physics_precond.solvers):
-                    sub_pc = pc.getCompositePC(i)
-                    sub_pc.setOperators(*pc.getOperators())
                     loc_options = sub_solver.configure(
                         model=self._model,
                         dof_manager=self._dof_manager,
                         has_complement=has_complement,
                         opts=user_options,
                     )
+                    # Implementation note: This is something of a break with how petsc
+                    # options are set in the rest of the package: Instead of defining
+                    # the option through PETSc.Options(), we use the Python API
+                    # directly. This may be possible to avoid, but turned out to solve
+                    # an issue with setting up CompositePC, so it will have to do for
+                    # now.
+                    pc.addCompositePCType(loc_options["pc_type"])
+                    sub_pc = pc.getCompositePC(i)
+                    # Set the matrix for the sub-preconditioner. This seems to be
+                    # necessary for composite preconditioners.
+                    sub_pc.setOperators(*pc.getOperators())
                     # if loc_options.get("pc_type") == "python":
                     #     # EK cannot wrap his head around what this would mean, so we
                     #     # rule it out for now.
