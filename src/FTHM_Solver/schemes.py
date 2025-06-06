@@ -1291,7 +1291,7 @@ class CPRStage2(SinglePhysicsPreconditioner):
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "ksp_type": "preonly",
-            "pc_type": "lu",
+            "pc_type": "ilu",
             # "pc_cprilu_levels": 2,
             # "pc_cprilu_fill": 0.1,
             # "pc_cprilu_zeropivot": 1e-12,
@@ -1559,7 +1559,7 @@ def thm_factory():
     cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
     # TODO: The CPR preconditioner should also include a reordering from fieldsplit
     # to cellsplit.
-    cpr = CompositePreconditioner(solvers=[cpr_2])
+    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
     return [
         ContactPreconditioner(),
@@ -1568,8 +1568,9 @@ def thm_factory():
         # InterfaceEnthalpyFluxPreconditioner(),
         # InterfaceFourierFluxPreconditioner(),
         FixedStressPreconditioner(),
-        MassBalanceDimSplitPreconditioner(),
-        EnergyBalanceDimSplitPreconditioner(),
+        cpr,
+        # MassBalanceDimSplitPreconditioner(),
+        # EnergyBalanceDimSplitPreconditioner(),
     ]
 
 
