@@ -1615,6 +1615,17 @@ def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
     return Q
 
 
+def to_cell_ordering(J, group_lists: list[list[int]]):
+    all_groups = list(chain.from_iterable(group_lists))
+    J = J[all_groups]
+
+    rows = [
+        get_dofs_of_groups(J.group_to_blocks, J.local_dofs_row, group)
+        for group in all_groups
+    ]
+    return np.row_stack(rows).ravel("F")
+
+
 @dataclass
 class LinearSolverComponents:
     dof_manager: DofManager
