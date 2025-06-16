@@ -1471,15 +1471,19 @@ class MultiPhysicsPreconditioner:
             model: The model instance specifying the problem to be solved.
         """
         user_options = user_options if user_options is not None else {}
+
+        if precond_list is None:
+            precond_list = self._single_physics_precond
+
         options = {}
 
         prefix = ""
 
         dof_manager = self._dof_manager
 
-        for counter, single_physics_precond in enumerate(self._single_physics_precond):
+        for counter, single_physics_precond in enumerate(precond_list):
             # Define a scheme for the group
-            has_complement = counter < len(self._single_physics_precond) - 1
+            has_complement = counter < len(precond_list) - 1
 
             # Generate the actual petsc proconditioner.
             loc_options = single_physics_precond.configure(
@@ -1508,23 +1512,31 @@ class MultiPhysicsPreconditioner:
                 pc.setFromOptions()
                 pc.setUp()
                 for i, sub_solver in enumerate(single_physics_precond.solvers):
-                    loc_options = sub_solver.configure(
-                        model=self._model,
-                        dof_manager=self._dof_manager,
-                        has_complement=has_complement,
-                        opts=user_options,
-                    )
+                    if isinstance(sub_solver, list):
+                        pc.addCompositePCType("fieldsplit")
+                        sub_pc = pc.getCompositePC(i)
+                        sub_pc.setOperators(*pc.getOperators())
+                        loc_options = self.configure(
+                            bmat, sub_pc, user_options, sub_solver
+                        )
+                    else:
+                        loc_options = sub_solver.configure(
+                            model=self._model,
+                            dof_manager=self._dof_manager,
+                            has_complement=has_complement,
+                            opts=user_options,
+                        )
+                        pc.addCompositePCType(loc_options["pc_type"])
+                        sub_pc = pc.getCompositePC(i)
+                        sub_pc.setOperators(*pc.getOperators())
                     # Implementation note: This is something of a break with how petsc
                     # options are set in the rest of the package: Instead of defining
                     # the option through PETSc.Options(), we use the Python API
                     # directly. This may be possible to avoid, but turned out to solve
                     # an issue with setting up CompositePC, so it will have to do for
                     # now.
-                    pc.addCompositePCType(loc_options["pc_type"])
-                    sub_pc = pc.getCompositePC(i)
                     # Set the matrix for the sub-preconditioner. This seems to be
                     # necessary for composite preconditioners.
-                    sub_pc.setOperators(*pc.getOperators())
                     if loc_options.get("pc_type") == "python":
                         # EK cannot wrap his head around what this would mean, so we
                         # rule it out for now.
@@ -1562,7 +1574,7 @@ class MultiPhysicsPreconditioner:
 
     def _parse_fieldsplit_pc(
         self,
-        counter: int,
+        precond_list,
         bmat: BlockMatrixStorage,
         pc: PETSc.PC,
         prefix: str,
@@ -1570,26 +1582,24 @@ class MultiPhysicsPreconditioner:
     ):
         dof_manager = self._dof_manager
 
-        single_physics_precond = self._single_physics_precond[counter]
+        this_precond = precond_list[0]
 
-        elim_group = dof_manager.blocks_of_solver(single_physics_precond)
+        elim_group = dof_manager.blocks_of_solver(this_precond)
         keep_group = []
-        for i in range(counter + 1, len(self._single_physics_precond)):
-            keep_group += dof_manager.blocks_of_solver(self._single_physics_precond[i])
+        for i in range(1, len(precond_list)):
+            keep_group += dof_manager.blocks_of_solver(precond_list[i])
 
         empty_bmat = bmat.empty_container()[elim_group + keep_group]
 
-        block_size = 1 if single_physics_precond.unit_block_size else self._nd
+        block_size = 1 if this_precond.unit_block_size else self._nd
 
         # Get the IS for the group, but only if complement is not None.
         is_elim, is_keep = self._dof_manager.petsc_is(
-            single_physics_precond,
-            self._single_physics_precond[counter + 1 :],
-            empty_bmat,
+            this_precond, precond_list[1:], empty_bmat
         )
         is_elim.setBlockSize(block_size)
-        keep_tag = single_physics_precond.tag
-        elim_tag = single_physics_precond.complement_tag
+        keep_tag = this_precond.tag
+        elim_tag = this_precond.complement_tag
 
         insert_petsc_options(tagged_options)
         pc.setFromOptions()
@@ -1599,7 +1609,7 @@ class MultiPhysicsPreconditioner:
         # for hydromechanical problems is applied. Note to self: Need to send in
         # all remaining groups to the inverter to make sure the returned matrix is
         # correct.
-        inverter = single_physics_precond.inverter(self._model, dof_manager, keep_group)
+        inverter = this_precond.inverter(self._model, dof_manager, keep_group)
         if inverter is not None:
             S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
             petsc_stab = inverter(bmat)
@@ -1621,14 +1631,14 @@ class MultiPhysicsPreconditioner:
             msg += "Check the configuration of the preconditioner."
             warn(msg)
 
-        if single_physics_precond.ksp_keep_use_pmat:
+        if this_precond.ksp_keep_use_pmat:
             _, pmat = ksp_keep.getOperators()
             # TODO: Is it correct to use the same matrix for both arguments?
             ksp_keep.setOperators(pmat, pmat)
 
-        if single_physics_precond.near_null_space(self._model) is not None:
+        if this_precond.near_null_space(self._model) is not None:
             null_space_vectors = []
-            for b in single_physics_precond.near_null_space(self._model):
+            for b in this_precond.near_null_space(self._model):
                 null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
                 null_space_vec_petsc.setSizes(b.shape[0], block_size)
                 null_space_vec_petsc.setUp()
