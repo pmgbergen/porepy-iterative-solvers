@@ -1461,6 +1461,7 @@ class MultiPhysicsPreconditioner:
         bmat: BlockMatrixStorage,
         pc,  # PC comes from ksp or similar
         user_options: dict | None = None,
+        precond_list: list[SinglePhysicsPreconditioner] | None = None,
     ) -> dict:  # TODO: Return None?
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
@@ -1493,17 +1494,6 @@ class MultiPhysicsPreconditioner:
                 opts=user_options,
             )
             tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
-
-            # if loc_options.get("pc_type") == "python":
-            #     # EK cannot wrap his head around what this would mean, so we rule it out
-            #     # for now.
-            #     assert not has_complement
-            #     python_pc = single_physics_precond.python_preconditioner(
-            #         bmat, dof_manager
-            #     )
-            #     python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
-            #     pc.setType("python")
-            #     pc.setPythonContext(python_pc)
 
             if isinstance(single_physics_precond, CompositePreconditioner):
                 # Set up the composite preconditioner so that we can get hold of the
@@ -1549,6 +1539,7 @@ class MultiPhysicsPreconditioner:
                     tagged_loc_options = {
                         f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
                     }
+
                     insert_petsc_options(tagged_loc_options)
                     sub_pc.setFromOptions()
                     sub_pc.setUp()
@@ -1558,17 +1549,24 @@ class MultiPhysicsPreconditioner:
 
             options |= tagged_options
             if not has_complement:
-                # If there is no complement, we can use the options directly.
-                # TODO: Can we merge this and the below insert_petsc_options?
+                # If this is the last preconditioner in the list, we can set it up and
+                # return the options database.
                 insert_petsc_options(options)
                 pc.setFromOptions()
                 pc.setUp()
 
                 return options
-
-            pc, prefix = self._parse_fieldsplit_pc(
-                counter, bmat, pc, prefix, tagged_options=tagged_options
-            )
+            else:
+                # There are more preconditioners to process, using a fieldsplit style
+                # preconditioner. We need to parse the fieldsplit options and set up the
+                # preconditioners of the next group.
+                pc, prefix = self._parse_fieldsplit_pc(
+                    precond_list[counter:],
+                    bmat,
+                    pc,
+                    prefix,
+                    tagged_options=tagged_options,
+                )
 
         raise ValueError("Should have reached an empty complement")
 
