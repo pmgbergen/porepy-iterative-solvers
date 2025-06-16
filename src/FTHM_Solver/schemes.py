@@ -1256,8 +1256,8 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
         }
         return local_opts
 
-    def near_null_space(self, model):
-        return hm_solver.build_mechanics_near_null_space(model)
+    # def near_null_space(self, model):
+    #     return hm_solver.build_mechanics_near_null_space(model)
 
 
 class FixedStressPreconditioner(MechanicsPreconditioner):
