@@ -1178,6 +1178,28 @@ class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
         self._group = MassBalanceDimSplitGroup()
 
 
+class MassBalanceDimSplitCPRPreconditioner(MassBalanceDimSplitPreconditioner):
+    # Special version of the mass balance preconditioner for use in CPR.
+    # The key ingredient is that the filedsplit option is set to be additive.
+    def _default_fieldsplit_options(self, model, dof_manager):
+        inherited_opts = super()._default_fieldsplit_options(model, dof_manager)
+
+        # The following options are not needed for the CPR preconditioner, and will
+        # cause issues if they are present.
+        keys_to_delete = [
+            "pc_fieldsplit_type",
+            "pc_fieldsplit_schur_factorization_type",
+            "pc_fieldsplit_schur_precondition",
+        ]
+        for key in keys_to_delete:
+            inherited_opts.pop(key, None)
+
+        local_opts = {
+            "pc_fieldsplit_type": "additive",
+        }
+        return inherited_opts | local_opts
+
+
 class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
         self._group = MassBalanceGroup()
@@ -1676,7 +1698,7 @@ def hm_factory():
 def thm_factory():
     # Stage 1 of CPR is a
     cpr_1 = [
-        MassBalanceDimSplitPreconditioner(),
+        MassBalanceDimSplitCPRPreconditioner(),
         IdentityPreconditioner(EnergyBalanceDimSplitGroup()),
     ]
 
