@@ -1390,7 +1390,15 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
 
         g = []
         for solver in self.solvers:
-            group = solver.group()
+            if isinstance(solver, SinglePhysicsPreconditioner):
+                group = solver.group()
+            elif isinstance(solver, list):
+                # If the solver is a list, we assume it contains multiple groups.
+                group = [slv.group() for slv in solver]
+            else:
+                raise TypeError(
+                    "The solver must be a SinglePhysicsPreconditioner or a list of them."
+                )
             if not isinstance(group, list):
                 group = [group]
             g += group
@@ -1398,7 +1406,18 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
 
     @property
     def key(self) -> str:
-        return "composite_" + "_".join([slv.key for slv in self.solvers])
+        keys = []
+        for slv in self.solvers:
+            if isinstance(slv, SinglePhysicsPreconditioner):
+                keys.append(slv.key)
+            elif isinstance(slv, list):
+                keys += [x.key for x in slv]
+            else:
+                raise TypeError(
+                    "The solver must be a SinglePhysicsPreconditioner or a list of them."
+                )
+
+        return "composite_" + "_".join([key for key in keys])
 
     @property
     def tag(self) -> str:
