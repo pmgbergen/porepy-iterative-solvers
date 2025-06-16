@@ -1580,34 +1580,34 @@ class MultiPhysicsPreconditioner:
     ):
         dof_manager = self._dof_manager
 
-        this_precond = precond_list[0]
+        elim_precond = precond_list[0]
 
-        elim_group = dof_manager.blocks_of_solver(this_precond)
+        elim_group = dof_manager.blocks_of_solver(elim_precond)
         keep_group = []
         for i in range(1, len(precond_list)):
             keep_group += dof_manager.blocks_of_solver(precond_list[i])
 
         empty_bmat = bmat.empty_container()[elim_group + keep_group]
 
-        block_size = 1 if this_precond.unit_block_size else self._nd
+        block_size = 1 if elim_precond.unit_block_size else self._nd
 
         # Get the IS for the group, but only if complement is not None.
         is_elim, is_keep = self._dof_manager.petsc_is(
-            this_precond, precond_list[1:], empty_bmat
+            elim_precond, precond_list[1:], empty_bmat
         )
         is_elim.setBlockSize(block_size)
-        keep_tag = this_precond.tag
-        elim_tag = this_precond.complement_tag
+        elim_tag = elim_precond.tag
+        keep_tag = elim_precond.complement_tag
 
         insert_petsc_options(tagged_options)
         pc.setFromOptions()
-        pc.setFieldSplitIS((keep_tag, is_elim), (elim_tag, is_keep))
+        pc.setFieldSplitIS((elim_tag, is_elim), (keep_tag, is_keep))
 
         # Invoke the inverter, if any. This is where the fixed-stress approximation
         # for hydromechanical problems is applied. Note to self: Need to send in
         # all remaining groups to the inverter to make sure the returned matrix is
         # correct.
-        inverter = this_precond.inverter(self._model, dof_manager, keep_group)
+        inverter = elim_precond.inverter(self._model, dof_manager, keep_group)
         if inverter is not None:
             S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
             petsc_stab = inverter(bmat)
@@ -1616,27 +1616,27 @@ class MultiPhysicsPreconditioner:
 
         pc.setUp()
 
-        ksp_elim = pc.getFieldSplitSubKSP()[0]
-        pc_group = ksp_elim.getPC()
+        elim_ksp = pc.getFieldSplitSubKSP()[0]
+        elim_pc = elim_ksp.getPC()
 
-        ksp_keep = pc.getFieldSplitSubKSP()[1]
-        pc_keep = ksp_keep.getPC()
+        keep_ksp = pc.getFieldSplitSubKSP()[1]
+        keep_pc = keep_ksp.getPC()
 
-        if len(pc_keep.getOptionsPrefix()) > 126:
+        if len(keep_pc.getOptionsPrefix()) > 126:
             # PETSc has a limit on the prefix length, which seems to be 127
             # characters. If the prefix is too long, we raise a warning.
             msg = "The prefix for the PETSc preconditioner is too long. "
             msg += "Check the configuration of the preconditioner."
             warn(msg)
 
-        if this_precond.ksp_keep_use_pmat:
-            _, pmat = ksp_keep.getOperators()
+        if elim_precond.ksp_keep_use_pmat:
+            _, pmat = keep_ksp.getOperators()
             # TODO: Is it correct to use the same matrix for both arguments?
-            ksp_keep.setOperators(pmat, pmat)
+            keep_ksp.setOperators(pmat, pmat)
 
-        if this_precond.near_null_space(self._model) is not None:
+        if elim_precond.near_null_space(self._model) is not None:
             null_space_vectors = []
-            for b in this_precond.near_null_space(self._model):
+            for b in elim_precond.near_null_space(self._model):
                 null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
                 null_space_vec_petsc.setSizes(b.shape[0], block_size)
                 null_space_vec_petsc.setUp()
@@ -1644,15 +1644,15 @@ class MultiPhysicsPreconditioner:
                 null_space_vectors.append(null_space_vec_petsc)
             # possibly mem leak
             null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
-            pc_group.getOperators()[1].setNearNullSpace(null_space_petsc)
+            elim_pc.getOperators()[1].setNearNullSpace(null_space_petsc)
 
         # Call on self.complement to configure the PETSc PC object for the complement,
         # and update (override) the options with the options returned by the complement.
         # Note that, due to the tagging system, this may override some options that were
         # set above.
 
-        pc = pc_keep
-        prefix = f"{prefix}fieldsplit_{elim_tag}_"
+        pc = keep_pc
+        prefix = f"{prefix}fieldsplit_{keep_tag}_"
         return pc, prefix
 
 
