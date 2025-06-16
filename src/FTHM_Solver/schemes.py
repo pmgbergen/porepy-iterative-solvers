@@ -508,13 +508,20 @@ class DofManager:
         # solved. However, an ordering can return a list, corresponding to a multistage
         # preconditioner (a Composite preconditioner in PETSc terminology). This list
         # may contain multiple intersecting groups, that needs to be parsed into a
-        # single, non-intersecting set of equations and variables. NOTE that it is still
-        # assumed that the items in this list do not intersect with other groups (in the
-        # outer list, orderings).
+        # single, non-intersecting set of equations and variables.
         for group, slv in zip(self._orderings, solvers):
             if isinstance(group, list):
                 # This is a list of groups, which may contain identical items. First
                 # gather them all.
+                #
+                # First, make sure this is a composite preconditioner; this is a tacit
+                # assumption of the below parsing. Dealing with anything else would
+                # require a more structured approach to the parsing, but EK has neither
+                # the imagination nor the test cases needed to do so now.
+                assert isinstance(slv, CompositePreconditioner)
+
+                # Tacitly assump that the group is a list of lists of AbstractGroup. If
+                # we hit a third nested level, we will need to do recursion of sorts.
                 tmp_var_groups = []
                 tmp_equations_by_name = []
                 for g in group:
@@ -547,6 +554,42 @@ class DofManager:
                     vars_loc.append(tmp_var_groups[ind])
                     groups_loc.append(tmp_equations_by_name[ind])
 
+                for sub_solver in slv.solvers:
+                    # If the sub-solver is a list, it is by itself a filedsplit
+                    # preconditioner. Treat every sub-solver within the fieldsplit as a
+                    # separate solver, and add it to the solver indices.
+                    if isinstance(sub_solver, list):
+                        for ss in sub_solver:
+                            solver_indices[ss] = []
+                            # There could be deeper recursion levels here, which we may
+                            # need to deal with by some recursive approach, but we
+                            # ignore that possibility for now.
+                            assert isinstance(ss, SinglePhysicsPreconditioner)
+                            ss_vars = ss.group().variable_groups(model)
+                            assert isinstance(ss_vars, list)
+                            sub_vars = [ss_vars[i][0] for i in range(len(ss_vars))]
+
+                            # Loop over all variables associated with this subsolver.
+                            # Find it among the unique variable set (if it is not found,
+                            # something is seriously worng), and add the block index to
+                            # the list associated with the subsolver.
+                            for var in sub_vars:
+                                loc_id = int(
+                                    np.where(
+                                        np.array(hash_values)[sorting_indices]
+                                        == hash(var)
+                                    )[0][0]
+                                )
+                                solver_indices[ss].append(loc_id + counter)
+                    else:
+                        # Assume here that the sub-solver is a
+                        # SinglePhysicsPreconditioner. If we at some point need nested
+                        # composite preconditioners, something will go wrong here. There
+                        # are surely other cases that can break this as well.
+                        solver_indices[sub_solver] = [
+                            counter + int(i) for i in sorting_indices
+                        ]
+
             else:
                 # This is a single group, we can add its variables and equations.
                 groups_loc = group.equation_groups(model)
@@ -555,6 +598,13 @@ class DofManager:
             # Append the groups to the main lists, and update the solver indices.
             equations_by_name += groups_loc
             var_groups += vars_loc
+            # Also take note that the solver slv is associated with all indices in the
+            # local groups. A composite preconditioner will by this be associated with
+            # the entire set of indices *in addition to* the mapping of individual
+            # solvers (see the convoluted for-loop above). This double registration is
+            # needed for the selection of blocks to work as intended. For pure
+            # (non-composite) block preconditioners, we simply map the preconditioner to
+            # the registred indices.
             solver_indices[slv] = list(range(counter, counter + len(groups_loc)))
             counter += len(groups_loc)
 
