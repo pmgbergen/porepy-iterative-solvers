@@ -1676,10 +1676,16 @@ def hm_factory():
 
 
 def thm_factory():
-    cpr_1 = MassBalanceDimSplitPreconditioner()
+    # Stage 1 of CPR is a
+    cpr_1 = [
+        MassBalanceDimSplitPreconditioner(),
+        IdentityPreconditioner(EnergyBalanceDimSplitGroup()),
+    ]
+
+    # Stage 2 is a BlockILU preconditioner, which will also include a permutation to a
+    # cell-wise ordering of the unknowns.
     cpr_2 = BlockILU([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
-    # TODO: The CPR preconditioner should also include a reordering from fieldsplit
-    # to cellsplit.
+
     cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
     return [
