@@ -1484,6 +1484,7 @@ class MultiPhysicsPreconditioner:
         pc,  # PC comes from ksp or similar
         user_options: dict | None = None,
         precond_list: list[SinglePhysicsPreconditioner] | None = None,
+        prefix: str | None = None,
     ) -> dict:  # TODO: Return None?
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
@@ -1500,7 +1501,8 @@ class MultiPhysicsPreconditioner:
 
         options = {}
 
-        prefix = ""
+        if prefix is None:
+            prefix = ""
 
         dof_manager = self._dof_manager
 
@@ -1529,7 +1531,11 @@ class MultiPhysicsPreconditioner:
                         sub_pc = pc.getCompositePC(i)
                         sub_pc.setOperators(*pc.getOperators())
                         loc_options = self.configure(
-                            bmat, sub_pc, user_options, sub_solver
+                            bmat,
+                            sub_pc,
+                            user_options,
+                            sub_solver,
+                            prefix=f"{prefix}sub_{i}_",
                         )
                     else:
                         loc_options = sub_solver.configure(
