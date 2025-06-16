@@ -1363,6 +1363,25 @@ class BlockILU(SinglePhysicsPreconditioner):
         )
 
 
+class IdentityPreconditioner(SinglePhysicsPreconditioner):
+    def __init__(self, group):
+        self._group = group
+
+    @property
+    def key(self) -> str:
+        return "identity"
+
+    @property
+    def tag(self) -> str:
+        return "identity"
+
+    def _default_options(self, model, dof_manager) -> dict:
+        local_opts = {
+            "pc_type": "none",
+        }
+        return local_opts
+
+
 class CompositePreconditioner(SinglePhysicsPreconditioner):
     """A class for a composite (e.g., multi-stage) preconditioner for a block."""
 
