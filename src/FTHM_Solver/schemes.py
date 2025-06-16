@@ -24,7 +24,7 @@ from .full_petsc_solver import (
     PcPythonPermutation,
 )
 from .fixed_stress import make_fs_analytical_slow_new
-from .thm_solver import make_pt_permutation
+from .thm_solver import make_pt_permutation, get_dofs_of_groups
 
 from . import hm_solver
 from .iterative_solver import (
@@ -1276,7 +1276,7 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         return local_opts
 
 
-class CPRStage2(SinglePhysicsPreconditioner):
+class BlockILU(SinglePhysicsPreconditioner):
     def __init__(self, groups):
         self._group = groups
 
@@ -1290,16 +1290,27 @@ class CPRStage2(SinglePhysicsPreconditioner):
 
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
-            "ksp_type": "preonly",
-            "pc_type": "ilu",
+            # "ksp_type": "preonly",
+            "python_pc_type": "ilu",
+            "pc_type": "python",
             # "pc_cprilu_levels": 2,
             # "pc_cprilu_fill": 0.1,
             # "pc_cprilu_zeropivot": 1e-12,
         }
         return local_opts
 
-    # def python_preconditioner(self, bmat: BlockMatrixStorage, dof_manager: DofManager):
-    #     lambda bmat: PcPythonPermutation(bmat, block_size=2)
+    def python_preconditioner(self, bmat, dof_manager: DofManager):
+        indices = []
+        for g in self._group:
+            # Get the indices for the group.
+            indices.append(
+                dof_manager._name_to_group_indices[g.equation_names(None)[0]]
+            )
+
+        # Need to get hold of the groups here.
+        return PcPythonPermutation(
+            to_cell_ordering(bmat, indices), block_size=len(self._group)
+        )
 
 
 class CompositePreconditioner(SinglePhysicsPreconditioner):
@@ -1426,14 +1437,14 @@ class MultiPhysicsPreconditioner:
                     # Set the matrix for the sub-preconditioner. This seems to be
                     # necessary for composite preconditioners.
                     sub_pc.setOperators(*pc.getOperators())
-                    # if loc_options.get("pc_type") == "python":
-                    #     # EK cannot wrap his head around what this would mean, so we
-                    #     # rule it out for now.
-                    #     assert not has_complement
-                    #     python_pc = sub_solver.python_preconditioner(bmat, dof_manager)
-                    #     python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
-                    #     pc.setType("python")
-                    #     pc.setPythonContext(python_pc)
+                    if loc_options.get("pc_type") == "python":
+                        # EK cannot wrap his head around what this would mean, so we
+                        # rule it out for now.
+                        assert not has_complement
+                        python_pc = sub_solver.python_preconditioner(bmat, dof_manager)
+                        python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+                        sub_pc.setType("python")
+                        sub_pc.setPythonContext(python_pc)
 
                     tagged_loc_options = {
                         f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
@@ -1556,7 +1567,7 @@ def hm_factory():
 
 def thm_factory():
     cpr_1 = MassBalanceDimSplitPreconditioner()
-    cpr_2 = CPRStage2([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
+    cpr_2 = BlockILU([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
     # TODO: The CPR preconditioner should also include a reordering from fieldsplit
     # to cellsplit.
     cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
@@ -1620,8 +1631,8 @@ def to_cell_ordering(J, group_lists: list[list[int]]):
     J = J[all_groups]
 
     rows = [
-        get_dofs_of_groups(J.group_to_blocks, J.local_dofs_row, group)
-        for group in all_groups
+        get_dofs_of_groups(J.groups_to_blocks_row, J.local_dofs_row, group)
+        for group in group_lists
     ]
     return np.row_stack(rows).ravel("F")
 
