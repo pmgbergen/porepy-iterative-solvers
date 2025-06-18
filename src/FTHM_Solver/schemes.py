@@ -38,11 +38,10 @@ from .mat_utils import csr_ones, inv_block_diag, csr_to_petsc
 from petsc4py import PETSc
 
 
+import equation_variable_groups as groups
+
+
 __all__ = [
-    "MassBalanceGroup",
-    "InterfaceDarcyFluxGroup",
-    "MechanicsGroup",
-    "ContactGroup",
     "DofManager",
     "SinglePhysicsPreconditioner",
     "InterfaceDarcyFluxPreconditioner",
@@ -87,323 +86,6 @@ class EquationNames(Enum):
     CONTACT_TANGENTIAL = "tangential_fracture_deformation_equation"
 
 
-class AbstractGroup(ABC):
-    """
-    Abstract class for defining a group of equations and variables. This serves two
-    purposes:
-        1. To define pairs of equations and variables that should be grouped together,
-           and thereby define the diagonal blocks of the linear system.
-        2. To define groups of equations that will be treated together by the iterative
-           solver. The can be used to group equations of the same type (e.g., mass
-           balance) on different subdomains, or to group equations of different type,
-           but that still should be solved together.
-
-    """
-
-    @abstractmethod
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        pass
-
-    @abstractmethod
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        pass
-
-    @abstractmethod
-    def equation_names(self, model) -> list[str]:
-        pass
-
-    @abstractmethod
-    def variable_names(self, model) -> list[str]:
-        pass
-
-
-class MassBalanceGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        subdomains = model.mdg.subdomains()
-        return [[(EquationNames.MASS_BALANCE.value, subdomains)]]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        subdomains = model.mdg.subdomains()
-        return [[model.pressure(subdomains)]]
-
-    def equation_names(self, model) -> list[str]:
-        return [EquationNames.MASS_BALANCE.value]
-
-    def variable_names(self, model) -> list[str]:
-        return [model.pressure_variable]
-
-
-def _split_subdomains_by_dimension(model: pp.PorePyModel):
-    matrix_subdomains = model.mdg.subdomains(dim=model.nd)
-    fracture_subdomains = model.mdg.subdomains(dim=model.nd - 1)
-    intersection_subdomains = [
-        sd for sd in model.mdg.subdomains() if sd.dim < model.nd - 1
-    ]
-    return matrix_subdomains, fracture_subdomains, intersection_subdomains
-
-
-class MassBalanceDimSplitGroup(AbstractGroup):
-    """Group for the mass balance equation, with matrix, fractures and intersections
-    split into different groups. This is needed for fixed-stress type preconditioners,
-    where the stabilization term differs according to the dimension of the subdomains.
-    """
-
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            _split_subdomains_by_dimension(model)
-        )
-        return [
-            [(EquationNames.MASS_BALANCE_MATRIX.value, matrix_subdomains)],
-            [(EquationNames.MASS_BALANCE_FRACTURES.value, fracture_subdomains)],
-            [
-                (
-                    EquationNames.MASS_BALANCE_INTERSECTIONS.value,
-                    intersection_subdomains,
-                )
-            ],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            _split_subdomains_by_dimension(model)
-        )
-        return [
-            [model.pressure(matrix_subdomains)],
-            [model.pressure(fracture_subdomains)],
-            [model.pressure(intersection_subdomains)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.MASS_BALANCE_MATRIX.value,
-            EquationNames.MASS_BALANCE_FRACTURES.value,
-            EquationNames.MASS_BALANCE_INTERSECTIONS.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [
-            model.pressure_variable + "_matrix",
-            model.pressure_variable + "_fractures",
-            model.pressure_variable + "_intersections",
-        ]
-
-
-class EnergyBalanceDimSplitGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            _split_subdomains_by_dimension(model)
-        )
-        return [
-            [(EquationNames.ENERGY_BALANCE_MATRIX.value, matrix_subdomains)],
-            [(EquationNames.ENERGY_BALANCE_FRACTURES.value, fracture_subdomains)],
-            [
-                (
-                    EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
-                    intersection_subdomains,
-                )
-            ],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        matrix_subdomains, fracture_subdomains, intersection_subdomains = (
-            _split_subdomains_by_dimension(model)
-        )
-        return [
-            [model.temperature(matrix_subdomains)],
-            [model.temperature(fracture_subdomains)],
-            [model.temperature(intersection_subdomains)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.ENERGY_BALANCE_MATRIX.value,
-            EquationNames.ENERGY_BALANCE_FRACTURES.value,
-            EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [
-            model.temperature_variable + "_matrix",
-            model.temperature_variable + "_fractures",
-            model.temperature_variable + "_intersections",
-        ]
-
-
-class InterfaceDarcyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        interfaces = model.mdg.interfaces()
-        return [[(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)]]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        interfaces = model.mdg.interfaces()
-        return [[model.interface_darcy_flux(interfaces)]]
-
-    def equation_names(self, model) -> list[str]:
-        return [EquationNames.INTERFACE_DARCY_FLUX.value]
-
-    def variable_names(self, model) -> list[str]:
-        return [model.interface_darcy_flux_variable]
-
-
-class InterfaceEnthalpyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [model.interface_enthalpy_flux(interfaces)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.INTERFACE_ENTHALPY_FLUX.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [
-            model.interface_enthalpy_flux_variable,
-        ]
-
-
-class InterfaceFourierFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [model.interface_fourier_flux(interfaces)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.INTERFACE_FOURIER_FLUX.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [
-            model.interface_fourier_flux_variable,
-        ]
-
-
-class InterfaceMassEnergyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
-            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
-            [(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        interfaces = model.mdg.interfaces()
-        return [
-            [model.interface_enthalpy_flux(interfaces)],
-            [model.interface_fourier_flux(interfaces)],
-            [model.interface_darcy_flux(interfaces)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.INTERFACE_ENTHALPY_FLUX.value,
-            EquationNames.INTERFACE_FOURIER_FLUX.value,
-            EquationNames.INTERFACE_DARCY_FLUX.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [
-            model.interface_enthalpy_flux_variable,
-            model.interface_fourier_flux_variable,
-            model.interface_darcy_flux_variable,
-        ]
-
-
-class MechanicsGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        subdomains = model.mdg.subdomains(dim=model.nd)
-        interfaces = model.mdg.interfaces(dim=model.nd - 1)
-
-        # Define two groups of equations, one for momentum balance in the matrix and one
-        # for force balance on the highest-dimensional interfaces. The mechanics
-        # preconditioner will treat these groups jointly.
-        return [
-            [(EquationNames.MECHANICS.value, subdomains)],
-            [(EquationNames.INTERFACE_FORCE_BALANCE.value, interfaces)],
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        subdomains = model.mdg.subdomains(dim=model.nd)
-        interfaces = model.mdg.interfaces(dim=model.nd - 1)
-
-        # Define two groups of variables, one for the displacement in the matrix and one
-        # for the interface displacement.
-        return [
-            [model.displacement(subdomains)],
-            [model.interface_displacement(interfaces)],
-        ]
-
-    def equation_names(self, model) -> list[str]:
-        return [
-            EquationNames.MECHANICS.value,
-            EquationNames.INTERFACE_FORCE_BALANCE.value,
-        ]
-
-    def variable_names(self, model) -> list[str]:
-        return [model.displacement_variable, model.interface_displacement_variable]
-
-
-class ContactGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
-        subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        # Define a single group of equations to be solved together: The normal and
-        # tangential deformation equations for the contact mechanics.
-        return [
-            [
-                (EquationNames.CONTACT_NORMAL.value, subdomains),
-                (EquationNames.CONTACT_TANGENTIAL.value, subdomains),
-            ]
-        ]
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        # There is a single group of variables for the contact mechanics, which is the
-        # contact traction.
-        return [[model.contact_traction(subdomains)]]
-
-    def equation_names(self, model) -> list[str]:
-        return [EquationNames.CONTACT.value]
-
-    def variable_names(self, model) -> list[str]:
-        return [model.contact_traction_variable]
-
-
 class DofManager:
     """Takes care of translation of blocks and groups (from EquationSystem format) to
     block indices, as well as grouping the fine-scale dofs. Also reordering related to
@@ -417,7 +99,7 @@ class DofManager:
         self,
         equation_system: pp.EquationSystem,
         model: pp.PorePyModel,
-        orderings: list[AbstractGroup],
+        orderings: list[groups.AbstractGroup],
         solvers: list[SinglePhysicsPreconditioner],
     ):
         self._equation_system = equation_system
@@ -431,14 +113,14 @@ class DofManager:
         self._name_to_group_indices = name_to_group_ind
 
     @property
-    def groups(self) -> list[AbstractGroup]:
+    def groups(self) -> list[groups.AbstractGroup]:
         """Return the groups of equations and variables."""
         return self._orderings
 
     def petsc_is(
         self,
-        current_solver: AbstractGroup,
-        other_solver: list[AbstractGroup],
+        current_solver: groups.AbstractGroup,
+        other_solver: list[groups.AbstractGroup],
         bmat: BlockMatrixStorage,
     ):
         # Not sure if this belongs here, but it is tempting to put it here and not in
@@ -704,7 +386,7 @@ class DofManager:
         """Get the equation dofs for the model, in the form of a list of numbers,
         one per equation-domain pair. If the contact group is present, it will be
         reordered so that the normal and tangential equations for each fracture cell
-        form a diganol block.
+        form a digonal block.
         """
         eq_dofs: list[np.ndarray] = []
         offset = 0
@@ -989,7 +671,7 @@ class SinglePhysicsPreconditioner(ABC):
         self,
         model: pp.PorePyModel,
         dof_manager: DofManager,
-        groups: list[AbstractGroup],
+        groups: list[groups.AbstractGroup],
     ) -> Callable:
         """
         Return the inverter for the preconditioner.
@@ -1036,7 +718,7 @@ class SinglePhysicsPreconditioner(ABC):
 
 class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = InterfaceDarcyFluxGroup()
+        self._group = groups.InterfaceDarcyFluxGroup()
 
     @property
     def key(self) -> str:
@@ -1066,7 +748,7 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = InterfaceEnthalpyFluxGroup()
+        self._group = groups.InterfaceEnthalpyFluxGroup()
 
     @property
     def key(self) -> str:
@@ -1096,7 +778,7 @@ class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 class InterfaceFourierFluxPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = InterfaceFourierFluxGroup()
+        self._group = groups.InterfaceFourierFluxGroup()
 
     @property
     def key(self) -> str:
@@ -1126,7 +808,7 @@ class InterfaceFourierFluxPreconditioner(SinglePhysicsPreconditioner):
 
 class InterfaceMassEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = InterfaceMassEnergyFluxGroup()
+        self._group = groups.InterfaceMassEnergyFluxGroup()
 
     @property
     def key(self) -> str:
@@ -1156,7 +838,7 @@ class InterfaceMassEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 class MassBalancePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = MassBalanceGroup()
+        self._group = groups.MassBalanceGroup()
 
     @property
     def key(self) -> str:
@@ -1177,7 +859,7 @@ class MassBalancePreconditioner(SinglePhysicsPreconditioner):
 
 class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
     def __init__(self):
-        self._group = MassBalanceDimSplitGroup()
+        self._group = groups.MassBalanceDimSplitGroup()
 
 
 class MassBalanceDimSplitCPRPreconditioner(MassBalanceDimSplitPreconditioner):
@@ -1204,7 +886,7 @@ class MassBalanceDimSplitCPRPreconditioner(MassBalanceDimSplitPreconditioner):
 
 class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = MassBalanceGroup()
+        self._group = groups.MassBalanceGroup()
 
     @property
     def key(self) -> str:
@@ -1225,12 +907,12 @@ class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
 
 class EnergyBalanceDimSplitPreconditioner(EnergyBalancePreconditioner):
     def __init__(self):
-        self._group = EnergyBalanceDimSplitGroup()
+        self._group = groups.EnergyBalanceDimSplitGroup()
 
 
 class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = MechanicsGroup()
+        self._group = groups.MechanicsGroup()
 
     @property
     def key(self) -> str:
@@ -1315,7 +997,7 @@ class FixedStressPreconditioner(MechanicsPreconditioner):
 
 class ContactPreconditioner(SinglePhysicsPreconditioner):
     def __init__(self):
-        self._group = ContactGroup()
+        self._group = groups.ContactGroup()
 
     @property
     def key(self) -> str:
@@ -1330,7 +1012,7 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         return False
 
     def group(self):
-        return ContactGroup()
+        return groups.ContactGroup()
 
     def _default_fieldsplit_options(self, model, dof_manager) -> dict:
         opts = super()._default_fieldsplit_options(model, dof_manager)
@@ -1707,12 +1389,14 @@ def thm_factory():
     # Stage 1 of CPR is a
     cpr_1 = [
         MassBalanceDimSplitCPRPreconditioner(),
-        IdentityPreconditioner(EnergyBalanceDimSplitGroup()),
+        IdentityPreconditioner(groups.EnergyBalanceDimSplitGroup()),
     ]
 
     # Stage 2 is a BlockILU preconditioner, which will also include a permutation to a
     # cell-wise ordering of the unknowns.
-    cpr_2 = BlockILU([MassBalanceDimSplitGroup(), EnergyBalanceDimSplitGroup()])
+    cpr_2 = BlockILU(
+        [groups.MassBalanceDimSplitGroup(), groups.EnergyBalanceDimSplitGroup()]
+    )
 
     cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
@@ -1782,6 +1466,19 @@ def to_cell_ordering(J, group_lists: list[list[int]]):
 
 
 @dataclass
+class LinearSolverComponents:
+    dof_manager: DofManager
+    preconditioner: MultiPhysicsPreconditioner
+    ksp_factory: PetscKSPScheme
+
+
+class IterativeSolverMixin:
+    # Temporary storage for the iterative solver results.
+    _petsc_converged_reason = []
+    _krylov_iters = []
+    _construction_time = []
+
+
 class LinearSolverComponents:
     dof_manager: DofManager
     preconditioner: MultiPhysicsPreconditioner
