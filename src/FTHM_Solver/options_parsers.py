@@ -1,0 +1,238 @@
+import porepy as pp
+
+from .block_matrix import BlockMatrixStorage
+from .full_petsc_solver import insert_petsc_options
+from .dof_manager import DofManager
+
+from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
+from warnings import warn
+from petsc4py import PETSc
+
+
+class MultiPhysicsPreconditioner:
+    """Translate a general scheme to a specific PETSc preconditioner, specified as a
+    dictionary (really a fully specified petsc options).
+    """
+
+    def __init__(
+        self,
+        components: list[SinglePhysicsPreconditioner],
+        dof_manager: DofManager,
+        model: pp.PorePyModel,
+        options: dict | None = None,
+    ):
+        """
+        Args:
+            groups: List of groups of equations and variables.
+            schemes: List of schemes for each group.
+        """
+        self._single_physics_precond = components
+        self._dof_manager = dof_manager
+        self._nd = model.nd
+        self._model = model
+        self._options = options if options is not None else {}
+
+    def configure(
+        self,
+        bmat: BlockMatrixStorage,
+        pc,  # PC comes from ksp or similar
+        user_options: dict | None = None,
+        precond_list: list[SinglePhysicsPreconditioner] | None = None,
+        prefix: str | None = None,
+    ) -> dict:  # TODO: Return None?
+        """
+        Populate the PETSc preconditioner based on the groups and schemes. This entails
+        making a bridge from the general settings defined in a scheme to the PETSc
+        options needed to apply the scheme to a contrete linear system, while also accounting for
+
+        Args:
+            model: The model instance specifying the problem to be solved.
+        """
+        user_options = user_options if user_options is not None else {}
+
+        if precond_list is None:
+            precond_list = self._single_physics_precond
+
+        options = {}
+
+        if prefix is None:
+            prefix = ""
+
+        dof_manager = self._dof_manager
+
+        for counter, single_physics_precond in enumerate(precond_list):
+            # Define a scheme for the group
+            has_complement = counter < len(precond_list) - 1
+
+            # Generate the actual petsc proconditioner.
+            loc_options = single_physics_precond.configure(
+                model=self._model,
+                dof_manager=self._dof_manager,
+                has_complement=has_complement,
+                opts=user_options,
+            )
+            tagged_options = {f"{prefix}{k}": v for k, v in loc_options.items()}
+
+            if isinstance(single_physics_precond, CompositePreconditioner):
+                # Set up the composite preconditioner so that we can get hold of the
+                # sub-preconditioners and configure them as well.
+                insert_petsc_options(tagged_options)
+                pc.setFromOptions()
+                pc.setUp()
+                for i, sub_solver in enumerate(single_physics_precond.solvers):
+                    if isinstance(sub_solver, list):
+                        pc.addCompositePCType("fieldsplit")
+                        sub_pc = pc.getCompositePC(i)
+                        sub_pc.setOperators(*pc.getOperators())
+                        loc_options = self.configure(
+                            bmat,
+                            sub_pc,
+                            user_options,
+                            sub_solver,
+                            prefix=f"{prefix}sub_{i}_",
+                        )
+                    else:
+                        loc_options = sub_solver.configure(
+                            model=self._model,
+                            dof_manager=self._dof_manager,
+                            has_complement=has_complement,
+                            opts=user_options,
+                        )
+                        pc.addCompositePCType(loc_options["pc_type"])
+                        sub_pc = pc.getCompositePC(i)
+                        sub_pc.setOperators(*pc.getOperators())
+                    # Implementation note: This is something of a break with how petsc
+                    # options are set in the rest of the package: Instead of defining
+                    # the option through PETSc.Options(), we use the Python API
+                    # directly. This may be possible to avoid, but turned out to solve
+                    # an issue with setting up CompositePC, so it will have to do for
+                    # now.
+                    # Set the matrix for the sub-preconditioner. This seems to be
+                    # necessary for composite preconditioners.
+                    if loc_options.get("pc_type") == "python":
+                        # EK cannot wrap his head around what this would mean, so we
+                        # rule it out for now.
+                        assert not has_complement
+                        python_pc = sub_solver.python_preconditioner(bmat, dof_manager)
+                        python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+                        sub_pc.setType("python")
+                        sub_pc.setPythonContext(python_pc)
+
+                    tagged_loc_options = {
+                        f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
+                    }
+
+                    insert_petsc_options(tagged_loc_options)
+                    sub_pc.setFromOptions()
+                    sub_pc.setUp()
+                    tagged_options |= tagged_loc_options
+
+            # Get the tag for this group, and prepend it to the options.
+
+            options |= tagged_options
+            if not has_complement:
+                # If this is the last preconditioner in the list, we can set it up and
+                # return the options database.
+                insert_petsc_options(options)
+                pc.setFromOptions()
+                pc.setUp()
+
+                return options
+            else:
+                # There are more preconditioners to process, using a fieldsplit style
+                # preconditioner. We need to parse the fieldsplit options and set up the
+                # preconditioners of the next group.
+                pc, prefix = self._parse_fieldsplit_pc(
+                    precond_list[counter:],
+                    bmat,
+                    pc,
+                    prefix,
+                    tagged_options=tagged_options,
+                )
+
+        raise ValueError("Should have reached an empty complement")
+
+    def _parse_fieldsplit_pc(
+        self,
+        precond_list,
+        bmat: BlockMatrixStorage,
+        pc: PETSc.PC,
+        prefix: str,
+        tagged_options: dict | None = None,
+    ):
+        dof_manager = self._dof_manager
+
+        elim_precond = precond_list[0]
+
+        elim_group = dof_manager.blocks_of_solver(elim_precond)
+        keep_group = []
+        for i in range(1, len(precond_list)):
+            keep_group += dof_manager.blocks_of_solver(precond_list[i])
+
+        empty_bmat = bmat.empty_container()[elim_group + keep_group]
+
+        block_size = 1 if elim_precond.unit_block_size else self._nd
+
+        # Get the IS for the group, but only if complement is not None.
+        is_elim, is_keep = self._dof_manager.petsc_is(
+            elim_precond, precond_list[1:], empty_bmat
+        )
+        is_elim.setBlockSize(block_size)
+        elim_tag = elim_precond.tag
+        keep_tag = elim_precond.complement_tag
+
+        insert_petsc_options(tagged_options)
+        pc.setFromOptions()
+        pc.setFieldSplitIS((elim_tag, is_elim), (keep_tag, is_keep))
+
+        # Invoke the inverter, if any. This is where the fixed-stress approximation
+        # for hydromechanical problems is applied. Note to self: Need to send in
+        # all remaining groups to the inverter to make sure the returned matrix is
+        # correct.
+        inverter = elim_precond.inverter(self._model, dof_manager, keep_group)
+        if inverter is not None:
+            S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
+            petsc_stab = inverter(bmat)
+            S.axpy(1, petsc_stab)
+            pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
+
+        pc.setUp()
+
+        elim_ksp = pc.getFieldSplitSubKSP()[0]
+        elim_pc = elim_ksp.getPC()
+
+        keep_ksp = pc.getFieldSplitSubKSP()[1]
+        keep_pc = keep_ksp.getPC()
+
+        if len(keep_pc.getOptionsPrefix()) > 126:
+            # PETSc has a limit on the prefix length, which seems to be 127
+            # characters. If the prefix is too long, we raise a warning.
+            msg = "The prefix for the PETSc preconditioner is too long. "
+            msg += "Check the configuration of the preconditioner."
+            warn(msg)
+
+        if elim_precond.ksp_keep_use_pmat:
+            _, pmat = keep_ksp.getOperators()
+            # TODO: Is it correct to use the same matrix for both arguments?
+            keep_ksp.setOperators(pmat, pmat)
+
+        if elim_precond.near_null_space(self._model) is not None:
+            null_space_vectors = []
+            for b in elim_precond.near_null_space(self._model):
+                null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
+                null_space_vec_petsc.setSizes(b.shape[0], block_size)
+                null_space_vec_petsc.setUp()
+                null_space_vec_petsc.setArray(b)
+                null_space_vectors.append(null_space_vec_petsc)
+            # possibly mem leak
+            null_space_petsc = PETSc.NullSpace().create(True, null_space_vectors)
+            elim_pc.getOperators()[1].setNearNullSpace(null_space_petsc)
+
+        # Call on self.complement to configure the PETSc PC object for the complement,
+        # and update (override) the options with the options returned by the complement.
+        # Note that, due to the tagging system, this may override some options that were
+        # set above.
+
+        pc = keep_pc
+        prefix = f"{prefix}fieldsplit_{keep_tag}_"
+        return pc, prefix
