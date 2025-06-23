@@ -14,8 +14,11 @@ import scipy.sparse as sps
 from .block_matrix import BlockMatrixStorage
 from .dof_manager import DofManager
 from .mat_utils import csr_ones, inv_block_diag
-from .options_parsers import (LinearTransformedScheme,
-                              MultiPhysicsPreconditioner, PetscKSPScheme)
+from .options_parsers import (
+    LinearTransformedScheme,
+    MultiPhysicsPreconditioner,
+    PetscKSPScheme,
+)
 from .preconditioners import SinglePhysicsPreconditioner
 
 __all__ = [

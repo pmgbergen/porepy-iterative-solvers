@@ -9,10 +9,12 @@ from petsc4py import PETSc
 from .block_matrix import BlockMatrixStorage
 from .dof_manager import DofManager
 from .mat_utils import csr_to_petsc, inv_block_diag, сlear_petsc_options
-from .petsc_solvers import (LinearSolverWithTransformations, PetscKrylovSolver,
-                            insert_petsc_options)
-from .preconditioners import (CompositePreconditioner,
-                              SinglePhysicsPreconditioner)
+from .petsc_solvers import (
+    LinearSolverWithTransformations,
+    PetscKrylovSolver,
+    insert_petsc_options,
+)
+from .preconditioners import CompositePreconditioner, SinglePhysicsPreconditioner
 
 
 class MultiPhysicsPreconditioner:

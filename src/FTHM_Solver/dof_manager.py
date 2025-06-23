@@ -9,8 +9,7 @@ from petsc4py import PETSc
 from . import equation_variable_groups as groups
 from .block_matrix import BlockMatrixStorage
 from .equation_variable_groups import EquationNames
-from .preconditioners import (CompositePreconditioner,
-                              SinglePhysicsPreconditioner)
+from .preconditioners import CompositePreconditioner, SinglePhysicsPreconditioner
 
 
 class DofManager:
