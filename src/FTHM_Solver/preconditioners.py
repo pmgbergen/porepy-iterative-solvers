@@ -7,11 +7,8 @@ from typing import Callable
 import porepy as pp
 from abc import ABC, abstractmethod
 
-from .full_petsc_solver import (
-    PcPythonPermutation,
-)
+from .petsc_solvers import PcPythonPermutation
 from .fixed_stress import make_fs_analytical_slow_new
-from .thm_solver import get_dofs_of_groups
 
 from .mat_utils import csr_to_petsc
 
@@ -636,3 +633,10 @@ def _to_cell_ordering(J, group_lists: list[list[int]]):
         for group in group_lists
     ]
     return np.row_stack(rows).ravel("F")
+
+
+def get_dofs_of_groups(
+    groups_to_block: list[list[int]], dofs: list[np.ndarray], groups: list[int]
+) -> np.ndarray:
+    blocks = [blk for g in groups for blk in groups_to_block[g]]
+    return np.concatenate([dofs[blk] for blk in blocks])

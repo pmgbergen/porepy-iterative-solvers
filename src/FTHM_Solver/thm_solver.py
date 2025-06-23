@@ -546,13 +546,6 @@ class THMSolver(IterativeHMSolver):
         )
 
 
-def get_dofs_of_groups(
-    groups_to_block: list[list[int]], dofs: list[np.ndarray], groups: list[int]
-) -> np.ndarray:
-    blocks = [blk for g in groups for blk in groups_to_block[g]]
-    return np.concatenate([dofs[blk] for blk in blocks])
-
-
 def make_pt_permutation(
     J: BlockMatrixStorage, p_groups: list[int], t_groups: list[int]
 ):
