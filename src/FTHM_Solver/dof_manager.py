@@ -2,7 +2,6 @@ from __future__ import annotations
 import numpy as np
 import porepy as pp
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import construct_is
 from .iterative_solver import get_equations_group_ids, get_variables_group_ids
 from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
 
@@ -58,8 +57,8 @@ class DofManager:
             # Get the block id for the group.
             other_id += self.blocks_of_solver(group)
 
-        current_is = construct_is(bmat, current_id)
-        other_is = construct_is(bmat, other_id)
+        current_is = self._construct_is(bmat, current_id)
+        other_is = self._construct_is(bmat, other_id)
         return current_is, other_is
 
     def variable_groups(
@@ -528,3 +527,33 @@ class DofManager:
         else:
             raise ValueError("Model dimension must be 2 or 3.")
         return reorder
+
+    def _construct_is(self, bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
+        """Construct a PETSc IS (index set) from a list of groups.
+
+        Parameters:
+            bmat: The block matrix storage.
+            groups: The groups to construct the IS from.
+
+        Returns:
+            The PETSc IS object representing the groups.
+
+        """
+        # TODO: Why is it necessary to create an empty container here, and not just work
+        # with information from the bmat object?
+        empty_mat = bmat.empty_container()
+        dofs = [
+            empty_mat.local_dofs_row[x]
+            for i in groups
+            for x in empty_mat.groups_to_blocks_row[i]
+        ]
+        if len(dofs) > 0:
+            return PETSc.IS().createGeneral(
+                np.concatenate(
+                    dofs,
+                    dtype=np.int32,  # TODO: What if the size is too large for int32?
+                )
+            )
+        else:
+            # Return an empty IS if the group is empty.
+            return PETSc.IS().createGeneral(np.array([], dtype=np.int32))

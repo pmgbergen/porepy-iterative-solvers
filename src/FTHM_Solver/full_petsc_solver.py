@@ -26,39 +26,7 @@ __all__ = [
     "SolverScheme",
     "PreconditionerScheme",
     "LinearTransformedScheme",
-    "construct_is",
 ]
-
-
-def construct_is(bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
-    """Construct a PETSc IS (index set) from a list of groups.
-
-    Parameters:
-        bmat: The block matrix storage.
-        groups: The groups to construct the IS from.
-
-    Returns:
-        The PETSc IS object representing the groups.
-
-    """
-    # TODO: Why is it necessary to create an empty container here, and not just work
-    # with information from the bmat object?
-    empty_mat = bmat.empty_container()
-    dofs = [
-        empty_mat.local_dofs_row[x]
-        for i in groups
-        for x in empty_mat.groups_to_blocks_row[i]
-    ]
-    if len(dofs) > 0:
-        return PETSc.IS().createGeneral(
-            np.concatenate(
-                dofs,
-                dtype=np.int32,  # TODO: What if the size is too large for int32?
-            )
-        )
-    else:
-        # Return an empty IS if the group is empty.
-        return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
 
 
 def build_tag(groups: list[int]) -> str:
