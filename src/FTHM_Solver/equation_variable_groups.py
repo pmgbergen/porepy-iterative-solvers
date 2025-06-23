@@ -1,6 +1,29 @@
 from abc import ABC, abstractmethod
 import porepy as pp
-from .schemes import EquationNames
+from enum import Enum
+
+
+class EquationNames(Enum):
+    """Enum for the names of the equations in the model."""
+
+    MASS_BALANCE = "mass_balance_equation"
+    MASS_BALANCE_MATRIX = "mass_balance_equation"
+    MASS_BALANCE_FRACTURES = "mass_balance_equation"
+    MASS_BALANCE_INTERSECTIONS = "mass_balance_equation"
+    ENERGY_BALANCE = "energy_balance_equation"
+    ENERGY_BALANCE_MATRIX = "energy_balance_equation"
+    ENERGY_BALANCE_FRACTURES = "energy_balance_equation"
+    ENERGY_BALANCE_INTERSECTIONS = "energy_balance_equation"
+    INTERFACE_DARCY_FLUX = "interface_darcy_flux_equation"
+
+    INTERFACE_ENTHALPY_FLUX = "interface_enthalpy_flux_equation"
+    INTERFACE_FOURIER_FLUX = "interface_fourier_flux_equation"
+
+    MECHANICS = "momentum_balance_equation"
+    INTERFACE_FORCE_BALANCE = "interface_force_balance_equation"
+    CONTACT = "contact_mechanics_equation"
+    CONTACT_NORMAL = "normal_fracture_deformation_equation"
+    CONTACT_TANGENTIAL = "tangential_fracture_deformation_equation"
 
 
 class AbstractGroup(ABC):
