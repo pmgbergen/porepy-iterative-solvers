@@ -2,11 +2,13 @@ from __future__ import annotations
 import numpy as np
 import porepy as pp
 from .block_matrix import BlockMatrixStorage
-from .iterative_solver import get_equations_group_ids, get_variables_group_ids
 from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
+
+from typing import Sequence
 
 from . import equation_variable_groups as groups
 from .equation_variable_groups import EquationNames
+from petsc4py import PETSc
 
 
 class DofManager:
@@ -217,8 +219,10 @@ class DofManager:
 
         # Done with the first step. Next, expand the groups by calling on relevant
         # helper methods.
-        var_groups_by_number = get_variables_group_ids(model, var_groups)
-        equation_groups_by_number = get_equations_group_ids(model, equations_by_name)
+        var_groups_by_number = self._get_variables_group_ids(model, var_groups)
+        equation_groups_by_number = self._get_equations_group_ids(
+            model, equations_by_name
+        )
 
         # Permute the contact equations if present. NOTE: It would have been preferrable
         # to use the name_to_group_indices map, constructed just below, to identify the
@@ -557,3 +561,96 @@ class DofManager:
         else:
             # Return an empty IS if the group is empty.
             return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
+
+    def _get_variables_group_ids(
+        self,
+        model: pp.PorePyModel,
+        md_variables_groups: Sequence[
+            Sequence[pp.ad.MixedDimensionalVariable | pp.ad.Variable]
+        ],
+    ) -> list[list[int]]:
+        """Used to assemble the index that will later help accessing the submatrix
+        corresponding to a group of variables, which may include one or more variable.
+
+        Example: Group 0 corresponds to the pressure on all the subdomains. It will contain
+        indices [0, 1, 2] which point to the pressure variable dofs on sd1, sd2 and sd3,
+        respectively. Combination of different variables in one group is also possible.
+
+        Parameters:
+            model: The PorePy model. The model should have the EquationSystem defined.
+            md_variables_groups: The order of the groups of variables. Each group is a
+                sequence of variables (either MixedDimensionalVariable or Variable).
+
+        Returns:
+            List of lists of integers. Each inner list contains the indices of the variables
+                in defined in the respective item in md_variables_groups.
+
+        """
+        # Create a 0-based index for each variable.
+        variable_to_idx = {
+            var: i for i, var in enumerate(model.equation_system.variables)
+        }
+        indices = []
+        for md_var_group in md_variables_groups:
+            group_idx = []
+            for md_var in md_var_group:
+                # If we ever get a variable in here, we need to handle it directly, and not
+                # call sub_vars.
+                assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
+                group_idx.extend([variable_to_idx.pop(var) for var in md_var.sub_vars])
+            indices.append(group_idx)
+        assert len(variable_to_idx) == 0, "Some variables are not used."
+        return indices
+
+    def _get_equations_group_ids(
+        self,
+        model: pp.PorePyModel,
+        equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
+    ) -> list[list[int]]:
+        """Used to assemble the index that will later help accessing the submatrix
+        corresponding to a group of equation, which may include one or more equation.
+
+        Parameters:
+            model: The PorePy model. The model should have the EquationSystem defined.
+            equations_group_order: The order of the groups of equations. Each group is a
+                sequence of tuples. Each tuple contains the name of the equation and the
+                domain where it is applied.
+
+        Returns:
+            List of lists of integers. Each inner list contains the indices of the equations
+                in defined in the respective item in equations_group_order. The indices
+                refer to the block indices defined in
+                model.equation_system._equation_image_space_composition.
+
+        """
+        # Assign a unique index to each equation-domain pair.
+        equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
+        idx: int = 0
+        for (
+            eq_name,
+            domains,
+        ) in model.equation_system._equation_image_space_composition.items():
+            for domain in domains:
+                equation_to_idx[(eq_name, domain)] = idx
+                idx += 1
+
+        indices: list[list[int]] = []
+        # The outer loop define different groups of equations (to become blocks in the
+        # block matrix).
+        for group in equations_group_order:
+            group_idx = []
+            # Items in the group will contain a single equation defined on one or more
+            # domains (subdomains or interfaces). Loop over equations an over all their
+            # domains to add the indices to the group.
+            for eq_name, domains_of_eq in group:
+                for domain in domains_of_eq:
+                    if (eq_name, domain) in equation_to_idx:
+                        group_idx.append(equation_to_idx.pop((eq_name, domain)))
+            indices.append(group_idx)
+
+        # TODO EK: Added this assert just to verify that my understanding of the function
+        # is correct. Delete it later.
+        assert len(indices) == len(equations_group_order)
+        assert len(equation_to_idx) == 0, "Some equations are not used."
+
+        return indices
