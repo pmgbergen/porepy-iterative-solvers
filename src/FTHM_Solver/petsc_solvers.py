@@ -2,10 +2,11 @@
 and related classes.
 """
 
+from typing import Optional
+
 import numpy as np
 from petsc4py import PETSc
 
-from typing import Optional
 from .block_matrix import BlockMatrixStorage
 
 

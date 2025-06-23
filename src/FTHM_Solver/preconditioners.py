@@ -1,20 +1,17 @@
 from __future__ import annotations
+
+from abc import ABC, abstractmethod
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
-from typing import Callable
 import porepy as pp
-from abc import ABC, abstractmethod
-
-from .petsc_solvers import PcPythonPermutation
-from .fixed_stress import make_fs_analytical_slow_new
-
-from .mat_utils import csr_to_petsc
-
-from .equation_variable_groups import EquationNames
 
 from . import equation_variable_groups as groups
+from .equation_variable_groups import EquationNames
+from .fixed_stress import make_fs_analytical_slow_new
+from .mat_utils import csr_to_petsc
+from .petsc_solvers import PcPythonPermutation
 
 if TYPE_CHECKING:
     from .dof_manager import DofManager

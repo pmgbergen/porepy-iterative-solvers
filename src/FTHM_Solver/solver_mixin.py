@@ -2,30 +2,21 @@
 
 from __future__ import annotations
 
-from time import time
-
+from dataclasses import dataclass
 from pathlib import Path
+from time import time
+from typing import Callable
 
 import numpy as np
-import scipy.sparse as sps
-from typing import Callable
-from dataclasses import dataclass
 import porepy as pp
+import scipy.sparse as sps
 
 from .block_matrix import BlockMatrixStorage
-
-from .mat_utils import csr_ones, inv_block_diag
-
 from .dof_manager import DofManager
-from .options_parsers import (
-    MultiPhysicsPreconditioner,
-    PetscKSPScheme,
-    LinearTransformedScheme,
-)
-
-
+from .mat_utils import csr_ones, inv_block_diag
+from .options_parsers import (LinearTransformedScheme,
+                              MultiPhysicsPreconditioner, PetscKSPScheme)
 from .preconditioners import SinglePhysicsPreconditioner
-
 
 __all__ = [
     "IterativeSolverMixin",

@@ -10,7 +10,6 @@ import scipy.sparse as sps
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .stats import LinearSolveStats, StatisticsSavingMixin
 
-
 __all__ = [
     "IterativeLinearSolver",
 ]

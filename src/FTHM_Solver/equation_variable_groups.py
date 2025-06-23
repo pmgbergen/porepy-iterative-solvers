@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-import porepy as pp
 from enum import Enum
+
+import porepy as pp
 
 
 class EquationNames(Enum):

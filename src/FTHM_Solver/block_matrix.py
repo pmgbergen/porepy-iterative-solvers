@@ -13,17 +13,9 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, spmatrix
 
-from .mat_utils import (
-    FieldSplit,
-    PetscGMRES,
-    PetscKrylovSolver,
-    PetscRichardson,
-    TwoStagePreconditioner,
-    cond,
-    inv,
-)
+from .mat_utils import (FieldSplit, PetscGMRES, PetscKrylovSolver,
+                        PetscRichardson, TwoStagePreconditioner, cond, inv)
 from .plot_utils import plot_mat, spy
-
 
 __all__ = [
     "BlockMatrixStorage",

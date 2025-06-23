@@ -1,14 +1,16 @@
 from __future__ import annotations
-import numpy as np
-import porepy as pp
-from .block_matrix import BlockMatrixStorage
-from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
 
 from typing import Sequence
 
-from . import equation_variable_groups as groups
-from .equation_variable_groups import EquationNames
+import numpy as np
+import porepy as pp
 from petsc4py import PETSc
+
+from . import equation_variable_groups as groups
+from .block_matrix import BlockMatrixStorage
+from .equation_variable_groups import EquationNames
+from .preconditioners import (CompositePreconditioner,
+                              SinglePhysicsPreconditioner)
 
 
 class DofManager:
