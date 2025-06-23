@@ -9,6 +9,12 @@ from typing import Optional
 from .block_matrix import BlockMatrixStorage
 
 
+def insert_petsc_options(options):
+    petsc_options = PETSc.Options()
+    for k, v in options.items():
+        petsc_options[k] = v
+
+
 class PetscKrylovSolver:
     """Shallow wrapper around a PETSc KSP object."""
 

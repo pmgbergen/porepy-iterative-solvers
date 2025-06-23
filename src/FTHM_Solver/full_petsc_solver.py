@@ -34,12 +34,6 @@ def build_tag(groups: list[int]) -> str:
     return "-".join([str(x) for x in groups])
 
 
-def insert_petsc_options(options):
-    petsc_options = PETSc.Options()
-    for k, v in options.items():
-        petsc_options[k] = v
-
-
 def petsc_options_as_str(stem: str) -> str:
     options = PETSc.Options().getAll()
 
