@@ -4,12 +4,9 @@ from __future__ import annotations
 from itertools import chain
 
 from time import time
-from pprint import pprint
 
-from warnings import warn
 from pathlib import Path
 
-from enum import Enum
 import numpy as np
 import scipy.sparse as sps
 from typing import Callable
@@ -81,19 +78,6 @@ def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
 
 
 @dataclass
-class LinearSolverComponents:
-    dof_manager: DofManager
-    preconditioner: MultiPhysicsPreconditioner
-    ksp_factory: PetscKSPScheme
-
-
-class IterativeSolverMixin:
-    # Temporary storage for the iterative solver results.
-    _petsc_converged_reason = []
-    _krylov_iters = []
-    _construction_time = []
-
-
 class LinearSolverComponents:
     dof_manager: DofManager
     preconditioner: MultiPhysicsPreconditioner
