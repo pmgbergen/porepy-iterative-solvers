@@ -1,4 +1,5 @@
 import porepy as pp
+import scipy.sparse as sps
 
 from .block_matrix import BlockMatrixStorage
 from .full_petsc_solver import insert_petsc_options
@@ -7,6 +8,11 @@ from .dof_manager import DofManager
 from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
 from warnings import warn
 from petsc4py import PETSc
+
+from dataclasses import dataclass
+from typing import Optional
+
+from .petsc_solvers import PetscKrylovSolver, LinearSolverWithTransformations
 
 
 class MultiPhysicsPreconditioner:
@@ -236,3 +242,172 @@ class MultiPhysicsPreconditioner:
         pc = keep_pc
         prefix = f"{prefix}fieldsplit_{keep_tag}_"
         return pc, prefix
+
+
+@dataclass
+class PetscKSPScheme:
+    """Scheme for a KSP solver for a multiphysics problem."""
+
+    preconditioner: Optional = None
+    """The preconditioner to be used."""
+
+    petsc_options: Optional[dict] = None
+    """Additional options to be passed to PETSc."""
+
+    compute_eigenvalues: bool = False
+    """Whether to compute the eigenvalues of the matrix."""
+
+    def get_groups(self) -> list[int]:
+        """Return the groups of the preconditioner."""
+        return self.preconditioner.get_groups()
+
+    def make_solver(self, mat_orig: BlockMatrixStorage, options: dict | None = None):
+        # Construct a PETSc matrix from the scipy matrix.
+        # TODO: Can we at this point delete the scipy matrix to save memory?
+        petsc_mat = csr_to_petsc(mat_orig.mat)
+
+        # Clear the PETSc options from a previous solve.
+        сlear_petsc_options()
+
+        # Hard coded options for the KSP solver. TODO: Figure out how this can be
+        # configured from the outside.
+        default_options = {
+            # "ksp_monitor": None,
+            "ksp_type": "gmres",
+            "ksp_pc_side": "right",
+            "ksp_rtol": 1e-12,
+            "ksp_max_it": 120,
+            "ksp_gmres_cgs_refinement_type": "refine_ifneeded",
+            "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
+        }
+
+        options = default_options | (self.petsc_options or {}) | (options or {})
+
+        # Insert the above options into the PETSc options singleton.
+        insert_petsc_options(options)
+
+        # Create the PETSc KSP object, set matrix and preconditioner.
+        petsc_ksp = PETSc.KSP().create()
+        petsc_ksp.setOperators(petsc_mat)
+        petsc_ksp.setFromOptions()
+        petsc_pc = petsc_ksp.getPC()
+        if self.preconditioner is not None:
+            options |= self.preconditioner.configure(
+                bmat=mat_orig,
+                pc=petsc_pc,
+                user_options=options,
+            )
+        if self.compute_eigenvalues:
+            petsc_ksp.setComputeEigenvalues(True)
+
+        petsc_ksp.setUp()
+        self.options = options
+        return PetscKrylovSolver(petsc_ksp)
+
+
+@dataclass
+class LinearTransformedScheme:
+    nd: int
+    """Number of dimensions of the problem."""
+
+    contact_group: int
+    """The group that is the contact group."""
+    u_intf_group: int
+    """The group that is the interface group."""
+
+    inner: PetscKSPScheme = None
+    """The actual solver, to be applied after the transformations."""
+
+    left_transformations: Optional[bool] = None
+    right_transformations: Optional[bool] = True
+
+    def Qright(self, J: BlockMatrixStorage) -> BlockMatrixStorage:
+        """Assemble the right linear transformation."""
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qright = J.empty_container()[:]
+
+        if self.contact_group not in J.active_groups[0]:
+            # No contact group, hence identity transformation.
+            Qright.mat = sps.eye(Qright.shape[0], format="csr")
+            return Qright
+
+        J55 = J[self.u_intf_group, self.u_intf_group].mat
+
+        J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
+
+        Qright.mat = Qright.mat = sps.eye(Qright.shape[0], format="csr")
+
+        J54 = J[self.u_intf_group, self.contact_group].mat
+
+        tmp = -J55_inv @ J54
+        Qright[self.u_intf_group, self.contact_group] = tmp
+        return Qright
+
+    def Qleft(self, J: BlockMatrixStorage) -> BlockMatrixStorage:
+        warn("This has not been tested")
+
+        # Sorted according to groups. If not done, the matrix can be in porepy order,
+        # which does not guarantee that diagonal groups are truly on diagonals.
+        Qleft = J.empty_container()[:]
+
+        if self.contact_group not in J.active_groups[0]:
+            Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
+            return Qleft
+
+        J55_inv = inv_block_diag(
+            J[self.u_intf_group, self.u_intf_group].mat, nd=self.nd, lump=False
+        )
+        # J55_inv = inv(J[u_intf_group, u_intf_group].mat)
+        Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
+        Qleft[self.contact_group, self.u_intf_group] = (
+            -J[self.contact_group, self.u_intf_group].mat @ J55_inv
+        )
+        return Qleft
+
+    def get_groups(self) -> list[int]:
+        return self.inner.get_groups()
+
+    def make_solver(
+        self, mat_orig: BlockMatrixStorage, options: dict | None = None
+    ) -> PetscKrylovSolver | LinearSolverWithTransformations:
+        # groups = self.get_groups()
+        bmat = mat_orig[:]  # [groups]
+
+        if self.left_transformations is None or len(self.left_transformations) == 0:
+            Qleft = None
+        else:
+            # The steps should be roughly the same as for the right transfor (below).
+            Qleft = self.left_transformations[0](bmat)
+            for tmp in self.left_transformations[1:]:
+                tmp = tmp(bmat)
+                Qleft.mat @= tmp.mat
+
+        if self.right_transformations is None or len(self.right_transformations) == 0:
+            Qright = None
+        else:
+            # Qright = self.Qright(bmat)
+            Qright = self.right_transformations[0](bmat)  # [groups]
+            for tmp in self.right_transformations[1:]:
+                tmp = tmp(bmat)  # [groups]
+                Qright.mat @= tmp.mat
+
+        bmat_Q = bmat
+        if Qleft is not None:
+            bmat_Q.mat = Qleft.mat @ bmat_Q.mat
+        if Qright is not None:
+            bmat_Q.mat = bmat_Q.mat @ Qright.mat
+
+        if self.inner is None:
+            raise ValueError("No inner solver provided.")
+
+        # Set up the inner solver.
+        solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q, options=options)
+        self.options = self.inner.options
+
+        if Qleft is not None or Qright is not None:
+            solver = LinearSolverWithTransformations(
+                inner=solver, Qright=Qright, Qleft=Qleft
+            )
+
+        return solver
