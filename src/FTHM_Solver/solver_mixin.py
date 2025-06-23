@@ -1,7 +1,6 @@
 """This module contains schemes, e.g., recepies for constructing a PETSc solver."""
 
 from __future__ import annotations
-from itertools import chain
 
 from time import time
 
@@ -14,12 +13,15 @@ from dataclasses import dataclass
 import porepy as pp
 
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import PetscKSPScheme, LinearTransformedScheme
 
 from .mat_utils import csr_ones, inv_block_diag
 
 from .dof_manager import DofManager
-from .options_parsers import MultiPhysicsPreconditioner
+from .options_parsers import (
+    MultiPhysicsPreconditioner,
+    PetscKSPScheme,
+    LinearTransformedScheme,
+)
 
 
 from .preconditioners import SinglePhysicsPreconditioner

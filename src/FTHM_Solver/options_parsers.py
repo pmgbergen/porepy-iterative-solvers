@@ -2,7 +2,7 @@ import porepy as pp
 import scipy.sparse as sps
 
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import insert_petsc_options
+from .petsc_solvers import insert_petsc_options
 from .dof_manager import DofManager
 
 from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .petsc_solvers import PetscKrylovSolver, LinearSolverWithTransformations
+from .mat_utils import csr_to_petsc, inv_block_diag, сlear_petsc_options
 
 
 class MultiPhysicsPreconditioner:
