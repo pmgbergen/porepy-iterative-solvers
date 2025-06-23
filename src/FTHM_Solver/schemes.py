@@ -15,39 +15,20 @@ import scipy.sparse as sps
 from typing import Callable
 from dataclasses import dataclass
 import porepy as pp
-from abc import ABC, abstractmethod
 
 from .block_matrix import BlockMatrixStorage
-from .full_petsc_solver import (
-    construct_is,
-    PetscKSPScheme,
-    insert_petsc_options,
-    LinearTransformedScheme,
-    PcPythonPermutation,
-)
-from .fixed_stress import make_fs_analytical_slow_new
-from .thm_solver import make_pt_permutation, get_dofs_of_groups
+from .full_petsc_solver import PetscKSPScheme, LinearTransformedScheme
 
-from . import hm_solver
-from .iterative_solver import (
-    get_equations_group_ids,
-    get_variables_group_ids,
-)
-from .mat_utils import csr_ones, inv_block_diag, csr_to_petsc
+from .mat_utils import csr_ones, inv_block_diag
 
-from petsc4py import PETSc
 from .dof_manager import DofManager
+from .options_parsers import MultiPhysicsPreconditioner
 
 
-import equation_variable_groups as groups
-from .preconditioners import (
-    SinglePhysicsPreconditioner,
-    CompositePreconditioner,
-)
+from .preconditioners import SinglePhysicsPreconditioner
 
 
 __all__ = [
-    "MultiPhysicsPreconditioner",
     "IterativeSolverMixin",
 ]
 

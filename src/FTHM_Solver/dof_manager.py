@@ -1,12 +1,13 @@
+from __future__ import annotations
 import numpy as np
 import porepy as pp
 from .block_matrix import BlockMatrixStorage
 from .full_petsc_solver import construct_is
-from . import get_equations_group_ids, get_variables_group_ids
+from .iterative_solver import get_equations_group_ids, get_variables_group_ids
 from .preconditioners import SinglePhysicsPreconditioner, CompositePreconditioner
 
-import equation_variable_groups as groups
-from schemes import EquationNames
+from . import equation_variable_groups as groups
+from .equation_variable_groups import EquationNames
 
 
 class DofManager:

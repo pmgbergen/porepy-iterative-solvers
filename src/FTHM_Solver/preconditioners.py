@@ -1,17 +1,9 @@
 from __future__ import annotations
 from itertools import chain
+from typing import TYPE_CHECKING
 
-from time import time
-from pprint import pprint
-
-from warnings import warn
-from pathlib import Path
-
-from enum import Enum
 import numpy as np
-import scipy.sparse as sps
 from typing import Callable
-from dataclasses import dataclass
 import porepy as pp
 from abc import ABC, abstractmethod
 
@@ -19,20 +11,42 @@ from .full_petsc_solver import (
     PcPythonPermutation,
 )
 from .fixed_stress import make_fs_analytical_slow_new
-from .thm_solver import make_pt_permutation, get_dofs_of_groups
+from .thm_solver import get_dofs_of_groups
 
-from . import hm_solver
-from .iterative_solver import (
-    get_equations_group_ids,
-    get_variables_group_ids,
-)
-from .mat_utils import csr_ones, inv_block_diag, csr_to_petsc
+from .mat_utils import csr_to_petsc
 
-from petsc4py import PETSc
-from .dof_manager import DofManager
-from schemes import EquationNames
+from .equation_variable_groups import EquationNames
 
-import equation_variable_groups as groups
+from . import equation_variable_groups as groups
+
+if TYPE_CHECKING:
+    from .dof_manager import DofManager
+
+
+__all__ = [
+    # Add all preconditioners here.
+    "SinglePhysicsPreconditioner",
+    "InterfaceDarcyFluxPreconditioner",
+    "InterfaceEnthalpyFluxPreconditioner",
+    "InterfaceFourierFluxPreconditioner",
+    "InterfaceMassEnergyFluxPreconditioner",
+    "MassBalancePreconditioner",
+    "MassBalanceDimSplitPreconditioner",
+    "MassBalanceDimSplitCPRPreconditioner",
+    "EnergyBalancePreconditioner",
+    "EnergyBalanceDimSplitPreconditioner",
+    "MechanicsPreconditioner",
+    "FixedStressPreconditioner",
+    "ContactPreconditioner",
+    "BlockILU",
+    "IdentityPreconditioner",
+    "CompositePreconditioner",
+    # Add all the factory functions here.
+    "mass_balance_factory",
+    "momentum_balance_factory",
+    "hm_factory",
+    "thm_factory",
+]
 
 
 class SinglePhysicsPreconditioner(ABC):
