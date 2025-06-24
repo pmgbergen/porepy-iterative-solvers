@@ -49,7 +49,7 @@ model_params_2d = {
     "material_constants": {
         "solid": solid_constants_2d_1,
     },
-    # "fracture_indices": [0],  # 0, 1],
+    
     "u_north": 0.001,
     "grid_type": "simplex",
     # "meshing_arguments": {"cell_size": 0.1},

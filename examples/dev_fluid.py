@@ -4,8 +4,6 @@ import scipy.sparse as sps
 from petsc4py import PETSc
 import FTHM_Solver
 
-from functools import cached_property
-
 from porepy.examples.flow_benchmark_2d_case_1 import (
     FlowBenchmark2dCase1Model,
     solid_constants_conductive_fractures as solid_constants_2d_1,
