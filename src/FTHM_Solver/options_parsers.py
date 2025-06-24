@@ -8,7 +8,7 @@ from petsc4py import PETSc
 
 from .block_matrix import BlockMatrixStorage
 from .dof_manager import DofManager
-from .mat_utils import csr_to_petsc, inv_block_diag, сlear_petsc_options
+from .mat_utils import csr_to_petsc, inv_block_diag, clear_petsc_options
 from .petsc_solvers import (
     LinearSolverWithTransformations,
     PetscKrylovSolver,
@@ -269,7 +269,7 @@ class PetscKSPScheme:
         petsc_mat = csr_to_petsc(mat_orig.mat)
 
         # Clear the PETSc options from a previous solve.
-        сlear_petsc_options()
+        clear_petsc_options()
 
         # Hard coded options for the KSP solver. TODO: Figure out how this can be
         # configured from the outside.

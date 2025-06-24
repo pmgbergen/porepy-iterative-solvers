@@ -20,7 +20,7 @@ petsc4py.init(sys.argv)
 __all__ = [
     "csr_to_petsc",
     "petsc_to_csr",
-    "сlear_petsc_options",
+    "clear_petsc_options",
     "csr_ones",
     "inv_block_diag",
 ]
@@ -32,7 +32,7 @@ def assert_finite(vals: np.ndarray, groups: list[int]) -> None:
     #     print("Divergence", groups)
 
 
-def сlear_petsc_options() -> PETSc.Options:
+def clear_petsc_options() -> PETSc.Options:
     """Options is a singletone. This ensures that no unwanted options from some previous
     setup reach the current setup."""
     options = PETSc.Options()
@@ -295,7 +295,7 @@ class PetscPC:
 
 class PetscAMGVector(PetscPC):
     def __init__(self, dim: int, mat=None) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
 
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
@@ -313,7 +313,7 @@ class PetscAMGMechanics(PetscPC):
         null_space: np.ndarray = None,
         petsc_options: dict[str, str] = None,
     ) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
         options["pc_hypre_boomeramg_strong_threshold"] = 0.7
@@ -324,7 +324,7 @@ class PetscAMGMechanics(PetscPC):
 
 class PetscAMGFlow(PetscPC):
     def __init__(self, mat=None, dim: int = 2) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
 
         options["pc_type"] = "hypre"
         options["pc_hypre_type"] = "boomeramg"
@@ -335,14 +335,14 @@ class PetscAMGFlow(PetscPC):
 
 class PetscLU(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options.setValue("pc_type", "lu")
         super().__init__(mat=mat)
 
 
 class PetscILU(PetscPC):
     def __init__(self, mat=None, factor_levels: int = 0) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options.setValue("pc_type", "ilu")
         options.setValue("pc_factor_levels", factor_levels)
         options.setValue("pc_factor_diagonal_fill", None)  # Doesn't affect
@@ -354,7 +354,7 @@ class PetscILU(PetscPC):
 
 class PetscHypreILU(PetscPC):
     def __init__(self, mat=None, factor_levels: int = 0) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options.setValue("pc_type", "hypre")
         options.setValue("pc_hypre_type", "euclid")
         options.setValue("pc_hypre_euclid_level", factor_levels)
@@ -448,7 +448,7 @@ class PetscGMRES(PetscKrylovSolver):
         self.name = name
         self.mat = mat
 
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options.setValue("ksp_type", "gmres")
         options.setValue("ksp_max_it", max_it)
         options.setValue("ksp_gmres_restart", restart)
@@ -483,7 +483,7 @@ class PetscRichardson(PetscKrylovSolver):
     ) -> None:
         assert pc_side == "left"
 
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options.setValue("ksp_type", "richardson")
         options.setValue("ksp_max_it", 1000)
 
@@ -500,14 +500,14 @@ class PetscRichardson(PetscKrylovSolver):
 
 class PetscJacobi(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options["pc_type"] = "jacobi"
         super().__init__(mat=mat)
 
 
 class PetscSOR(PetscPC):
     def __init__(self, mat=None) -> None:
-        options = сlear_petsc_options()
+        options = clear_petsc_options()
         options["pc_type"] = "sor"
         options["pc_type_symmetric"] = True
         super().__init__(mat=mat)
