@@ -1,4 +1,5 @@
-from . import block_matrix, iterative_solver, mat_utils, preconditioners
+version = "0.0.1"
+
 from .block_matrix import *
 from .iterative_solver import *
 from .mat_utils import *

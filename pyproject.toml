@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "FTHM_Solver"
-version = "0.1.0"
+version = "0.0.1"
 description = "Iterative solvers for PorePy using PETSc"
 authors = [
   { name = "Yury Zabegaev", email = "Yury.Zabegaev@uib.no" },
