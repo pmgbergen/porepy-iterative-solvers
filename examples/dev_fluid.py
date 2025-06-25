@@ -21,9 +21,27 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 class FullModel(
     FTHM_Solver.IterativeSolverMixin,
     pp.model_geometries.SquareDomainOrthogonalFractures,
+    pp.model_boundary_conditions.BoundaryConditionsMassDirNorthSouth,
     FlowBenchmark2dCase4Model,
 ):
-    pass
+    def check_convergence(
+        self,
+        nonlinear_increment: np.ndarray,
+        residual,
+        reference_residual: np.ndarray,
+        nl_params,
+    ) -> tuple[bool, bool]:
+        # nonlinear_increment based norm
+        nonlinear_increment_norm = self.compute_nonlinear_increment_norm(
+            nonlinear_increment
+        )
+        # Residual based norm
+        residual_norm = self.compute_residual_norm(residual, reference_residual)
+
+        print(f"nl_inc: {nonlinear_increment_norm}, res: {residual_norm}")
+        return super().check_convergence(
+            nonlinear_increment_norm, residual, reference_residual, nl_params
+        )
 
 
 model_params_2d = {
@@ -31,7 +49,9 @@ model_params_2d = {
         "solid": solid_constants_2d,
         "fluid": pp.FluidComponent(**{"compressibility": 1e-7}),
     },
+    "reference_variable_values": pp.ReferenceVariableValues(**{"pressure": 1}),
     "fracture_indices": [0, 1],
+    "units": pp.Units(m=1e-4),
     "linear_solver": {
         "preconditioner_factory": FTHM_Solver.mass_balance_factory,
         "options": {"ksp_monitor": None},
