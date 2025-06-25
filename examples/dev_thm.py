@@ -1,7 +1,6 @@
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
-import FTHM_Solver.hm_solver
 from petsc4py import PETSc
 import FTHM_Solver
 
