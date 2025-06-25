@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
+from typing import List
 
 import porepy as pp
 
@@ -27,6 +29,24 @@ class EquationNames(Enum):
     CONTACT_TANGENTIAL = "tangential_fracture_deformation_equation"
 
 
+@dataclass
+class EquationGroupItem:
+    name: str
+    items: list  # or List[Any] for more type safety
+
+    def __iter__(self):
+        yield self.name
+        yield self.items
+
+
+@dataclass
+class EquationGroup:
+    items: List[EquationGroupItem]
+
+    def __iter__(self):
+        return iter(self.items)
+
+
 class AbstractGroup(ABC):
     """
     Abstract class for defining a group of equations and variables. This serves two
@@ -37,11 +57,10 @@ class AbstractGroup(ABC):
            solver. The can be used to group equations of the same type (e.g., mass
            balance) on different subdomains, or to group equations of different type,
            but that still should be solved together.
-
     """
 
     @abstractmethod
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         pass
 
     @abstractmethod
@@ -69,9 +88,13 @@ def _split_subdomains_by_dimension(model: pp.PorePyModel):
 
 
 class MassBalanceGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         subdomains = model.mdg.subdomains()
-        return [[(EquationNames.MASS_BALANCE.value, subdomains)]]
+        return [
+            EquationGroup(
+                [EquationGroupItem(EquationNames.MASS_BALANCE.value, subdomains)]
+            )
+        ]
 
     def variable_groups(
         self, model: pp.PorePyModel
@@ -92,19 +115,33 @@ class MassBalanceDimSplitGroup(AbstractGroup):
     where the stabilization term differs according to the dimension of the subdomains.
     """
 
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         matrix_subdomains, fracture_subdomains, intersection_subdomains = (
             _split_subdomains_by_dimension(model)
         )
         return [
-            [(EquationNames.MASS_BALANCE_MATRIX.value, matrix_subdomains)],
-            [(EquationNames.MASS_BALANCE_FRACTURES.value, fracture_subdomains)],
-            [
-                (
-                    EquationNames.MASS_BALANCE_INTERSECTIONS.value,
-                    intersection_subdomains,
-                )
-            ],
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.MASS_BALANCE_MATRIX.value, matrix_subdomains
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.MASS_BALANCE_FRACTURES.value, fracture_subdomains
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.MASS_BALANCE_INTERSECTIONS.value,
+                        intersection_subdomains,
+                    )
+                ]
+            ),
         ]
 
     def variable_groups(
@@ -135,19 +172,34 @@ class MassBalanceDimSplitGroup(AbstractGroup):
 
 
 class EnergyBalanceDimSplitGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         matrix_subdomains, fracture_subdomains, intersection_subdomains = (
             _split_subdomains_by_dimension(model)
         )
         return [
-            [(EquationNames.ENERGY_BALANCE_MATRIX.value, matrix_subdomains)],
-            [(EquationNames.ENERGY_BALANCE_FRACTURES.value, fracture_subdomains)],
-            [
-                (
-                    EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
-                    intersection_subdomains,
-                )
-            ],
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.ENERGY_BALANCE_MATRIX.value, matrix_subdomains
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.ENERGY_BALANCE_FRACTURES.value,
+                        fracture_subdomains,
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.ENERGY_BALANCE_INTERSECTIONS.value,
+                        intersection_subdomains,
+                    )
+                ]
+            ),
         ]
 
     def variable_groups(
@@ -178,9 +230,17 @@ class EnergyBalanceDimSplitGroup(AbstractGroup):
 
 
 class InterfaceDarcyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         interfaces = model.mdg.interfaces()
-        return [[(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)]]
+        return [
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_DARCY_FLUX.value, interfaces
+                    )
+                ]
+            )
+        ]
 
     def variable_groups(
         self, model: pp.PorePyModel
@@ -196,10 +256,16 @@ class InterfaceDarcyFluxGroup(AbstractGroup):
 
 
 class InterfaceEnthalpyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         interfaces = model.mdg.interfaces()
         return [
-            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces
+                    )
+                ]
+            )
         ]
 
     def variable_groups(
@@ -222,10 +288,16 @@ class InterfaceEnthalpyFluxGroup(AbstractGroup):
 
 
 class InterfaceFourierFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         interfaces = model.mdg.interfaces()
         return [
-            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces
+                    )
+                ]
+            )
         ]
 
     def variable_groups(
@@ -248,12 +320,30 @@ class InterfaceFourierFluxGroup(AbstractGroup):
 
 
 class InterfaceMassEnergyFluxGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         interfaces = model.mdg.interfaces()
         return [
-            [(EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces)],
-            [(EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces)],
-            [(EquationNames.INTERFACE_DARCY_FLUX.value, interfaces)],
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_ENTHALPY_FLUX.value, interfaces
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_FOURIER_FLUX.value, interfaces
+                    )
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_DARCY_FLUX.value, interfaces
+                    )
+                ]
+            ),
         ]
 
     def variable_groups(
@@ -282,16 +372,20 @@ class InterfaceMassEnergyFluxGroup(AbstractGroup):
 
 
 class MechanicsGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         subdomains = model.mdg.subdomains(dim=model.nd)
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
-
-        # Define two groups of equations, one for momentum balance in the matrix and one
-        # for force balance on the highest-dimensional interfaces. The mechanics
-        # preconditioner will treat these groups jointly.
         return [
-            [(EquationNames.MECHANICS.value, subdomains)],
-            [(EquationNames.INTERFACE_FORCE_BALANCE.value, interfaces)],
+            EquationGroup(
+                [EquationGroupItem(EquationNames.MECHANICS.value, subdomains)]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.INTERFACE_FORCE_BALANCE.value, interfaces
+                    )
+                ]
+            ),
         ]
 
     def variable_groups(
@@ -318,15 +412,17 @@ class MechanicsGroup(AbstractGroup):
 
 
 class ContactGroup(AbstractGroup):
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[tuple[str, list]]]:
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
-        # Define a single group of equations to be solved together: The normal and
-        # tangential deformation equations for the contact mechanics.
         return [
-            [
-                (EquationNames.CONTACT_NORMAL.value, subdomains),
-                (EquationNames.CONTACT_TANGENTIAL.value, subdomains),
-            ]
+            EquationGroup(
+                [
+                    EquationGroupItem(EquationNames.CONTACT_NORMAL.value, subdomains),
+                    EquationGroupItem(
+                        EquationNames.CONTACT_TANGENTIAL.value, subdomains
+                    ),
+                ]
+            )
         ]
 
     def variable_groups(

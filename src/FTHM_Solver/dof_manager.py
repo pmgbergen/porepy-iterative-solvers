@@ -239,11 +239,12 @@ class DofManager:
 
         name_to_group_index_map = {}
         for i, item in enumerate(equations_by_name):
-            name = item[0][0]
-            # Add the equation name to the group.
-            if name not in name_to_group_index_map:
-                name_to_group_index_map[name] = []
-            name_to_group_index_map[name].append(i)
+            # item is an EquationGroup
+            for eq_item in item.items:
+                name = eq_item.name
+                if name not in name_to_group_index_map:
+                    name_to_group_index_map[name] = []
+                name_to_group_index_map[name].append(i)
 
         return (
             reordered_groups,
@@ -282,7 +283,7 @@ class DofManager:
             if len(group.equation_groups(model)) == 0:
                 continue
             for block in group.equation_groups(model):
-                if block[0][0] == "normal_fracture_deformation_equation":
+                if block.items[0].name == "normal_fracture_deformation_equation":
                     return i
         return -1
 
