@@ -182,8 +182,8 @@ class IterativeSolverMixin:
             mat=mat,
             global_dofs_row=dof_manager.eq_dofs_by_blocks(self),
             global_dofs_col=dof_manager.var_dofs_by_blocks(self),
-            groups_to_blocks_row=dof_manager.equation_groups(self),
-            groups_to_blocks_col=dof_manager.variable_groups(self),
+            groups_to_blocks_row=dof_manager.equation_groups,
+            groups_to_blocks_col=dof_manager.variable_groups,
             group_names_row=dof_manager.equation_names(self),
             group_names_col=dof_manager.variable_names(self),
         )

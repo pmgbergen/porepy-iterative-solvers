@@ -211,12 +211,12 @@ class DofManager:
                 model, equation_groups_by_number, contact_group
             )
 
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+    @property
+    def variable_groups(self) -> list[list[pp.ad.MixedDimensionalVariable]]:
         return self._variable_groups
 
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[int]]:
+    @property
+    def equation_groups(self) -> list[list[int]]:
         return self._equation_groups
 
     def equation_names(self, model):
@@ -251,14 +251,14 @@ class DofManager:
             # If there is no contact group, return the original equation dofs.
             return eq_dofs
         # Short cut if no contact mechanics, hence no reordering.
-        if len(self.equation_groups(model)[contact_group]) == 0:
+        if len(self.equation_groups[contact_group]) == 0:
             # Ignore mypy error, list[np.ndarray] is a subset of list[np.ndarray |
             # None].
             return eq_dofs  # type: ignore[return-value]
 
         # We assume that normal equations go first. TODO: Can we make this more robust,
         # or else put an assert here.
-        normal_blocks = self.equation_groups(model)[contact_group]
+        normal_blocks = self.equation_groups[contact_group]
         num_fracs = len(model.mdg.subdomains(dim=model.nd - 1))
 
         # EK: I believe this is an assumption that the tangential equations are right
@@ -413,14 +413,14 @@ class DofManager:
             return np.arange(model.equation_system.num_dofs())
         # If contact is formally present, but no equations are defined for it,
         # return the original permutation.
-        if len(self.equation_groups(model)[contact_group]) == 0:
+        if len(self.equation_groups[contact_group]) == 0:
             return permutation
 
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
             [
                 self.eq_dofs_by_blocks(model)[i]
-                for i in self.equation_groups(model)[contact_group]
+                for i in self.equation_groups[contact_group]
             ]
         )
 
