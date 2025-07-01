@@ -32,11 +32,6 @@ class DofManager:
         self._orderings = orderings
         self._process_block_information(model, solvers)
 
-    @property
-    def groups(self) -> list[groups.AbstractGroup]:
-        """Return the groups of equations and variables."""
-        return self._orderings
-
     def petsc_is(
         self,
         current_solver: groups.AbstractGroup,
