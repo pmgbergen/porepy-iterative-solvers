@@ -30,13 +30,7 @@ class DofManager:
     ):
         self._equation_system = equation_system
         self._orderings = orderings
-        eq_groups, var_goups, slv_groups, name_to_group_ind = (
-            self._process_block_information(model, solvers)
-        )
-        self._equation_groups = eq_groups
-        self._variable_groups = var_goups
-        self._solver_groups = slv_groups
-        self._name_to_group_indices = name_to_group_ind
+        self._process_block_information(model, solvers)
 
     @property
     def groups(self) -> list[groups.AbstractGroup]:
@@ -218,9 +212,26 @@ class DofManager:
             solver_indices[slv] = list(range(counter, counter + len(groups_loc)))
             counter += len(groups_loc)
 
-        # Done with the first step. Next, expand the groups by calling on relevant
-        # helper methods.
+        # Done with the first step. The mapping from solvers to block indices can now be
+        # stored.
+        self._solver_groups = solver_indices
+
+        # Construct the mapping from equation names to the group indices. This must be
+        # done before identifying the contact group.
+        name_to_group_index_map = {}
+        for i, item in enumerate(equations_by_name):
+            # item is an EquationGroup
+            for eq_item in item.items:
+                name = eq_item.name
+                if name not in name_to_group_index_map:
+                    name_to_group_index_map[name] = []
+                name_to_group_index_map[name].append(i)
+        self._name_to_group_indices = name_to_group_index_map
+
+        # Next, expand the groups by calling on relevant helper methods.
         var_groups_by_number = self._get_variables_group_ids(model, var_groups)
+        self._variable_groups = var_groups_by_number
+
         equation_groups_by_number = self._get_equations_group_ids(
             model, equations_by_name
         )
@@ -231,27 +242,11 @@ class DofManager:
         # a good idea.
         contact_group = self.identify_contact_group(model)
         if contact_group == -1:
-            reordered_groups = equation_groups_by_number
+            self._equation_groups = equation_groups_by_number
         else:
-            reordered_groups = self._correct_contact_equations_groups(
+            self._equation_groups = self._correct_contact_equations_groups(
                 model, equation_groups_by_number, contact_group
             )
-
-        name_to_group_index_map = {}
-        for i, item in enumerate(equations_by_name):
-            # item is an EquationGroup
-            for eq_item in item.items:
-                name = eq_item.name
-                if name not in name_to_group_index_map:
-                    name_to_group_index_map[name] = []
-                name_to_group_index_map[name].append(i)
-
-        return (
-            reordered_groups,
-            var_groups_by_number,
-            solver_indices,
-            name_to_group_index_map,
-        )
 
     def equation_names(self, model):
         names = []
@@ -279,13 +274,14 @@ class DofManager:
 
     def identify_contact_group(self, model):
         # Identify the contact group in the equation groups
-        for i, group in enumerate(self._orderings):
-            if len(group.equation_groups(model)) == 0:
-                continue
-            for block in group.equation_groups(model):
-                if block.items[0].name == "normal_fracture_deformation_equation":
-                    return i
-        return -1
+        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
+        return ind[0]
+
+    def identify_energy_balance_group(self, model):
+        # TODO: Find a better way to do this. This is a map from PorePy-based
+        # identification of equations (by name, lacking a better tagging) to block
+        # indices.
+        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def identify_u_intf_group(self, model):
         # Identify the interface group in the equation groups
@@ -316,12 +312,6 @@ class DofManager:
                     else:
                         i += 1
         return -1
-
-    def identify_energy_balance_group(self, model):
-        # TODO: Find a better way to do this. This is a map from PorePy-based
-        # identification of equations (by name, lacking a better tagging) to block
-        # indices.
-        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
