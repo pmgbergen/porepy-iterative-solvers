@@ -20,6 +20,7 @@ from .options_parsers import (
     PetscKSPScheme,
 )
 from .preconditioners import SinglePhysicsPreconditioner
+from porepy.viz.solver_statistics import SolverStatistics
 
 __all__ = [
     "IterativeSolverMixin",
@@ -95,13 +96,27 @@ class LinearSolverComponents:
     ksp_factory: PetscKSPScheme
 
 
-class IterativeSolverMixin:
-    # Temporary storage for the iterative solver results.
-    _petsc_converged_reason = []
-    _krylov_iters = []
-    _construction_time = []
-    _solve_time = []
+@dataclass
+class LinearSolverStatistics(SolverStatistics):
+    """A dataclass to store statistics about the linear solver.
 
+    Currently, PorePy only has stastics for the nonlinear solver, so we create an
+    extension to store the linear solver statistics.
+    """
+
+    linsolve_construction_time: list[float] = None
+    linsolve_solve_time: list[float] = None
+    petsc_converged_reason: list[int] = None
+    num_krylov_iters: list[int] = None
+
+    def __post_init__(self):
+        self.linsolve_construction_time = []
+        self.linsolve_solve_time = []
+        self.petsc_converged_reason = []
+        self.num_krylov_iters = []
+
+
+class IterativeSolverMixin:
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
         mat, rhs = self.linear_system
@@ -111,7 +126,7 @@ class IterativeSolverMixin:
         # By default, print the residual information to screen (ksp_monitor=None).
         solver_options = self.params["linear_solver"].get("options", {})
         ksp_factory = self._solver_components.ksp_factory
-        # solver = ksp_factory.make_solver(self.bmat, solver_options)
+        solver = ksp_factory.make_solver(self.bmat, solver_options)
         t0 = time()
         try:
             solver = ksp_factory.make_solver(self.bmat, solver_options)
@@ -120,7 +135,7 @@ class IterativeSolverMixin:
                 "Failed to create solver with the provided preconditioner."
             ) from e
 
-        self._construction_time.append(time() - t0)
+        self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
@@ -128,7 +143,7 @@ class IterativeSolverMixin:
         rhs_loc = self.bmat.project_rhs_to_local(self.rhs_reordered)
         t0 = time()
         x_loc = solver.solve(rhs_loc)
-        self._solve_time.append(time() - t0)
+        self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
         if info <= 0:
@@ -141,8 +156,10 @@ class IterativeSolverMixin:
         # contact reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
         x = self.bmat.project_solution_to_global(x_loc)
-        self._petsc_converged_reason.append(info)
-        self._krylov_iters.append(len(solver.get_residuals()))
+        self.nonlinear_solver_statistics.petsc_converged_reason.append(info)
+        self.nonlinear_solver_statistics.num_krylov_iters.append(
+            len(solver.get_residuals())
+        )
 
         return np.atleast_1d(x)
 
@@ -241,6 +258,19 @@ class IterativeSolverMixin:
             ksp_factory=solver_factory,
         )
         self._solver_components = solver_components
+
+    def set_solver_statistics(self) -> None:
+        """Override the method to set the solver statistics, so that we also get fields
+        for the linear solver.
+
+        This is certainly not the intended way of doing this, and it hacky, but the
+        current PorePy implementation only caters to statistics objects being sent
+        as part of the parameter class, which would require modification of all
+        runscripts. Instead, we do it dirty for now.
+
+        """
+        # The name of the attribute is really not meaningful..
+        self.nonlinear_solver_statistics = LinearSolverStatistics()
 
     def save_matrix_state(self):
         save_path = Path("./matrices")
