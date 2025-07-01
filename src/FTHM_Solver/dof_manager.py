@@ -207,13 +207,36 @@ class DofManager:
 
     @property
     def variable_groups(self) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        """Get the variable groups.
+
+        Returns:
+            A list of lists, where each inner list contains MixedDimensionalVariable
+            objects representing the variable groups.
+
+        """
         return self._variable_groups
 
     @property
     def equation_groups(self) -> list[list[int]]:
+        """Get the equation groups.
+
+        Returns:
+            A list of lists, where each inner list contains integers representing
+            the equation groups.
+
+        """
         return self._equation_groups
 
-    def equation_names(self, model):
+    def equation_names(self, model: pp.PorePyModel) -> list[str]:
+        """Get the names of equations in the model.
+
+        Parameters:
+            model: The PorePy model.
+
+        Returns:
+            A list of strings containing the names of equations in the model.
+
+        """
         names = []
         for group in self._orderings:
             if isinstance(group, list):
@@ -223,6 +246,28 @@ class DofManager:
                     names += g.equation_names(model)
             else:
                 names += group.equation_names(model)
+        return names
+
+    def variable_names(self, model: pp.PorePyModel) -> list[str]:
+        """Get the names of variables in the model.
+
+        Parameters:
+            model: The PorePy model.
+
+        Returns:
+            A list of strings containing the names of variables in the model.
+
+        """
+
+        names = []
+        for group in self._orderings:
+            if isinstance(group, list):
+                # If the group is a list, we assume it contains multiple groups.
+                # TODO: Unification needed here.
+                for g in group:
+                    names += g.variable_names(model)
+            else:
+                names += group.variable_names(model)
         return names
 
     def eq_dofs_by_blocks(self, model):
@@ -279,18 +324,6 @@ class DofManager:
 
         return eq_dofs_corrected
 
-    def variable_names(self, model):
-        names = []
-        for group in self._orderings:
-            if isinstance(group, list):
-                # If the group is a list, we assume it contains multiple groups.
-                # TODO: Unification needed here.
-                for g in group:
-                    names += g.variable_names(model)
-            else:
-                names += group.variable_names(model)
-        return names
-
     def var_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
         (how they are arranged in the model).
@@ -306,7 +339,16 @@ class DofManager:
             var_dofs.append(model.equation_system.dofs_of([var]))
         return var_dofs
 
-    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
+    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> list[int]:
+        """Get the block indices associated with a solver.
+
+        Parameters:
+            solver: A SinglePhysicsPreconditioner object.
+
+        Returns:
+            The block indices associated with the solver.
+
+        """
         return self._solver_groups[solver]
 
     def petsc_is(
@@ -314,10 +356,21 @@ class DofManager:
         current_solver: groups.AbstractGroup,
         other_solver: list[groups.AbstractGroup],
         bmat: BlockMatrixStorage,
-    ):
-        # Not sure if this belongs here, but it is tempting to put it here and not in
-        # the composer.
+    ) -> PETSc.IS:
+        """Construct PETSc index sets for the current and other solvers.
 
+        Intended used in a Schur-complement setting, where we do a split between the
+        current (to be eliminated) group and the other groups (to be kept).
+
+        Parameters:
+            current_solver: The current solver group.
+            other_solver: A list of other solver groups.
+            bmat: The block matrix storage.
+
+        Returns:
+            A tuple containing the PETSc IS objects for the current and other solvers.
+
+        """
         # Indices of the block ids
         current_id = self.blocks_of_solver(current_solver)
 
@@ -358,7 +411,17 @@ class DofManager:
         return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def identify_u_intf_group(self, model):
-        # Identify the interface group in the equation groups
+        """Identify the interface displacement group in the equation groups.
+
+        Parameters:
+            model: The PorePy model.
+
+        Returns:
+            The index of the interface displacement group in the equation groups. If no
+            group is found, returns -1.
+
+        """
+        # Identify the interface group in the equation groups.
         i = 0
 
         # Note to self: Here we need to loop over the _orderings, since we need to match
@@ -480,10 +543,6 @@ class DofManager:
 
         Returns:
             The corrected equation groups.
-
-        See also:
-            _correct_contact_eq_dofs for rearrane of the individual dofs related to
-                contact (as opposed to the equation blocks handled here).
 
         """
         if len(equation_groups[contact_group]) == 0:
