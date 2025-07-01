@@ -289,6 +289,10 @@ class DofManager:
     def identify_u_intf_group(self, model):
         # Identify the interface group in the equation groups
         i = 0
+
+        # Note to self: Here we need to loop over the _orderings, since we need to match
+        # the ordering of the preconditioner to porepy information. See also the other
+        # identify methods.
         for group in self._orderings:
             if isinstance(group, list):
                 for sub_group in group:
@@ -299,8 +303,13 @@ class DofManager:
                             return i
             else:
                 if len(group.variable_groups(model)) == 0:
+                    # This, EK believes, would be an empty group (e.g., a
+                    # fracture-related block solver for a domain without fractures, but
+                    # with a preconditioner assigned by default).
                     continue
                 for var in group.variable_groups(model):
+                    # Loop over all the variables of the group (variables treated with
+                    # this block solver). See if this is the one.
                     if var[0].name == model.interface_displacement_variable:
                         return i
                     else:
@@ -308,6 +317,9 @@ class DofManager:
         return -1
 
     def identify_energy_balance_group(self, model):
+        # TODO: Find a better way to do this. This is a map from PorePy-based
+        # identification of equations (by name, lacking a better tagging) to block
+        # indices.
         return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def eq_dofs_by_blocks(self, model):

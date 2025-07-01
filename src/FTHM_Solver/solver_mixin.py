@@ -39,17 +39,32 @@ def transform_contact_block(J, row_group: int, col_group: int, nd: int):
     Qright = J.empty_container()[:]
 
     if row_group not in J.active_groups[0]:
+        # EK: The idea here is that if the relevant row group is not active, the
+        # transformation is the identity matrix (nothing should be done).
         Qright.mat = csr_ones(Qright.shape[0])
         return Qright
 
+    # Pick out the block matrix corresponding to the interface force balance equation
+    # (the row index) and the interface displacement variable (the column index). There
+    # is an underlying assumption that the groups in the preconditioner ordering are so
+    # that this equtaion-variable pair is on the diagonal of the matrix.
     J55 = J[col_group, col_group].mat
 
+    # The contribution from the interface displacement variable to the force balance
+    # should be diagonally dominant, reflecting that the interface displacement has the
+    # strongest influence on the force on its own cell (and less so on the neighboring
+    # cell, though, with the MPSA stencil, the latter will not be zero). Note that there
+    # is no connection between the two sides of a fracture; this is represented in a
+    # different block of the full matrix. Approximate the stencil by a block diagonal,
+    # and calculate the inverse cheaply.
     J55_inv = inv_block_diag(J55, nd=nd, lump=False)
 
     Qright.mat = csr_ones(Qright.shape[0])
-
+    # Extract the block matrix corresponding to the impact of the contact forces on the
+    # force balance equation.
     J54 = J[col_group, row_group].mat
 
+    # The transformation is given like this, see papers by Zabegaev for the details.
     tmp = -J55_inv @ J54
     Qright[col_group, row_group] = tmp
     return Qright
@@ -134,7 +149,9 @@ class IterativeSolverMixin:
         # TODO: Replace this with a different type of plugin
         mat, rhs = self.linear_system
 
-        # Apply the `contact_permutation`.
+        # Apply the `contact_permutation`. With this, the equations for tangential and
+        # normal fracture deformation are ordered cellwise (not with tangential and
+        # normal separately, as is the case in the PorePy ordering).
         mat = mat[dof_manager.eq_rows_permutation(self)]
         rhs = rhs[dof_manager.eq_rows_permutation(self)]
 
@@ -148,7 +165,9 @@ class IterativeSolverMixin:
             group_names_col=dof_manager.variable_names(self),
         )
 
-        # TODO: Figure out if the [:] is really needed.
+        # Store the linear system in the solver mixin *and* rearrange the blocks (and
+        # thereby the underlying matrix) to match the ordering defined by the #
+        # `dof_manager`.
         self.bmat = bmat[:]
 
     def _initialize_linear_solver(self):
