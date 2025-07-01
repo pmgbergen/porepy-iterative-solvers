@@ -122,7 +122,10 @@ class IterativeSolverMixin:
 
         self._construction_time.append(time() - t0)
 
-        rhs_loc = self.bmat.project_rhs_to_local(rhs)
+        # Project the right hand side to the local block matrix ordering, as was done
+        # for the block matrix during assembly. We need to do this on the reordered rhs
+        # vector (with contact eqs reordered).
+        rhs_loc = self.bmat.project_rhs_to_local(self.rhs_reordered)
         t0 = time()
         x_loc = solver.solve(rhs_loc)
         self._solve_time.append(time() - t0)
@@ -134,6 +137,9 @@ class IterativeSolverMixin:
                 "Check the solver options and the problem setup."
             )
 
+        # Project the solution back to the global (PorePy) ordering. For clarity, no
+        # contact reordering here, since only the equations (rows) and not the variables
+        # (columns) were reordered.
         x = self.bmat.project_solution_to_global(x_loc)
         self._petsc_converged_reason.append(info)
         self._krylov_iters.append(len(solver.get_residuals()))
@@ -165,10 +171,16 @@ class IterativeSolverMixin:
             group_names_col=dof_manager.variable_names(self),
         )
 
-        # Store the linear system in the solver mixin *and* rearrange the blocks (and
-        # thereby the underlying matrix) to match the ordering defined by the #
-        # `dof_manager`.
+        # Store the linear system in the solver mixin *and*, by calling [:], rearrange
+        # the blocks (and thereby the underlying matrix) to match the ordering defined
+        # by the # `dof_manager`.
         self.bmat = bmat[:]
+        # Also store the right hand side vector, with the eq_rows_permutation (that is,
+        # the reordering of the contact equtaions) applied. Note that this does not yet
+        # have the block reordering applied (the result of the [:] operation on the
+        # block matrix above). This will be taken care of by projection methods prior to
+        # and after the actual linear solve.
+        self.rhs_reordered = rhs
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
