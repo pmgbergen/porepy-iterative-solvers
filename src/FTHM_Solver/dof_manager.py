@@ -32,38 +32,6 @@ class DofManager:
         self._orderings = orderings
         self._process_block_information(model, solvers)
 
-    def petsc_is(
-        self,
-        current_solver: groups.AbstractGroup,
-        other_solver: list[groups.AbstractGroup],
-        bmat: BlockMatrixStorage,
-    ):
-        # Not sure if this belongs here, but it is tempting to put it here and not in
-        # the composer.
-
-        # Indices of the block ids
-        current_id = self.blocks_of_solver(current_solver)
-
-        other_id = []
-        for group in other_solver:
-            # Get the block id for the group.
-            other_id += self.blocks_of_solver(group)
-
-        current_is = self._construct_is(bmat, current_id)
-        other_is = self._construct_is(bmat, other_id)
-        return current_is, other_is
-
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
-        return self._variable_groups
-
-    def equation_groups(self, model: pp.PorePyModel) -> list[list[int]]:
-        return self._equation_groups
-
-    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
-        return self._solver_groups[solver]
-
     def _process_block_information(self, model: pp.PorePyModel, solvers):
         """Construct groups of equations, variables and solvers from the orderings and
         solvers.
@@ -243,6 +211,14 @@ class DofManager:
                 model, equation_groups_by_number, contact_group
             )
 
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        return self._variable_groups
+
+    def equation_groups(self, model: pp.PorePyModel) -> list[list[int]]:
+        return self._equation_groups
+
     def equation_names(self, model):
         names = []
         for group in self._orderings:
@@ -254,59 +230,6 @@ class DofManager:
             else:
                 names += group.equation_names(model)
         return names
-
-    def variable_names(self, model):
-        names = []
-        for group in self._orderings:
-            if isinstance(group, list):
-                # If the group is a list, we assume it contains multiple groups.
-                # TODO: Unification needed here.
-                for g in group:
-                    names += g.variable_names(model)
-            else:
-                names += group.variable_names(model)
-        return names
-
-    def identify_contact_group(self, model):
-        # Identify the contact group in the equation groups
-        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
-        return ind[0]
-
-    def identify_energy_balance_group(self, model):
-        # TODO: Find a better way to do this. This is a map from PorePy-based
-        # identification of equations (by name, lacking a better tagging) to block
-        # indices.
-        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
-
-    def identify_u_intf_group(self, model):
-        # Identify the interface group in the equation groups
-        i = 0
-
-        # Note to self: Here we need to loop over the _orderings, since we need to match
-        # the ordering of the preconditioner to porepy information. See also the other
-        # identify methods.
-        for group in self._orderings:
-            if isinstance(group, list):
-                for sub_group in group:
-                    if len(sub_group.variable_groups(model)) == 0:
-                        continue
-                    for var in sub_group.variable_groups(model):
-                        if var[0].name == model.interface_displacement_variable:
-                            return i
-            else:
-                if len(group.variable_groups(model)) == 0:
-                    # This, EK believes, would be an empty group (e.g., a
-                    # fracture-related block solver for a domain without fractures, but
-                    # with a preconditioner assigned by default).
-                    continue
-                for var in group.variable_groups(model):
-                    # Loop over all the variables of the group (variables treated with
-                    # this block solver). See if this is the one.
-                    if var[0].name == model.interface_displacement_variable:
-                        return i
-                    else:
-                        i += 1
-        return -1
 
     def eq_dofs_by_blocks(self, model):
         """Get the equation dofs for the model, in the form of a list of numbers,
@@ -362,55 +285,17 @@ class DofManager:
 
         return eq_dofs_corrected
 
-    def _correct_contact_equations_groups(
-        self,
-        model: pp.PorePyModel,
-        equation_groups: list[list[int]],
-        contact_group: int,
-    ) -> list[list[int]]:
-        """The block ordering from PorePy assigns different block indices to the normal
-        and tangential components of the contact equations. This method corrects this
-        indexing by assigning a single block index for each fracture.
-
-        The method further adjusts the indices of the other equation groups to account
-        for the reduced number of blocks.
-
-        Parameters:
-            equation_groups: The uncorrected equation groups.
-            contact_group: The group index of the contact mechanics equations.
-
-        Returns:
-            The corrected equation groups.
-
-        See also:
-            _correct_contact_eq_dofs for rearrane of the individual dofs related to
-                contact (as opposed to the equation blocks handled here).
-
-        """
-        if len(equation_groups[contact_group]) == 0:
-            return equation_groups
-
-        # Create a copy of the equation groups to avoid modifying the original.
-        eq_groups_corrected = [x.copy() for x in equation_groups]
-
-        num_fracs = len(model.mdg.subdomains(dim=model.nd - 1))
-        # Index of the first block after the contact group. This and all subsequent
-        # indexes will be reduced by the number of fractures (e.g., the number of
-        # block equations that have been removed).
-        block_after_contact = max(equation_groups[contact_group]) + 1
-
-        # Change the number of blocks in the contact group to the number of fractures,
-        # since we have merged the normal and tangential components.
-        eq_groups_corrected[contact_group] = equation_groups[contact_group][:num_fracs]
-
-        # For all other groups with block index after the contact group, reduce the
-        # block index by the number of fractures.
-        for blocks in eq_groups_corrected:
-            for i in range(len(blocks)):
-                if blocks[i] >= block_after_contact:
-                    blocks[i] -= num_fracs
-
-        return eq_groups_corrected
+    def variable_names(self, model):
+        names = []
+        for group in self._orderings:
+            if isinstance(group, list):
+                # If the group is a list, we assume it contains multiple groups.
+                # TODO: Unification needed here.
+                for g in group:
+                    names += g.variable_names(model)
+            else:
+                names += group.variable_names(model)
+        return names
 
     def var_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
@@ -426,6 +311,71 @@ class DofManager:
         for var in model.equation_system.variables:
             var_dofs.append(model.equation_system.dofs_of([var]))
         return var_dofs
+
+    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> int:
+        return self._solver_groups[solver]
+
+    def petsc_is(
+        self,
+        current_solver: groups.AbstractGroup,
+        other_solver: list[groups.AbstractGroup],
+        bmat: BlockMatrixStorage,
+    ):
+        # Not sure if this belongs here, but it is tempting to put it here and not in
+        # the composer.
+
+        # Indices of the block ids
+        current_id = self.blocks_of_solver(current_solver)
+
+        other_id = []
+        for group in other_solver:
+            # Get the block id for the group.
+            other_id += self.blocks_of_solver(group)
+
+        current_is = self._construct_is(bmat, current_id)
+        other_is = self._construct_is(bmat, other_id)
+        return current_is, other_is
+
+    def identify_contact_group(self, model):
+        # Identify the contact group in the equation groups
+        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
+        return ind[0]
+
+    def identify_energy_balance_group(self, model):
+        # TODO: Find a better way to do this. This is a map from PorePy-based
+        # identification of equations (by name, lacking a better tagging) to block
+        # indices.
+        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
+
+    def identify_u_intf_group(self, model):
+        # Identify the interface group in the equation groups
+        i = 0
+
+        # Note to self: Here we need to loop over the _orderings, since we need to match
+        # the ordering of the preconditioner to porepy information. See also the other
+        # identify methods.
+        for group in self._orderings:
+            if isinstance(group, list):
+                for sub_group in group:
+                    if len(sub_group.variable_groups(model)) == 0:
+                        continue
+                    for var in sub_group.variable_groups(model):
+                        if var[0].name == model.interface_displacement_variable:
+                            return i
+            else:
+                if len(group.variable_groups(model)) == 0:
+                    # This, EK believes, would be an empty group (e.g., a
+                    # fracture-related block solver for a domain without fractures, but
+                    # with a preconditioner assigned by default).
+                    continue
+                for var in group.variable_groups(model):
+                    # Loop over all the variables of the group (variables treated with
+                    # this block solver). See if this is the one.
+                    if var[0].name == model.interface_displacement_variable:
+                        return i
+                    else:
+                        i += 1
+        return -1
 
     def eq_rows_permutation(self, model):
         """Get a permutation vector for the full linear system of equations.
@@ -500,6 +450,56 @@ class DofManager:
         else:
             raise ValueError("Model dimension must be 2 or 3.")
         return permutation
+
+    def _correct_contact_equations_groups(
+        self,
+        model: pp.PorePyModel,
+        equation_groups: list[list[int]],
+        contact_group: int,
+    ) -> list[list[int]]:
+        """The block ordering from PorePy assigns different block indices to the normal
+        and tangential components of the contact equations. This method corrects this
+        indexing by assigning a single block index for each fracture.
+
+        The method further adjusts the indices of the other equation groups to account
+        for the reduced number of blocks.
+
+        Parameters:
+            equation_groups: The uncorrected equation groups.
+            contact_group: The group index of the contact mechanics equations.
+
+        Returns:
+            The corrected equation groups.
+
+        See also:
+            _correct_contact_eq_dofs for rearrane of the individual dofs related to
+                contact (as opposed to the equation blocks handled here).
+
+        """
+        if len(equation_groups[contact_group]) == 0:
+            return equation_groups
+
+        # Create a copy of the equation groups to avoid modifying the original.
+        eq_groups_corrected = [x.copy() for x in equation_groups]
+
+        num_fracs = len(model.mdg.subdomains(dim=model.nd - 1))
+        # Index of the first block after the contact group. This and all subsequent
+        # indexes will be reduced by the number of fractures (e.g., the number of
+        # block equations that have been removed).
+        block_after_contact = max(equation_groups[contact_group]) + 1
+
+        # Change the number of blocks in the contact group to the number of fractures,
+        # since we have merged the normal and tangential components.
+        eq_groups_corrected[contact_group] = equation_groups[contact_group][:num_fracs]
+
+        # For all other groups with block index after the contact group, reduce the
+        # block index by the number of fractures.
+        for blocks in eq_groups_corrected:
+            for i in range(len(blocks)):
+                if blocks[i] >= block_after_contact:
+                    blocks[i] -= num_fracs
+
+        return eq_groups_corrected
 
     def _construct_is(self, bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
         """Construct a PETSc IS (index set) from a list of groups.
