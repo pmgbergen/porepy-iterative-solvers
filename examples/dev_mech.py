@@ -20,7 +20,6 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 
 class FullModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
-    Geometry_2d_case_4,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
     FTHM_Solver.IterativeSolverMixin,
     pp.MomentumBalance,
@@ -49,11 +48,15 @@ model_params_2d = {
     "material_constants": {
         "solid": solid_constants_2d_1,
     },
-    
-    "u_north": 0.001,
-    "grid_type": "simplex",
-    # "meshing_arguments": {"cell_size": 0.1},
-    "linear_solver": {"preconditioner_factory": FTHM_Solver.momentum_balance_factory},
+    "u_north": [0, 0.001],
+    "grid_type": "cartesian",
+    "meshing_arguments": {"cell_size": 0.25},
+    "fracture_indices": [1],
+    # "units": pp.Units(kg=1e2),
+    "linear_solver": {
+        "preconditioner_factory": FTHM_Solver.momentum_balance_factory,
+        "options": {"ksp_monitor": None},
+    },
 }
 model_2d = FullModel(model_params_2d)
 pp.run_time_dependent_model(

@@ -45,7 +45,7 @@ class FullModel(
 
 model_params_2d = {
     "material_constants": {
-        "solid": solid_constants_2d_1,
+        "reference_values": {"pressure": 1},
     },
     "fracture_indices": [0, 1],  # 0, 1],
     "u_north": -0.001,
