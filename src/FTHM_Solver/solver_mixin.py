@@ -208,11 +208,7 @@ class IterativeSolverMixin:
             raise ValueError("Preconditioner factory is not set")
         precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
 
-        ordering_list = [precond.group() for precond in precond_list]
-
-        dof_manager = DofManager(
-            self.equation_system, self, ordering_list, precond_list
-        )
+        dof_manager = DofManager(self, precond_list)
         precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
 
         contact_ind = dof_manager.identify_contact_group()

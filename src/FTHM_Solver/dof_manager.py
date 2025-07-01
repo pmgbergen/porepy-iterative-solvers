@@ -23,21 +23,13 @@ class DofManager:
 
     def __init__(
         self,
-        equation_system: pp.EquationSystem,
         model: pp.PorePyModel,
-        orderings: list[groups.AbstractGroup],
         solvers: list[SinglePhysicsPreconditioner],
     ):
-        self._equation_system = equation_system
-        self._orderings = orderings
-        self._process_block_information(model, solvers)
-
-    def _process_block_information(self, model: pp.PorePyModel, solvers):
         """Construct groups of equations, variables and solvers from the orderings and
         solvers.
 
-        This method should be called as part of the DofManager initialization. It
-        process information on the orderings and solvers to arrive at the following:
+        Information on the equation blocks and solvers to arrive at the following:
 
         1. A list of equation groups, where each group defines a set of equations (using
            the block indices of the BlockMatrixStorage) that will be preconditioned
@@ -51,6 +43,8 @@ class DofManager:
            solver, and to construct the appropriate preconditioner for each solver.
 
         """
+        self._orderings = [precond.group() for precond in solvers]
+
         # The construction consists of two main steps: First, iterate over the orderings
         # and gather the equation and variable groups defined by them. This may involve
         # uniquifying the groups (relevant if the preconditioner is a PETSc Composite,
