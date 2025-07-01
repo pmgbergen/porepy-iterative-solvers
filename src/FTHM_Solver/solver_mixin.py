@@ -1,0 +1,284 @@
+"""This module contains schemes, e.g., recepies for constructing a PETSc solver."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from time import time
+from typing import Callable
+
+import numpy as np
+import porepy as pp
+import scipy.sparse as sps
+
+from .block_matrix import BlockMatrixStorage
+from .dof_manager import DofManager
+from .mat_utils import csr_ones, inv_block_diag
+from .options_parsers import (
+    LinearTransformedScheme,
+    MultiPhysicsPreconditioner,
+    PetscKSPScheme,
+)
+from .preconditioners import SinglePhysicsPreconditioner
+from porepy.viz.solver_statistics import SolverStatistics
+
+__all__ = [
+    "IterativeSolverMixin",
+]
+
+"""Below are methods that are used to create specific schemes for different equations.
+Note that these consider PETSc configurations, and have no responsibility for
+taking care of equations etc. (CURRENT IMPLEMENTATION IS NOT RIGHT). This means they are
+essentially bearers of options for the solver.
+"""
+
+
+def transform_contact_block(J, row_group: int, col_group: int, nd: int):
+    """Assemble the right linear transformation."""
+    # Sorted according to groups. If not done, the matrix can be in porepy order,
+    # which does not guarantee that diagonal groups are truly on diagonals.
+    Qright = J.empty_container()[:]
+
+    if row_group not in J.active_groups[0]:
+        # EK: The idea here is that if the relevant row group is not active, the
+        # transformation is the identity matrix (nothing should be done).
+        Qright.mat = csr_ones(Qright.shape[0])
+        return Qright
+
+    # Pick out the block matrix corresponding to the interface force balance equation
+    # (the row index) and the interface displacement variable (the column index). There
+    # is an underlying assumption that the groups in the preconditioner ordering are so
+    # that this equtaion-variable pair is on the diagonal of the matrix.
+    J55 = J[col_group, col_group].mat
+
+    # The contribution from the interface displacement variable to the force balance
+    # should be diagonally dominant, reflecting that the interface displacement has the
+    # strongest influence on the force on its own cell (and less so on the neighboring
+    # cell, though, with the MPSA stencil, the latter will not be zero). Note that there
+    # is no connection between the two sides of a fracture; this is represented in a
+    # different block of the full matrix. Approximate the stencil by a block diagonal,
+    # and calculate the inverse cheaply.
+    J55_inv = inv_block_diag(J55, nd=nd, lump=False)
+
+    Qright.mat = csr_ones(Qright.shape[0])
+    # Extract the block matrix corresponding to the impact of the contact forces on the
+    # force balance equation.
+    J54 = J[col_group, row_group].mat
+
+    # The transformation is given like this, see papers by Zabegaev for the details.
+    tmp = -J55_inv @ J54
+    Qright[col_group, row_group] = tmp
+    return Qright
+
+
+def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
+    """Assemble the right linear transformation for scaling energy fluxes."""
+    # Sorted according to groups. If not done, the matrix can be in porepy order,
+    # which does not guarantee that diagonal groups are truly on diagonals.
+    Q = J.empty_container()[:]
+
+    subdomains = model.mdg.subdomains()
+    vols = 1.0 / model.equation_system.evaluate(model.specific_volume(subdomains))
+
+    Q.mat = sps.eye(Q.shape[0], format="csr")
+    if len(subdomains) == 0:
+        # No subdomains, hence no scaling.
+        return Q
+    Q[row_groups] = sps.diags(vols, format="csr")
+
+    return Q
+
+
+@dataclass
+class LinearSolverComponents:
+    dof_manager: DofManager
+    preconditioner: MultiPhysicsPreconditioner
+    ksp_factory: PetscKSPScheme
+
+
+@dataclass
+class LinearSolverStatistics(SolverStatistics):
+    """A dataclass to store statistics about the linear solver.
+
+    Currently, PorePy only has stastics for the nonlinear solver, so we create an
+    extension to store the linear solver statistics.
+    """
+
+    linsolve_construction_time: list[float] = None
+    linsolve_solve_time: list[float] = None
+    petsc_converged_reason: list[int] = None
+    num_krylov_iters: list[int] = None
+
+    def __post_init__(self):
+        self.linsolve_construction_time = []
+        self.linsolve_solve_time = []
+        self.petsc_converged_reason = []
+        self.num_krylov_iters = []
+
+
+class IterativeSolverMixin:
+    def solve_linear_system(self) -> None:
+        # Check for NaN or Inf in the RHS.
+        mat, rhs = self.linear_system
+        if np.any(np.isnan(rhs) | np.isinf(rhs)):
+            raise ValueError("RHS contains NaN or Inf values")
+
+        # By default, print the residual information to screen (ksp_monitor=None).
+        solver_options = self.params["linear_solver"].get("options", {})
+        ksp_factory = self._solver_components.ksp_factory
+        solver = ksp_factory.make_solver(self.bmat, solver_options)
+        t0 = time()
+        try:
+            solver = ksp_factory.make_solver(self.bmat, solver_options)
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to create solver with the provided preconditioner."
+            ) from e
+
+        self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
+
+        # Project the right hand side to the local block matrix ordering, as was done
+        # for the block matrix during assembly. We need to do this on the reordered rhs
+        # vector (with contact eqs reordered).
+        rhs_loc = self.bmat.project_rhs_to_local(self.rhs_reordered)
+        t0 = time()
+        x_loc = solver.solve(rhs_loc)
+        self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
+
+        info = solver.ksp.getConvergedReason()
+        if info <= 0:
+            raise RuntimeError(
+                f"Solver did not converge. Reason: {info}. "
+                "Check the solver options and the problem setup."
+            )
+
+        # Project the solution back to the global (PorePy) ordering. For clarity, no
+        # contact reordering here, since only the equations (rows) and not the variables
+        # (columns) were reordered.
+        x = self.bmat.project_solution_to_global(x_loc)
+        self.nonlinear_solver_statistics.petsc_converged_reason.append(info)
+        self.nonlinear_solver_statistics.num_krylov_iters.append(
+            len(solver.get_residuals())
+        )
+
+        return np.atleast_1d(x)
+
+    def assemble_linear_system(self):
+        super().assemble_linear_system()  # type: ignore[misc]
+
+        dof_manager = self._solver_components.dof_manager
+        # Get the linear system from the equation system.
+
+        # TODO: Replace this with a different type of plugin
+        mat, rhs = self.linear_system
+
+        # Apply the `contact_permutation`. With this, the equations for tangential and
+        # normal fracture deformation are ordered cellwise (not with tangential and
+        # normal separately, as is the case in the PorePy ordering).
+        mat = mat[dof_manager.eq_rows_permutation(self)]
+        rhs = rhs[dof_manager.eq_rows_permutation(self)]
+
+        bmat = BlockMatrixStorage(
+            mat=mat,
+            global_dofs_row=dof_manager.eq_dofs_by_blocks(self),
+            global_dofs_col=dof_manager.var_dofs_by_blocks(self),
+            groups_to_blocks_row=dof_manager.equation_groups(self),
+            groups_to_blocks_col=dof_manager.variable_groups(self),
+            group_names_row=dof_manager.equation_names(self),
+            group_names_col=dof_manager.variable_names(self),
+        )
+
+        # Store the linear system in the solver mixin *and*, by calling [:], rearrange
+        # the blocks (and thereby the underlying matrix) to match the ordering defined
+        # by the # `dof_manager`.
+        self.bmat = bmat[:]
+        # Also store the right hand side vector, with the eq_rows_permutation (that is,
+        # the reordering of the contact equtaions) applied. Note that this does not yet
+        # have the block reordering applied (the result of the [:] operation on the
+        # block matrix above). This will be taken care of by projection methods prior to
+        # and after the actual linear solve.
+        self.rhs_reordered = rhs
+
+    def _initialize_linear_solver(self):
+        # Set up preconditioner.
+        precond_factory: Callable[[], MultiPhysicsPreconditioner] = self.params[
+            "linear_solver"
+        ]["preconditioner_factory"]
+        if precond_factory is None:
+            raise ValueError("Preconditioner factory is not set")
+        precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
+
+        ordering_list = [precond.group() for precond in precond_list]
+
+        dof_manager = DofManager(
+            self.equation_system, self, ordering_list, precond_list
+        )
+        precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
+
+        contact_ind = dof_manager.identify_contact_group(self)
+
+        ksp_factory = PetscKSPScheme(preconditioner=precond)
+        contact_transform, thermal_transform = None, None
+        if contact_ind > -1:
+            # If there is a contact group, we need to use a linear solver that takes
+            # care of potential singularities in the contact block.
+            u_intf_ind = dof_manager.identify_u_intf_group(self)
+
+            contact_transform = [
+                lambda bmat: transform_contact_block(
+                    bmat, contact_ind, u_intf_ind, self.nd
+                )
+            ]
+        if any(
+            [name.startswith("energy") for name in dof_manager.equation_names(self)]
+        ):
+            row = dof_manager.identify_energy_balance_group(self)
+            thermal_transform = [
+                lambda bmat: scale_energy_transform(bmat, row_groups=row, model=self)
+            ]
+
+        if contact_transform is not None or thermal_transform is not None:
+            solver_factory = LinearTransformedScheme(
+                nd=self.nd,
+                contact_group=contact_ind,
+                u_intf_group=u_intf_ind,
+                # preconditioner=precond,
+                inner=ksp_factory,
+                right_transformations=contact_transform,
+                left_transformations=thermal_transform,
+            )
+
+        else:
+            # A standard KSP solver will do.
+            solver_factory = ksp_factory
+
+        solver_components = LinearSolverComponents(
+            dof_manager=dof_manager,
+            preconditioner=precond,
+            ksp_factory=solver_factory,
+        )
+        self._solver_components = solver_components
+
+    def set_solver_statistics(self) -> None:
+        """Override the method to set the solver statistics, so that we also get fields
+        for the linear solver.
+
+        This is certainly not the intended way of doing this, and it hacky, but the
+        current PorePy implementation only caters to statistics objects being sent
+        as part of the parameter class, which would require modification of all
+        runscripts. Instead, we do it dirty for now.
+
+        """
+        # The name of the attribute is really not meaningful..
+        self.nonlinear_solver_statistics = LinearSolverStatistics()
+
+    def save_matrix_state(self):
+        save_path = Path("./matrices")
+        save_path.mkdir(exist_ok=True)
+        mat, rhs = self.linear_system
+        name = "matrix"
+        print("Saving matrix", name)
+        mat_id = f"{name}.npz"
+        rhs_id = f"{name}_rhs.npy"
+        sps.save_npz(save_path / mat_id, self.bmat.mat)
+        np.save(save_path / rhs_id, rhs)

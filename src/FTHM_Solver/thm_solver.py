@@ -7,9 +7,13 @@ import scipy.sparse
 
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme
 from .fixed_stress import make_fs_analytical_slow_new
-from .full_petsc_solver import (LinearTransformedScheme, PcPythonPermutation,
-                                PetscCompositeScheme, PetscFieldSplitScheme,
-                                PetscKSPScheme)
+from .full_petsc_solver import (
+    LinearTransformedScheme,
+    PcPythonPermutation,
+    PetscCompositeScheme,
+    PetscFieldSplitScheme,
+    PetscKSPScheme,
+)
 from .hm_solver import IterativeHMSolver
 from .iterative_solver import get_equations_group_ids, get_variables_group_ids
 from .mat_utils import csr_to_petsc
@@ -540,13 +544,6 @@ class THMSolver(IterativeHMSolver):
                 ),
             ),
         )
-
-
-def get_dofs_of_groups(
-    groups_to_block: list[list[int]], dofs: list[np.ndarray], groups: list[int]
-) -> np.ndarray:
-    blocks = [blk for g in groups for blk in groups_to_block[g]]
-    return np.concatenate([dofs[blk] for blk in blocks])
 
 
 def make_pt_permutation(

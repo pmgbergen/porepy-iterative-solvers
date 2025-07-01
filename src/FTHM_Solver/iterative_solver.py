@@ -10,6 +10,10 @@ import scipy.sparse as sps
 from .block_matrix import BlockMatrixStorage, FieldSplitScheme, KSPScheme
 from .stats import LinearSolveStats, StatisticsSavingMixin
 
+__all__ = [
+    "IterativeLinearSolver",
+]
+
 
 class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
     """Mixin for iterative linear solvers."""
@@ -25,42 +29,6 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
 
     bmat: BlockMatrixStorage
     """The current Jacobian."""
-
-    @cached_property
-    def var_dofs(self) -> list[np.ndarray]:
-        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
-        (how they are arranged in the model).
-
-        Returns:
-            List of numpy arrays. Each array contains the global degrees of freedom for
-                one variable on one grid and provides the fine-scale (actual column
-                indices) of the variable.
-
-        """
-        var_dofs: list[np.ndarray] = []
-        for var in self.equation_system.variables:
-            var_dofs.append(self.equation_system.dofs_of([var]))
-        return var_dofs
-
-    @cached_property
-    def eq_dofs(self) -> list[np.ndarray]:
-        """Equation indices (rows of the Jacobian) in the order defined by the PorePy
-        EquationSystem.
-
-        Returns:
-            List of numpy arrays. Each list entry correspond to one equation on one
-                grid, and provides the fine-scale (actual row indices) of the equation.
-
-        """
-        eq_dofs: list[np.ndarray] = []
-        offset = 0
-        for data in self.equation_system._equation_image_space_composition.values():
-            local_offset = 0
-            for dofs in data.values():
-                eq_dofs.append(dofs + offset)
-                local_offset += len(dofs)
-            offset += local_offset
-        return eq_dofs
 
     @cached_property
     def variable_groups(self) -> list[list[int]]:
@@ -108,13 +76,22 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         """
         super().assemble_linear_system()  # type: ignore[misc]
 
+        row_permutation = self._linear_solver_scheme_maker.row_indices()
+        mat, rhs = self.linear_system
+
+        # Apply the `contact_permutation`.
+        mat = mat[row_permutation]
+        rhs = rhs[row_permutation]
+
+        scheme_maker = self._linear_solver_scheme_maker
+
         bmat = BlockMatrixStorage(
             mat=self.linear_system[0],
-            global_dofs_row=self.eq_dofs,
-            global_dofs_col=self.var_dofs,
-            groups_to_blocks_row=self.equation_groups,
-            groups_to_blocks_col=self.variable_groups,
-            group_names_row=self.group_row_names(),
+            global_dofs_row=scheme_maker.eq_dofs,
+            global_dofs_col=scheme_maker.var_dofs,
+            groups_to_blocks_row=scheme_maker.equation_groups,
+            groups_to_blocks_col=scheme_maker.variable_groups,
+            group_names_row=self.group_row_names(),  # TODO: Move to the scheme
             group_names_col=self.group_col_names(),
         )
 
@@ -148,7 +125,7 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         if config.get("save_matrix", False):
             self.save_matrix_state()
 
-        scheme = self.make_solver_scheme()
+        scheme = self._linear_solver_scheme_maker.make_solver_scheme()
         # Construct the solver.
         bmat = self.bmat[scheme.get_groups()]
 
@@ -198,93 +175,11 @@ class IterativeLinearSolver(StatisticsSavingMixin, pp.PorePyModel):
         self._linear_solve_stats.krylov_iters = len(solver.get_residuals())
         return np.atleast_1d(sol)
 
+    def _initialize_linear_solver(self) -> None:
+        """Initialize the linear solver.
 
-def get_variables_group_ids(
-    model: pp.PorePyModel,
-    md_variables_groups: Sequence[
-        Sequence[pp.ad.MixedDimensionalVariable | pp.ad.Variable]
-    ],
-) -> list[list[int]]:
-    """Used to assemble the index that will later help accessing the submatrix
-    corresponding to a group of variables, which may include one or more variable.
-
-    Example: Group 0 corresponds to the pressure on all the subdomains. It will contain
-    indices [0, 1, 2] which point to the pressure variable dofs on sd1, sd2 and sd3,
-    respectively. Combination of different variables in one group is also possible.
-
-    Parameters:
-        model: The PorePy model. The model should have the EquationSystem defined.
-        md_variables_groups: The order of the groups of variables. Each group is a
-            sequence of variables (either MixedDimensionalVariable or Variable).
-
-    Returns:
-        List of lists of integers. Each inner list contains the indices of the variables
-            in defined in the respective item in md_variables_groups.
-
-    """
-    # Create a 0-based index for each variable.
-    variable_to_idx = {var: i for i, var in enumerate(model.equation_system.variables)}
-    indices = []
-    for md_var_group in md_variables_groups:
-        group_idx = []
-        for md_var in md_var_group:
-            # If we ever get a variable in here, we need to handle it directly, and not
-            # call sub_vars.
-            assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
-            group_idx.extend([variable_to_idx.pop(var) for var in md_var.sub_vars])
-        indices.append(group_idx)
-    assert len(variable_to_idx) == 0, "Some variables are not used."
-    return indices
-
-
-def get_equations_group_ids(
-    model: pp.PorePyModel,
-    equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
-) -> list[list[int]]:
-    """Used to assemble the index that will later help accessing the submatrix
-    corresponding to a group of equation, which may include one or more equation.
-
-    Parameters:
-        model: The PorePy model. The model should have the EquationSystem defined.
-        equations_group_order: The order of the groups of equations. Each group is a
-            sequence of tuples. Each tuple contains the name of the equation and the
-            domain where it is applied.
-
-    Returns:
-        List of lists of integers. Each inner list contains the indices of the equations
-            in defined in the respective item in equations_group_order. The indices
-            refer to the block indices defined in
-            model.equation_system._equation_image_space_composition.
-
-    """
-    # Assign a unique index to each equation-domain pair.
-    equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
-    idx: int = 0
-    for (
-        eq_name,
-        domains,
-    ) in model.equation_system._equation_image_space_composition.items():
-        for domain in domains:
-            equation_to_idx[(eq_name, domain)] = idx
-            idx += 1
-
-    indices: list[list[int]] = []
-    # The outer loop define different groups of equations (to become blocks in the
-    # block matrix).
-    for group in equations_group_order:
-        group_idx = []
-        # Items in the group will contain a single equation defined on one or more
-        # domains (subdomains or interfaces). Loop over equations an over all their
-        # domains to add the indices to the group.
-        for eq_name, domains_of_eq in group:
-            for domain in domains_of_eq:
-                if (eq_name, domain) in equation_to_idx:
-                    group_idx.append(equation_to_idx.pop((eq_name, domain)))
-        indices.append(group_idx)
-
-    # TODO EK: Added this assert just to verify that my understanding of the function
-    # is correct. Delete it later.
-    assert len(indices) == len(equations_group_order)
-    assert len(equation_to_idx) == 0, "Some equations are not used."
-
-    return indices
+        This method fetches the linear solver scheme class (essentially a factory class
+        for a linear solver) from the parameters and creates an instance of it.
+        """
+        scheme_maker_cls = self.params.get("linear_solver_scheme")
+        self._linear_solver_scheme_maker = scheme_maker_cls(self, self.params)
