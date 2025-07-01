@@ -454,26 +454,10 @@ class DofManager:
         return var_dofs
 
     def eq_rows_permutation(self, model):
-        """Get a permutation vector for the full linear system of equations. This is
-        used to reorder the equations so that the contact equations for single fracture
-        cells form a diagonal block.
+        """Get a permutation vector for the full linear system of equations.
 
-        If no contact group is present, the permutation vector is linear.
-
-        See also eq_dofs_by_blocks, which is used to reorder contact equations within
-        the equation block format.
-        """
-        contact_group = self.identify_contact_group(model)
-        # If there is no contact group, return the original equation groups.
-        if contact_group == -1:
-            return np.arange(model.equation_system.num_dofs())
-
-        return self.make_reorder_contact(model, contact_group)
-
-    def make_reorder_contact(
-        self, model: pp.PorePyModel, contact_group: int
-    ) -> np.ndarray:
-        """Permutate the contact mechanics equations to a cell-wise block structure.
+        This is used to reorder the equations so that the contact equations for single
+        fracture cells form a diagonal block.
 
         The PorePy arrangement is:
 
@@ -492,14 +476,21 @@ class DofManager:
             ValueError: If the model dimension is not 2 or 3.
 
         Returns:
-
+            A numpy array with the permutation indices for the equations. If no contact
+            group is present, the permutation is the identity, i.e., no reordering is
+            performed.
 
         """
-        reorder = np.arange(model.equation_system.num_dofs())
+        permutation = np.arange(model.equation_system.num_dofs())
+        contact_group = self.identify_contact_group(model)
 
-        # Short cut if no contact mechanics, hence no reordering.
+        # If there is no contact group, return the original equation groups.
+        if contact_group == -1:
+            return np.arange(model.equation_system.num_dofs())
+        # If contact is formally present, but no equations are defined for it,
+        # return the original permutation.
         if len(self.equation_groups(model)[contact_group]) == 0:
-            return reorder
+            return permutation
 
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
@@ -521,7 +512,7 @@ class DofManager:
             # Rearrange the dofs into cell-wise blocks.
             dofs_contact_0 = dofs_contact[:num_contact_cells]
             dofs_contact_1 = dofs_contact[num_contact_cells:]
-            reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
+            permutation[dofs_contact_start:dofs_contact_end] = np.vstack(
                 [dofs_contact_0, dofs_contact_1]
             ).ravel("F")
         elif model.nd == 3:
@@ -529,12 +520,12 @@ class DofManager:
             dofs_contact_0 = dofs_contact[:num_contact_cells]
             dofs_contact_1 = dofs_contact[num_contact_cells::2]
             dofs_contact_2 = dofs_contact[num_contact_cells + 1 :: 2]
-            reorder[dofs_contact_start:dofs_contact_end] = np.vstack(
+            permutation[dofs_contact_start:dofs_contact_end] = np.vstack(
                 [dofs_contact_0, dofs_contact_1, dofs_contact_2]
             ).ravel("F")
         else:
             raise ValueError("Model dimension must be 2 or 3.")
-        return reorder
+        return permutation
 
     def _construct_is(self, bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
         """Construct a PETSc IS (index set) from a list of groups.
