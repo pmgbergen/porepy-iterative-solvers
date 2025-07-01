@@ -329,35 +329,14 @@ class DofManager:
             offset += local_offset
 
         contact_group = self.identify_contact_group(model)
-        if contact_group > -1:
+        if contact_group == -1:
             # If there is no contact group, return the original equation dofs.
-            return self._correct_contact_eq_dofs(model, eq_dofs, contact_group)
-
-        return eq_dofs
-
-    def _correct_contact_eq_dofs(
-        self, model, unpermuted_eq_dofs: list[np.ndarray], contact_group: int
-    ) -> list[np.ndarray | None]:
-        """Rearrange the unknowns (row indices) so that the contact equations are in a
-        cell-wise block structure.
-
-        Parameters:
-            unpermuted_eq_dofs: The unpermuted equation degrees of freedom.
-            contact_group: The group index of the contact mechanics equations.
-
-        Returns:
-            The corrected equation degrees of freedom.
-
-        See also:
-            _correct_contact_equations_groups for rearrane of the equation blocks
-                related to contact (as opposed to the individual dofs handled here).
-
-        """
+            return eq_dofs
         # Short cut if no contact mechanics, hence no reordering.
         if len(self.equation_groups(model)[contact_group]) == 0:
             # Ignore mypy error, list[np.ndarray] is a subset of list[np.ndarray |
             # None].
-            return unpermuted_eq_dofs  # type: ignore[return-value]
+            return eq_dofs  # type: ignore[return-value]
 
         # We assume that normal equations go first. TODO: Can we make this more robust,
         # or else put an assert here.
@@ -372,17 +351,17 @@ class DofManager:
 
         eq_dofs_corrected: list[np.ndarray | None] = []
         # Add all equations that are not contact equations without any changes.
-        for i, x in enumerate(unpermuted_eq_dofs):
+        for i, x in enumerate(eq_dofs):
             if i not in all_contact_blocks:
                 eq_dofs_corrected.append(x)
             elif i in normal_blocks:
                 eq_dofs_corrected.append(None)
 
-        offset = unpermuted_eq_dofs[normal_blocks[0]][0]
+        offset = eq_dofs[normal_blocks[0]][0]
         for nb in normal_blocks:
             # Create indices for the normal and tangential components of the contact.
             # There will be model.nd equations for each block.
-            inds = offset + np.arange(unpermuted_eq_dofs[nb].size * model.nd)
+            inds = offset + np.arange(eq_dofs[nb].size * model.nd)
             offset = inds[-1] + 1
             eq_dofs_corrected[nb] = np.array(inds)
 
