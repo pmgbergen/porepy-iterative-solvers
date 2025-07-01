@@ -203,7 +203,7 @@ class DofManager:
         # to use the name_to_group_indices map, constructed just below, to identify the
         # contact group, but this is not yet available at this point. Refactoring may be
         # a good idea.
-        contact_group = self.identify_contact_group(model)
+        contact_group = self.identify_contact_group()
         if contact_group == -1:
             self._equation_groups = equation_groups_by_number
         else:
@@ -246,7 +246,7 @@ class DofManager:
                 local_offset += len(dofs)
             offset += local_offset
 
-        contact_group = self.identify_contact_group(model)
+        contact_group = self.identify_contact_group()
         if contact_group == -1:
             # If there is no contact group, return the original equation dofs.
             return eq_dofs
@@ -336,15 +336,31 @@ class DofManager:
         other_is = self._construct_is(bmat, other_id)
         return current_is, other_is
 
-    def identify_contact_group(self, model):
+    def identify_contact_group(self) -> int:
+        """Identify the contact group in the equation groups.
+
+        It is assumed that there is a single contact group, that is, that the contact
+        blocks are not split into several groups.
+
+        Parameters:
+            model: The PorePy model.
+
+        Returns:
+            The index of the contact group in the equation groups. If no contact group
+            is found, returns -1.
+
+        """
         # Identify the contact group in the equation groups
         ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
         return ind[0]
 
-    def identify_energy_balance_group(self, model):
-        # TODO: Find a better way to do this. This is a map from PorePy-based
-        # identification of equations (by name, lacking a better tagging) to block
-        # indices.
+    def identify_energy_balance_group(self) -> list[int]:
+        """Identify the energy balance group in the equation groups.
+
+        Returns:
+            The indices of the energy balance group in the equation groups.
+
+        """
         return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
 
     def identify_u_intf_group(self, model):
@@ -406,7 +422,7 @@ class DofManager:
 
         """
         permutation = np.arange(model.equation_system.num_dofs())
-        contact_group = self.identify_contact_group(model)
+        contact_group = self.identify_contact_group()
 
         # If there is no contact group, return the original equation groups.
         if contact_group == -1:

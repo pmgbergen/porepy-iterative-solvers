@@ -215,7 +215,7 @@ class IterativeSolverMixin:
         )
         precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
 
-        contact_ind = dof_manager.identify_contact_group(self)
+        contact_ind = dof_manager.identify_contact_group()
 
         ksp_factory = PetscKSPScheme(preconditioner=precond)
         contact_transform, thermal_transform = None, None
@@ -232,7 +232,7 @@ class IterativeSolverMixin:
         if any(
             [name.startswith("energy") for name in dof_manager.equation_names(self)]
         ):
-            row = dof_manager.identify_energy_balance_group(self)
+            row = dof_manager.identify_energy_balance_group()
             thermal_transform = [
                 lambda bmat: scale_energy_transform(bmat, row_groups=row, model=self)
             ]
