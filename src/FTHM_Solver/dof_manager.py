@@ -224,10 +224,10 @@ class DofManager:
         self._name_to_group_indices = name_to_group_index_map
 
         # Next, expand the groups by calling on relevant helper methods.
-        var_groups_by_number = self._get_variables_group_ids(model, var_groups)
+        var_groups_by_number = self._variable_block_indices(model, var_groups)
         self._variable_groups = var_groups_by_number
 
-        equation_groups_by_number = self._get_equations_group_ids(
+        equation_groups_by_number = self._equation_block_indices(
             model, equations_by_name
         )
 
@@ -531,7 +531,7 @@ class DofManager:
             # Return an empty IS if the group is empty.
             return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
 
-    def _get_variables_group_ids(
+    def _variable_block_indices(
         self,
         model: pp.PorePyModel,
         md_variables_groups: Sequence[
@@ -571,7 +571,7 @@ class DofManager:
         assert len(variable_to_idx) == 0, "Some variables are not used."
         return indices
 
-    def _get_equations_group_ids(
+    def _equation_block_indices(
         self,
         model: pp.PorePyModel,
         equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
