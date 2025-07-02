@@ -16,13 +16,13 @@ to simple systems. For a given PorePy model, the tests consist of the following 
 
 """
 
-import pytest
 import numpy as np
-import FTHM_Solver
 import porepy as pp
+import pytest
 from porepy.applications.test_utils.models import add_mixin
-
 from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
+
+import FTHM_Solver
 
 
 class FluidModel(

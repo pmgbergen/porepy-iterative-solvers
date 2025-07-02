@@ -97,7 +97,8 @@ def get_nonzero_indices(
     A: csr_matrix, row_indices: list[np.ndarray], col_indices: list[np.ndarray]
 ) -> list[int]:
     """
-    Get the indices of A.data that correspond to the specified subset of rows and columns.
+    Get the indices of A.data that correspond to the specified subset of rows and
+    columns.
 
     Parameters:
         A: The input sparse matrix.

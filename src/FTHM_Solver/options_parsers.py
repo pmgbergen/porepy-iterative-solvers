@@ -8,7 +8,7 @@ from petsc4py import PETSc
 
 from .block_matrix import BlockMatrixStorage
 from .dof_manager import DofManager
-from .mat_utils import csr_to_petsc, inv_block_diag, clear_petsc_options
+from .mat_utils import clear_petsc_options, csr_to_petsc, inv_block_diag
 from .petsc_solvers import (
     LinearSolverWithTransformations,
     PetscKrylovSolver,
@@ -51,7 +51,7 @@ class MultiPhysicsPreconditioner:
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
         making a bridge from the general settings defined in a scheme to the PETSc
-        options needed to apply the scheme to a contrete linear system, while also accounting for
+        options needed to apply the scheme to a contrete linear system.
 
         Args:
             model: The model instance specifying the problem to be solved.

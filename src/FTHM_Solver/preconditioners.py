@@ -411,14 +411,16 @@ class FixedStressPreconditioner(MechanicsPreconditioner):
         flow_group = self._flow_groups(model, dof_manager)
         if len(flow_group) == 0:
             raise ValueError(
-                "No flow group found in the model. This is required for the fixed stress preconditioner."
+                "Mass balance group not found in the model. "
+                "This is required for the fixed-stress preconditioner."
             )
         elif len(flow_group) == 1:
             # This is a fixed-dimensional problem.
             raise NotImplementedError(
-                "The fixed stress preconditioner is not yet implemented for fixed-dimensional problems."
+                "Have not yet implemented the fixed stress preconditioner "
+                "for fixed-dimensional problems."
             )
-        else:  # len(flow_group) > 1
+        else:
             # This is a mixed-dimensional problem, use the md scheme
             return lambda bmat: csr_to_petsc(
                 make_fs_analytical_slow_new(
@@ -453,11 +455,8 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
 
     def _default_fieldsplit_options(self, model, dof_manager) -> dict:
         opts = super()._default_fieldsplit_options(model, dof_manager)
-        opts.update(
-            {
-                f"fieldsplit_{self.complement_tag}_mat_schur_complement_ainv_type": "blockdiag"
-            }
-        )
+        key = f"fieldsplit_{self.tag}_mat_schur_complement_ainv_type"
+        opts.update({key: "blockdiag"})
         return opts
 
     def _default_options(self, model, dof_manager) -> dict:
@@ -540,7 +539,8 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
                 group = [slv.group() for slv in solver]
             else:
                 raise TypeError(
-                    "The solver must be a SinglePhysicsPreconditioner or a list of them."
+                    "The solver must be a SinglePhysicsPreconditioner"
+                    " or a list of them."
                 )
             if not isinstance(group, list):
                 group = [group]
@@ -557,7 +557,8 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
                 keys += [x.key for x in slv]
             else:
                 raise TypeError(
-                    "The solver must be a SinglePhysicsPreconditioner or a list of them."
+                    "The solver must be a SinglePhysicsPreconditioner"
+                    " or a list of them."
                 )
 
         return "composite_" + "_".join([key for key in keys])

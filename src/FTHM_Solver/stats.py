@@ -95,9 +95,9 @@ class StatisticsSavingMixin(ContactIndicators):
         if config.get("logging", False):
             print()
             DAY = 24 * 60 * 60
-            print(
-                f"Sim time: {self.time_manager.time / DAY:.2e}, Dt: {self.time_manager.dt / DAY:.2e} (days)"
-            )
+            time = self.time_manager.time / DAY
+            dt = self.time_manager.dt / DAY
+            print(f"Sim time: {time:.2e}, Dt: {dt:.2e} (days)")
         super().before_nonlinear_loop()
 
     def after_nonlinear_convergence(self) -> None:

@@ -192,8 +192,8 @@ def test_plot_max(sample_matrix):
     sample_matrix.plot_max()
 
 
-# EK: Auto-generated tests related to plotting failed. Mark these as expected to fail for
-# now, revisit if we need to fix them.
+# EK: Auto-generated tests related to plotting failed. Mark these as expected to fail
+# for now, revisit if we need to fix them.
 @pytest.mark.xfail
 def test_matshow(sample_matrix):
     sample_matrix.matshow(show=False)
