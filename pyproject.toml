@@ -29,3 +29,18 @@ development = [
   "flake8",
   "isort",
 ]
+
+
+[tool.ruff]
+line-length = 88
+
+# Static analysis.
+[tool.ruff.lint]
+select = ["E501"]
+ignore = [
+    "E731",  # do not assign a lambda expression, use a def
+    "E266",  # too many leading '#' for block comment
+]
+exclude = [
+    "src/FTHM_Solver/__init__.py",
+]
