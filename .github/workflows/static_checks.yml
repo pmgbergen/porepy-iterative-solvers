@@ -1,0 +1,44 @@
+name: Static Checks
+
+on:
+  push:
+    branches:
+      - main 
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    # Run manually
+  schedule:
+    # Do a nightly run of the tests
+    - cron: '0 1 * * *'
+   
+
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff (check)
+        run: |
+          ruff format src tests --check
+
+      - name: Run ruff (format)
+        run: |
+          ruff check src tests
