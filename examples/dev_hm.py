@@ -1,6 +1,6 @@
 import numpy as np
 import porepy as pp
-import FTHM_Solver
+import pp_solvers
 
 from porepy.examples.flow_benchmark_2d_case_1 import (
     Geometry as Geometry_2d_case_1,
@@ -20,7 +20,7 @@ class FullModel(
     # Geometry_2d_case_1,
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    FTHM_Solver.IterativeSolverMixin,
+    pp_solvers.IterativeSolverMixin,
     pp.Poromechanics,
 ):
     def check_convergence(
@@ -51,7 +51,7 @@ model_params_2d = {
     "u_north": -0.001,
     "meshing_arguments": {"cell_size": 0.1},
     "linear_solver": {
-        "preconditioner_factory": FTHM_Solver.hm_factory,
+        "preconditioner_factory": pp_solvers.hm_factory,
         "options": {"ksp_monitor": None},
     },
 }
