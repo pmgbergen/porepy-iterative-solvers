@@ -2,7 +2,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
-import FTHM_Solver
+import pp_solvers
 
 from porepy.examples.flow_benchmark_2d_case_1 import (
     Geometry as Geometry_2d_case_1,
@@ -21,7 +21,7 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 class FullModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    FTHM_Solver.IterativeSolverMixin,
+    pp_solvers.IterativeSolverMixin,
     pp.MomentumBalance,
 ):
     def check_convergence(
@@ -54,7 +54,7 @@ model_params_2d = {
     "fracture_indices": [1],
     # "units": pp.Units(kg=1e2),
     "linear_solver": {
-        "preconditioner_factory": FTHM_Solver.momentum_balance_factory,
+        "preconditioner_factory": pp_solvers.momentum_balance_factory,
         "options": {"ksp_monitor": None},
     },
 }

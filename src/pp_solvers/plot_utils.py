@@ -16,7 +16,7 @@ from numpy.linalg import norm
 from scipy.sparse import bmat, spmatrix
 from scipy.sparse.linalg import LinearOperator
 
-from FTHM_Solver.stats import LinearSolveStats, TimeStepStats, dump_json
+from pp_solvers.stats import LinearSolveStats, TimeStepStats, dump_json
 
 if TYPE_CHECKING:
     from .block_matrix import (

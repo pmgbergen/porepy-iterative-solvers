@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from FTHM_Solver.block_matrix import BlockMatrixStorage
+from pp_solvers.block_matrix import BlockMatrixStorage
 
 
 @pytest.fixture

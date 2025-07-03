@@ -2,7 +2,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
-import FTHM_Solver
+
 
 from porepy.examples.flow_benchmark_2d_case_1 import (
     FlowBenchmark2dCase1Model,
@@ -19,7 +19,7 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 
 
 class FullModel(
-    FTHM_Solver.IterativeSolverMixin,
+    pp_solvers.IterativeSolverMixin,
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMassDirNorthSouth,
     FlowBenchmark2dCase4Model,
@@ -53,7 +53,7 @@ model_params_2d = {
     "fracture_indices": [0, 1],
     "units": pp.Units(m=1e-4),
     "linear_solver": {
-        "preconditioner_factory": FTHM_Solver.mass_balance_factory,
+        "preconditioner_factory": pp_solvers.mass_balance_factory,
         "options": {"ksp_monitor": None},
     },
 }

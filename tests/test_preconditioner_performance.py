@@ -22,7 +22,7 @@ import pytest
 from porepy.applications.test_utils.models import add_mixin
 from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
 
-import FTHM_Solver
+import pp_solvers
 
 
 class FluidModel(
@@ -58,10 +58,10 @@ class ThermoporomechanicsModel(
 
 
 factories = {
-    FluidModel: FTHM_Solver.mass_balance_factory,
-    MechanicsModel: FTHM_Solver.momentum_balance_factory,
-    PoromechanicsModel: FTHM_Solver.hm_factory,
-    ThermoporomechanicsModel: FTHM_Solver.thm_factory,
+    FluidModel: pp_solvers.mass_balance_factory,
+    MechanicsModel: pp_solvers.momentum_balance_factory,
+    PoromechanicsModel: pp_solvers.hm_factory,
+    ThermoporomechanicsModel: pp_solvers.thm_factory,
 }
 
 # Hard-coded expected number of linear iterations for each model. These are used for
@@ -114,7 +114,7 @@ def test_model(model_class):
         # but will be active during debugging, if the test is run as a python script.
         "options": {"ksp_monitor": None},
     }
-    iterative_class = add_mixin(FTHM_Solver.IterativeSolverMixin, model_class)
+    iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, model_class)
 
     iterative_model = iterative_class(iterative_opts)
     pp.run_time_dependent_model(iterative_model, solver_opts)

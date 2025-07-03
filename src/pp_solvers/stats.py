@@ -136,7 +136,7 @@ class StatisticsSavingMixin(ContactIndicators):
         #     self.save_matrix_state()
         config = self.params.get("linear_solver_config", {})
         if config.get("save_statistics", False):
-            from FTHM_Solver.plot_utils import write_dofs_info
+            from pp_solvers.plot_utils import write_dofs_info
 
             dump_json(self.simulation_name() + ".json", self.statistics)
             write_dofs_info(self)
