@@ -3,7 +3,10 @@ This repository implements linear solvers for the open-source software
 [PorePy](https://github.com/pmgbergen/porepy), using [PETSc](https://petsc.org/) as the
 linear algebra backend.
 
-The repository is a fork of https://github.com/pmgbergen/FTHM-Solver. 
+This code is under active development and cannot be considered stable. Use with care.
+
+The code contained herein is based on initial work by Yury Zabegaev in 
+[this repository](https://github.com/yuriyzabegaev/FTHM-Solver/).
 Whereas the upstream repository is used for prototyping of solvers and production of
 papers, this repository aims to make the solvers robust and easily applicable in
 general PorePy models.
@@ -16,6 +19,3 @@ This package can be installed with
 It is assumed that working installations of PorePy and PETSc are available.
 
 
-# Understand the code
-
-See the [tutorial](tutorial.ipynb).
