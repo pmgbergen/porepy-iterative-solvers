@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "FTHM_Solver"
+name = "porepy-iterative-solvers"
 version = "0.0.1"
 description = "Iterative solvers for PorePy using PETSc"
 authors = [
@@ -18,7 +18,7 @@ dependencies = [
 license = { text = "GPL-3" }
 
 [project.urls]
-"Homepage" = "https://github.com/pmgbergen/FTHM-Solver"
+"Homepage" = "https://github.com/pmgbergen/porepy-iterative-solvers"
 
 [project.optional-dependencies]
 development = [
