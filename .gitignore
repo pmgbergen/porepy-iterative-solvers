@@ -6,7 +6,7 @@
 *.npz
 *.npy
 figures/
-src/FTHM_Solver.egg-info/*
+src/porepy_iterative_solvers.egg-info/*
 
 # Ignore folder for scripts used for development
 lab/*
