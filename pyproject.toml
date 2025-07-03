@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "porepy-iterative-solvers"
+name = "porepy_iterative_solvers"
 version = "0.0.1"
 description = "Iterative solvers for PorePy using PETSc"
 authors = [
@@ -42,5 +42,5 @@ ignore = [
     "E266",  # too many leading '#' for block comment
 ]
 exclude = [
-    "src/FTHM_Solver/__init__.py",
+    "src/pp_solvers/__init__.py",
 ]
