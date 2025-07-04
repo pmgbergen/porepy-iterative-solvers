@@ -418,7 +418,15 @@ class DofManager:
 
         Returns:
             The index of the interface displacement group in the equation groups. If no
-            group is found, returns -1.
+            interface displacement group is found, or the group does not have non-empty
+            variable, the value -1 is returned.
+
+            Note the inconsistency with `identify_contact_group`, which returns 0 if the
+            model has a contact group, but no equations are defined for it. This
+            reflects an asymmetry in PorePy's treatment of equations and variables:
+            Equations defined on empty domains are still equations, while variables on
+            empty domains have the name `empty_md_variable` and is thereby not
+            identifiable as a specific variable.
 
         """
         if not hasattr(model, "interface_displacement_variable"):
@@ -440,11 +448,6 @@ class DofManager:
                         if var[0].name == model.interface_displacement_variable:
                             return i
             else:
-                if len(group.variable_groups(model)) == 0:
-                    # This, EK believes, would be an empty group (e.g., a
-                    # fracture-related block solver for a domain without fractures, but
-                    # with a preconditioner assigned by default).
-                    continue
                 for var in group.variable_groups(model):
                     # Loop over all the variables of the group (variables treated with
                     # this block solver). See if this is the one.
