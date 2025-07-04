@@ -408,7 +408,7 @@ class DofManager:
             The indices of the energy balance group in the equation groups.
 
         """
-        return self._name_to_group_indices[EquationNames.ENERGY_BALANCE.value]
+        return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [-1])
 
     def identify_u_intf_group(self, model):
         """Identify the interface displacement group in the equation groups.
@@ -421,6 +421,10 @@ class DofManager:
             group is found, returns -1.
 
         """
+        if not hasattr(model, "interface_displacement_variable"):
+            # If the model does not have an interface displacement variable, return -1.
+            return -1
+
         # Identify the interface group in the equation groups.
         i = 0
 
