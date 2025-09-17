@@ -221,7 +221,8 @@ class MultiPhysicsPreconditioner:
 
         if elim_precond.ksp_keep_use_pmat:
             _, pmat = keep_ksp.getOperators()
-            # TODO: Is it correct to use the same matrix for both arguments?
+            # PETSc encourages using the same matrix for both arguments in the user
+            # manual. We explicitly declare using the same operator for KSP and PC.
             keep_ksp.setOperators(pmat, pmat)
 
         if elim_precond.near_null_space(self._model) is not None:
@@ -312,60 +313,11 @@ class LinearTransformedScheme:
     nd: int
     """Number of dimensions of the problem."""
 
-    contact_group: int
-    """The group that is the contact group."""
-    u_intf_group: int
-    """The group that is the interface group."""
-
     inner: PetscKSPScheme = None
     """The actual solver, to be applied after the transformations."""
 
-    left_transformations: Optional[bool] = None
-    right_transformations: Optional[bool] = True
-
-    def Qright(self, J: BlockMatrixStorage) -> BlockMatrixStorage:
-        """Assemble the right linear transformation."""
-        # Sorted according to groups. If not done, the matrix can be in porepy order,
-        # which does not guarantee that diagonal groups are truly on diagonals.
-        Qright = J.empty_container()[:]
-
-        if self.contact_group not in J.active_groups[0]:
-            # No contact group, hence identity transformation.
-            Qright.mat = sps.eye(Qright.shape[0], format="csr")
-            return Qright
-
-        J55 = J[self.u_intf_group, self.u_intf_group].mat
-
-        J55_inv = inv_block_diag(J55, nd=self.nd, lump=False)
-
-        Qright.mat = Qright.mat = sps.eye(Qright.shape[0], format="csr")
-
-        J54 = J[self.u_intf_group, self.contact_group].mat
-
-        tmp = -J55_inv @ J54
-        Qright[self.u_intf_group, self.contact_group] = tmp
-        return Qright
-
-    def Qleft(self, J: BlockMatrixStorage) -> BlockMatrixStorage:
-        warn("This has not been tested")
-
-        # Sorted according to groups. If not done, the matrix can be in porepy order,
-        # which does not guarantee that diagonal groups are truly on diagonals.
-        Qleft = J.empty_container()[:]
-
-        if self.contact_group not in J.active_groups[0]:
-            Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
-            return Qleft
-
-        J55_inv = inv_block_diag(
-            J[self.u_intf_group, self.u_intf_group].mat, nd=self.nd, lump=False
-        )
-        # J55_inv = inv(J[u_intf_group, u_intf_group].mat)
-        Qleft.mat = sps.eye(Qleft.shape[0], format="csr")
-        Qleft[self.contact_group, self.u_intf_group] = (
-            -J[self.contact_group, self.u_intf_group].mat @ J55_inv
-        )
-        return Qleft
+    left_transformations: Optional[list] = None
+    right_transformations: Optional[list] = None
 
     def get_groups(self) -> list[int]:
         return self.inner.get_groups()

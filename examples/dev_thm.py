@@ -52,7 +52,15 @@ model_params_2d = {
     "fracture_indices": [0, 1],  # 0, 1],
     "u_north": -0.001,
     "meshing_arguments": {"cell_size": 0.1},
-    "linear_solver": {"preconditioner_factory": pp_solvers.thm_factory},
+    "linear_solver": {
+        "preconditioner_factory": pp_solvers.thm_factory,
+        "options": {
+            "ksp_monitor": None,
+            'identity': {
+                'pc_type': 'jacobi'
+            }
+        },
+    },
 }
 model_2d = FullModel(model_params_2d)
 pp.run_time_dependent_model(
