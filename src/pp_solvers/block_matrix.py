@@ -11,7 +11,7 @@ import scipy.linalg
 import scipy.sparse
 import seaborn as sns
 from matplotlib import pyplot as plt
-from scipy.sparse import csr_matrix, spmatrix
+from scipy.sparse import csr_matrix, spmatrix, coo_matrix
 
 
 from .plot_utils import plot_mat, spy
@@ -140,7 +140,7 @@ class BlockMatrixStorage:
 
     def __init__(
         self,
-        mat: spmatrix,
+        mat: csr_matrix,
         global_dofs_row: list[np.ndarray],
         global_dofs_col: list[np.ndarray],
         groups_to_blocks_row: list[list[int]],
@@ -152,7 +152,7 @@ class BlockMatrixStorage:
         group_names_row: Optional[list[str]] = None,
         group_names_col: Optional[list[str]] = None,
     ):
-        self.mat: spmatrix = mat
+        self.mat: csr_matrix = mat
         """The matrix itself."""
 
         self.groups_to_blocks_row: list[list[int]] = groups_to_blocks_row
@@ -236,7 +236,7 @@ class BlockMatrixStorage:
         )
 
     def _correct_getitem_key(
-        self, key: list | slice | tuple
+        self, key: int | list | slice | tuple
     ) -> tuple[list[int], list[int]]:
         """Helper function to process the key for __getitem__ and __setitem__. See the
         former method for permissible formats.
@@ -547,6 +547,35 @@ class BlockMatrixStorage:
             ),
         )
         self.mat.data[nonzero_idx] = 0
+
+    def set_diagonal(
+        self, groups: list[int] | int, values: np.ndarray, additive: bool = False
+    ) -> None:
+        """Adds the values to the main diagonal of the given groups. This method avoids
+        allocating a dense matrix.
+
+        """
+        groups, _ = self._correct_getitem_key(groups)
+        row_idx = np.concatenate(
+            [
+                self.local_dofs_row[block]
+                for group in groups
+                for block in self.groups_to_blocks_row[group]
+            ]
+        )
+        col_idx = np.concatenate(
+            [
+                self.local_dofs_col[block]
+                for group in groups
+                for block in self.groups_to_blocks_col[group]
+            ]
+        )
+        assert row_idx.size == col_idx.size == values.size
+
+        if not additive:
+            values = values - np.array(self.mat[row_idx, col_idx]).ravel()
+        tmp = coo_matrix((values, (row_idx, col_idx))).tocsr()
+        self.mat += tmp
 
     # Visualization
 

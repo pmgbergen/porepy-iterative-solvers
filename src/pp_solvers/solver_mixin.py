@@ -84,7 +84,7 @@ def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
     if len(subdomains) == 0:
         # No subdomains, hence no scaling.
         return Q
-    Q[row_groups] = sps.diags(vols, format="csr")
+    Q.set_diagonal(groups=row_groups, values=vols, additive=False)
 
     return Q
 
@@ -126,7 +126,7 @@ class IterativeSolverMixin:
         # By default, print the residual information to screen (ksp_monitor=None).
         solver_options = self.params["linear_solver"].get("options", {})
         ksp_factory = self._solver_components.ksp_factory
-        solver = ksp_factory.make_solver(self.bmat, solver_options)
+
         t0 = time()
         try:
             solver = ksp_factory.make_solver(self.bmat, solver_options)
@@ -212,13 +212,13 @@ class IterativeSolverMixin:
         precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
 
         contact_ind = dof_manager.identify_contact_group()
+        u_intf_ind = dof_manager.identify_u_intf_group(self)
 
         ksp_factory = PetscKSPScheme(preconditioner=precond)
         contact_transform, thermal_transform = None, None
         if contact_ind > -1:
             # If there is a contact group, we need to use a linear solver that takes
             # care of potential singularities in the contact block.
-            u_intf_ind = dof_manager.identify_u_intf_group(self)
 
             contact_transform = [
                 lambda bmat: transform_contact_block(
@@ -236,9 +236,6 @@ class IterativeSolverMixin:
         if contact_transform is not None or thermal_transform is not None:
             solver_factory = LinearTransformedScheme(
                 nd=self.nd,
-                contact_group=contact_ind,
-                u_intf_group=u_intf_ind,
-                # preconditioner=precond,
                 inner=ksp_factory,
                 right_transformations=contact_transform,
                 left_transformations=thermal_transform,
