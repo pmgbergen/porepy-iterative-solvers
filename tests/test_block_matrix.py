@@ -7,6 +7,10 @@ from pp_solvers.block_matrix import BlockMatrixStorage
 
 @pytest.fixture
 def sample_matrix():
+    # YZ: This is a bit unrealistic groups distribution, which breaks my implicit
+    # assumption that diagonal blocks (e.g. bmat[3,3]) must be square matrix.
+    # This assumption should be checked in init, thus the tests should be changed.
+    # Not doing it now but we need to consider it quite soon.
     mat = sp.csr_matrix(
         np.array(
             [
@@ -208,3 +212,29 @@ def test_matshow_blocks(sample_matrix):
 def test_color_left_vector(sample_matrix):
     local_rhs = np.array([1, 2, 3, 4, 5, 6, 7])
     sample_matrix.color_left_vector(local_rhs)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        dict(
+            groups=[1, 2],
+            additive=False,
+            new_diag=np.array([-1, -2, -3, -4, -5]),
+            expected_diag=np.array([1, 2, -1, -2, -3, -4, -5]),
+        ),
+        dict(
+            groups=[1, 2],
+            additive=True,
+            new_diag=np.array([-1, -2, -3, -4, -5]),
+            expected_diag=np.array([1, 2, 2, 2, 2, 2, 2]),
+        ),
+    ],
+)
+def test_set_diagonal(params: dict, sample_matrix: BlockMatrixStorage):
+    groups: list = params["groups"]
+    additive: bool = params["additive"]
+    new_diag: np.ndarray = params["new_diag"]
+    expected_diag: np.ndarray = params["expected_diag"]
+    sample_matrix.set_diagonal(groups=groups, values=new_diag, additive=additive)
+    assert np.all(sample_matrix.mat.diagonal() == expected_diag)

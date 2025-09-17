@@ -68,9 +68,9 @@ factories = {
 # regression testing. Hopefully the reference values are stable.
 expected_linear_iterations = {
     FluidModel: [3, 3],
-    MechanicsModel: [10, 11],
-    PoromechanicsModel: [12, 13, 11, 13],
-    ThermoporomechanicsModel: [14, 15, 13, 12, 17, 14, 13, 11, 15],
+    MechanicsModel: [5, 6],
+    PoromechanicsModel: [8, 14, 12, 11, 13],
+    ThermoporomechanicsModel: [10, 15, 14, 11, 15],
 }
 
 
