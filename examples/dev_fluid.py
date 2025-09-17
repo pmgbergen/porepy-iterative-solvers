@@ -2,6 +2,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
+import pp_solvers
 
 
 from porepy.examples.flow_benchmark_2d_case_1 import (

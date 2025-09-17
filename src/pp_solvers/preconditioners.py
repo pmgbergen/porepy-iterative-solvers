@@ -39,6 +39,7 @@ __all__ = [
     "mass_balance_factory",
     "momentum_balance_factory",
     "hm_factory",
+    "th_factory",
     "thm_factory",
 ]
 
@@ -455,7 +456,14 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
 
     def _default_fieldsplit_options(self, model, dof_manager) -> dict:
         opts = super()._default_fieldsplit_options(model, dof_manager)
-        key = f"fieldsplit_{self.tag}_mat_schur_complement_ainv_type"
+        # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
+        # which represents the non-assembled Schur complement matrix after eliminating
+        # contact. It tells it to use the block-diagonal approximation when the Schur
+        # complement needs to be assembled. Otherwise, "selfp" will use the diagonal
+        # approximation, and we will diverge.
+        # This option applies not to the full "fieldsplit" context, but the context of
+        # the complement, thus using "cpl" prefix.
+        key = f"fieldsplit_{self.tag}_cpl_mat_schur_complement_ainv_type"
         opts.update({key: "blockdiag"})
         return opts
 
@@ -591,6 +599,27 @@ def hm_factory():
         InterfaceDarcyFluxPreconditioner(),
         FixedStressPreconditioner(),
         MassBalanceDimSplitPreconditioner(),
+    ]
+
+
+def th_factory():
+    cpr = CompositePreconditioner(
+        solvers=[
+            [
+                MassBalanceDimSplitCPRPreconditioner(),
+                IdentityPreconditioner(groups.EnergyBalanceDimSplitGroup()),
+            ],
+            BlockILU(
+                [
+                    groups.MassBalanceDimSplitGroup(),
+                    groups.EnergyBalanceDimSplitGroup(),
+                ]
+            ),
+        ]
+    )
+    return [
+        InterfaceMassEnergyFluxPreconditioner(),
+        cpr,
     ]
 
 
