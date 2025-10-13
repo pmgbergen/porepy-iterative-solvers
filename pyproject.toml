@@ -11,10 +11,7 @@ authors = [
   { name = "Eirik Keilegavlen", email = "Eirik.Keilegavlen@uib.no"}
 ]
 # The list of dependencies is far from exhaustive, see the README for more details.
-dependencies = [
-  "pandas",
-  "seaborn"
-]
+dependencies = []
 license = { text = "GPL-3" }
 
 [project.urls]
