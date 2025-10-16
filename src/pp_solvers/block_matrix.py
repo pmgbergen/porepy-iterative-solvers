@@ -1,126 +1,18 @@
 from __future__ import annotations
 
-import itertools
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional
+from typing import Literal, Optional
 
 import matplotlib
 import numpy as np
-import scipy.linalg
 import scipy.sparse
 import seaborn as sns
 from matplotlib import pyplot as plt
-from scipy.sparse import csr_matrix, spmatrix, coo_matrix
+from scipy.sparse import coo_matrix, csr_matrix, spmatrix
+from itertools import product
 
-
-from .plot_utils import plot_mat, spy
+from pp_solvers.plot_matrix import color_spy, plot_mat
 
 __all__ = ["BlockMatrixStorage"]
-
-
-def color_spy(
-    mat: spmatrix,
-    row_idx: list[list[int]],
-    col_idx: list[list[int]],
-    row_names: Optional[list[str]] = None,
-    col_names: Optional[list[str]] = None,
-    aspect: Literal["equal", "auto"] = "equal",
-    show: bool = False,
-    marker: Optional[str] = None,
-    draw_marker: bool = True,
-    color: bool = True,
-    hatch: bool = True,
-    alpha: float = 0.3,
-) -> None:
-    if draw_marker:
-        spy(mat, show=False, aspect=aspect, marker=marker)
-    else:
-        spy(csr_matrix(mat.shape), show=False, aspect=aspect)
-
-    row_sep = [0]
-    for row in row_idx:
-        row_sep.append(row[-1] + 1)
-    row_sep = sorted(row_sep)
-
-    col_sep = [0]
-    for col in col_idx:
-        col_sep.append(col[-1] + 1)
-    col_sep = sorted(col_sep)
-
-    if row_names is None:
-        row_names = [str(i) for i in range(len(row_sep) - 1)]
-    if col_names is None:
-        col_names = [str(i) for i in range(len(col_sep) - 1)]
-
-    hatch_types = itertools.cycle(["/", "\\"])
-
-    ax = plt.gca()
-    row_label_pos = []
-    for i in range(len(row_names)):
-        ystart, yend = row_sep[i : i + 2]
-        row_label_pos.append(ystart + (yend - ystart) / 2)
-        kwargs: dict[str, Any] = {}
-        if color:
-            kwargs["facecolor"] = f"C{i}"
-        else:
-            kwargs["fill"] = False
-        if hatch:
-            kwargs["hatch"] = next(hatch_types)
-            # kwargs['color'] = 'none'
-            kwargs["edgecolor"] = "red"
-            # kwargs['facecolor'] = 'blue'
-
-        plt.axhspan(ystart - 0.5, yend - 0.5, alpha=alpha, **kwargs)
-    ax.yaxis.set_ticks(row_label_pos)
-    ax.set_yticklabels(row_names, rotation=0)
-
-    # hatch_types = itertools.cycle(["|", "-"])
-
-    col_label_pos = []
-    for i in range(len(col_names)):
-        xstart, xend = col_sep[i : i + 2]
-        col_label_pos.append(xstart + (xend - xstart) / 2)
-        if color:
-            kwargs["facecolor"] = f"C{i}"
-        if hatch:
-            kwargs["hatch"] = next(hatch_types)
-        plt.axvspan(xstart - 0.5, xend - 0.5, alpha=alpha, **kwargs)
-    ax.xaxis.set_ticks(col_label_pos)
-    ax.set_xticklabels(col_names, rotation=0)
-
-    if show:
-        plt.show()
-
-
-def get_nonzero_indices(
-    A: csr_matrix, row_indices: list[np.ndarray], col_indices: list[np.ndarray]
-) -> list[int]:
-    """
-    Get the indices of A.data that correspond to the specified subset of rows and
-    columns.
-
-    Parameters:
-        A: The input sparse matrix.
-        row_indices (list or array): The list of row indices to consider.
-        col_indices (list or array): The list of column indices to consider.
-
-    Returns:
-    list: Indices in A.data corresponding to non-zero elements in the specified subset.
-    """
-    result_indices = []
-    col_set = set(col_indices)  # For quick lookup
-
-    for row in row_indices:
-        start_ptr = A.indptr[row]
-        end_ptr = A.indptr[row + 1]
-
-        for data_idx in range(start_ptr, end_ptr):
-            col_idx = A.indices[data_idx]
-            if col_idx in col_set:
-                result_indices.append(data_idx)
-
-    return result_indices
 
 
 class BlockMatrixStorage:
@@ -151,6 +43,7 @@ class BlockMatrixStorage:
         active_groups_col: Optional[list[int]] = None,
         group_names_row: Optional[list[str]] = None,
         group_names_col: Optional[list[str]] = None,
+        validate_input: bool = True,
     ):
         self.mat: csr_matrix = mat
         """The matrix itself."""
@@ -172,6 +65,12 @@ class BlockMatrixStorage:
         def init_global_dofs(global_dofs: list[np.ndarray]):
             # Cast dofs to numpy arrays.
             return [np.atleast_1d(x) for x in global_dofs]
+
+        # YZ: The difference between "global" and "local" dofs is that global reflects
+        # the original matrix arrangement produced by PorePy. Local reflects how it is
+        # actually arranged in `self.mat`. It can change from "global" if we reorder the
+        # matrix, e.g. J[[2,1,0]], or if we index some groups, e.g. J[[0,2]].
+        # TODO: Why do we need to store global?
 
         self.global_dofs_row: list[np.ndarray] = init_global_dofs(global_dofs_row)
         """List of global dofs for the rows. One list item per equation group (EK
@@ -217,11 +116,18 @@ class BlockMatrixStorage:
             # Filter empty groups, e.g., when no fractures are present.
             return [group_idx for group_idx in tmp if len(groups_to_blocks[group_idx])]
 
-        # TODO: What is an active group?
+        # EK: What is an active group?
+        # YZ: You have the full Jacobian J. You index, e.g. only mass (group 5) and
+        # energy (group 6). A = J[[5, 6]]. The new matrix a has active groups [5, 6].
+        # self.active_groups == ([5, 6], [5, 6]). One for rows and one for columns.
+        # Maybe the right word to use instead of "active" is "enabled".
         self.active_groups: tuple[list[int], list[int]] = (
             init_active_groups(groups_to_blocks_row, active_groups_row),
             init_active_groups(groups_to_blocks_col, active_groups_col),
         )
+
+        if validate_input:
+            validate_block_matrix(self)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -235,8 +141,10 @@ class BlockMatrixStorage:
             "active groups"
         )
 
+    # Slicing
+
     def _correct_getitem_key(
-        self, key: int | list | slice | tuple
+        self, key: list | slice | tuple
     ) -> tuple[list[int], list[int]]:
         """Helper function to process the key for __getitem__ and __setitem__. See the
         former method for permissible formats.
@@ -263,6 +171,8 @@ class BlockMatrixStorage:
                 start = key_.start or 0
                 stop = key_.stop or total
                 step = key_.step or 1
+                if step < 1:
+                    raise NotImplementedError("Negative step is not supported.")
                 key_ = list(range(start, stop, step))
             try:
                 # Try to iterate over the key. If not successful (which means this is an
@@ -287,7 +197,7 @@ class BlockMatrixStorage:
 
         - `1, 2`: Get the block corresponding to row block index 1 and column block
            index 2. Results in submatrix [J_12].
-        - `1, 2]`: Get the blocks corresponding row block indices 1 and 2 and column
+        - `[1, 2]`: Get the blocks corresponding row block indices 1 and 2 and column
            block indices 1 and 2. Results in the submatrix [[J_11, J_12], [J_21, J_22]].
         - `([1, 2], [3, 4])`: Get the blocks corresponding to row block indices 1 and 2
            and column block indices 3 and 4. Results in the submatrix
@@ -387,6 +297,7 @@ class BlockMatrixStorage:
             active_groups_col=groups_col,
             group_names_col=self.group_names_col,
             group_names_row=self.group_names_row,
+            validate_input=False,
         )
 
     def __setitem__(
@@ -394,7 +305,12 @@ class BlockMatrixStorage:
     ) -> None:
         """Set method for a BlockMatrixStorage object.
 
-        See __getitem__ for permissible formats of the key.
+        See `__getitem__` for permissible formats of the key.
+
+        Warning:
+            This implementation is inefficient because at some point SciPy casts the
+            assigned matrix to a dense matrix. Use it only for experimentation, and
+            avoid it in performance-critical parts of the code.
 
         Parameters:
             key: The key to index the matrix. See above for permissible formats.
@@ -426,6 +342,13 @@ class BlockMatrixStorage:
         self.mat[row_expanded, col_expanded] = value
 
     def copy(self) -> BlockMatrixStorage:
+        """Deep-copies the underlying matrix and passes references to the indexes to
+        blocks and groups (does not copy their memory).
+
+        Returns:
+            A new identical block matrix storage object.
+
+        """
         res = self.empty_container()
         res.mat = self.mat.copy()
         return res
@@ -447,12 +370,17 @@ class BlockMatrixStorage:
             active_groups_col=self.active_groups[1],
             group_names_col=self.group_names_col,
             group_names_row=self.group_names_row,
+            validate_input=False,
         )
 
     def project_rhs_to_local(self, global_rhs: np.ndarray) -> np.ndarray:
         """Global rhs is the rhs arranged in the porepy model manner. This method
         permutes and restricts the global rhs to make it match the current matrix
         arrangement.
+
+        YZ: I think this class should also contain the rhs alongside the matrix.
+            It will allow us to avoid exposing the notion of "local" and "global" which
+            may be confusing.
 
         Parameters:
             global_rhs: The global right hand side.
@@ -510,7 +438,7 @@ class BlockMatrixStorage:
         return result
 
     def _project_to_global(self, vec: np.ndarray, row: bool) -> np.ndarray:
-        # TODO: Replace the two above methods with calls to this one.
+        # TODO: Replace the two above methods with calls to this. Currently not used.
         if row:
             idx = self.global_dofs_row
             blocks = self.groups_to_blocks_row
@@ -524,6 +452,8 @@ class BlockMatrixStorage:
         result = np.zeros(total_size, dtype=vec.dtype)
         result[all_idx] = vec
         return result
+
+    # Efficient matrix construction
 
     def set_zeros(
         self, group_row_idx: list[int] | int, group_col_idx: list[int] | int
@@ -554,6 +484,9 @@ class BlockMatrixStorage:
         """Adds the values to the main diagonal of the given groups. This method avoids
         allocating a dense matrix.
 
+        YZ: This is expected to work only with the groups on the main diagonal. If you
+            take J[3, 4] and try to set diagonal, this method should raise an error.
+
         """
         groups, _ = self._correct_getitem_key(groups)
         row_idx = np.concatenate(
@@ -574,19 +507,22 @@ class BlockMatrixStorage:
 
         if not additive:
             values = values - np.array(self.mat[row_idx, col_idx]).ravel()
-        tmp = coo_matrix((values, (row_idx, col_idx))).tocsr()
+        tmp = coo_matrix((values, (row_idx, col_idx)), shape=self.mat.shape).tocsr()
         self.mat += tmp
 
     # Visualization
 
     def get_active_local_dofs(self, grouped=False):
-        def inner(idx, groups, active_groups):
+        def inner(
+            local_dofs, groups_to_blocks, active_groups
+        ) -> list[list[np.ndarray]]:
+            # YZ: No idea what's going on here.
             data = []
             for active_group in active_groups:
-                group_i = groups[active_group]
+                group_i = groups_to_blocks[active_group]
                 group_data = []
                 for i in group_i:
-                    dofs = idx[i]
+                    dofs = local_dofs[i]
                     if dofs is not None:
                         group_data.append(dofs)
                 if len(group_data) > 0:
@@ -600,6 +536,7 @@ class BlockMatrixStorage:
             self.local_dofs_col, self.groups_to_blocks_col, self.active_groups[1]
         )
         if not grouped:
+            # Spells below flatten a list of lists into a single list.
             row_idx = [y for x in row_idx for y in x]
             col_idx = [y for x in col_idx for y in x]
         else:
@@ -674,6 +611,7 @@ class BlockMatrixStorage:
         annot=True,
         mean=False,
     ):
+        # It should be moved
         row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
         data = []
 
@@ -746,3 +684,61 @@ class BlockMatrixStorage:
             plt.yscale("log")
 
         plt.plot(local_rhs, label=label)
+
+
+def validate_block_matrix(bmat: BlockMatrixStorage):
+    bmat = bmat.empty_container()
+    active_groups_row = bmat.active_groups[0]
+    active_groups_col = bmat.active_groups[1]
+
+    # Making sure that the sum of indexed shapes matches the original matrix shape.
+    shape_sum_row = 0
+    shape_sum_col = 0
+    for group_row in active_groups_row:
+        shape_sum_row += bmat[group_row, active_groups_col[0]].shape[0]
+    for group_col in active_groups_col:
+        shape_sum_col += bmat[active_groups_row[0], group_col].shape[1]
+    expected_shape = (shape_sum_row, shape_sum_col)
+    if bmat.shape != expected_shape:
+        raise ValueError(
+            f"Matrix shape {bmat.shape} is inconsistent with the groups shape "
+            f"{expected_shape}."
+        )
+
+    # Making sure that each diagonal group, e.g. [1, 1] is a square submatrix.
+    for group in set(active_groups_row).intersection(active_groups_col):
+        shape = bmat[[group]].shape
+        if shape[0] != shape[1]:
+            raise ValueError(
+                f"Group {group} must be a square submatrix, got {shape} instead."
+            )
+
+
+def get_nonzero_indices(
+    A: csr_matrix, row_indices: list[np.ndarray], col_indices: list[np.ndarray]
+) -> list[int]:
+    """
+    Get the indices of A.data that correspond to the specified subset of rows and
+    columns.
+
+    Parameters:
+        A: The input sparse matrix.
+        row_indices (list or array): The list of row indices to consider.
+        col_indices (list or array): The list of column indices to consider.
+
+    Returns:
+    list: Indices in A.data corresponding to non-zero elements in the specified subset.
+    """
+    result_indices = []
+    col_set = set(col_indices)  # For quick lookup
+
+    for row in row_indices:
+        start_ptr = A.indptr[row]
+        end_ptr = A.indptr[row + 1]
+
+        for data_idx in range(start_ptr, end_ptr):
+            col_idx = A.indices[data_idx]
+            if col_idx in col_set:
+                result_indices.append(data_idx)
+
+    return result_indices

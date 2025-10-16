@@ -116,7 +116,7 @@ class LinearSolverStatistics(SolverStatistics):
         self.num_krylov_iters = []
 
 
-class IterativeSolverMixin:
+class IterativeSolverMixin(pp.PorePyModel):
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
         mat, rhs = self.linear_system
@@ -201,9 +201,8 @@ class IterativeSolverMixin:
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
-        precond_factory: Callable[[], MultiPhysicsPreconditioner] = self.params[
-            "linear_solver"
-        ]["preconditioner_factory"]
+        precond_factory: Callable[[], MultiPhysicsPreconditioner]
+        precond_factory = self.params["linear_solver"]["preconditioner_factory"]
         if precond_factory is None:
             raise ValueError("Preconditioner factory is not set")
         precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
