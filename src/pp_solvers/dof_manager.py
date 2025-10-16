@@ -206,12 +206,12 @@ class DofManager:
             )
 
     @property
-    def variable_groups(self) -> list[list[pp.ad.MixedDimensionalVariable]]:
+    def variable_groups(self) -> list[list[int]]:
         """Get the variable groups.
 
         Returns:
             A list of lists, where each inner list contains MixedDimensionalVariable
-            objects representing the variable groups.
+            objects representing the variable groups. TODO: Fix return type.
 
         """
         return self._variable_groups
@@ -270,7 +270,7 @@ class DofManager:
                 names += group.variable_names(model)
         return names
 
-    def eq_dofs_by_blocks(self, model):
+    def eq_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Get the equation dofs for the model, in the form of a list of numbers,
         one per equation-domain pair. If the contact group is present, it will be
         reordered so that the normal and tangential equations for each fracture cell
@@ -408,6 +408,7 @@ class DofManager:
             The indices of the energy balance group in the equation groups.
 
         """
+        # YZ: Why [-1] and not []?
         return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [-1])
 
     def identify_u_intf_group(self, model):
@@ -588,8 +589,11 @@ class DofManager:
             The PETSc IS object representing the groups.
 
         """
-        # TODO: Why is it necessary to create an empty container here, and not just work
+        # EK: Why is it necessary to create an empty container here, and not just work
         # with information from the bmat object?
+        # YZ: No reason. Usually, I create an empty container, because slicing the bmat
+        # is expensive, but slicing the empty container is not. Here, we did not slice
+        # anything though.
         empty_mat = bmat.empty_container()
         dofs = [
             empty_mat.local_dofs_row[x]
