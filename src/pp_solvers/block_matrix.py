@@ -686,7 +686,14 @@ class BlockMatrixStorage:
         plt.plot(local_rhs, label=label)
 
 
-def validate_block_matrix(bmat: BlockMatrixStorage):
+def validate_block_matrix(bmat: BlockMatrixStorage) -> None:
+    """Checks that the block matrix is initialized correctly.
+
+    Raises:
+        ValueError: If the matrix shape is inconsistent with the indices of groups and
+            blocks.
+        ValueError: If the groups (submatrices) on the diagonal are not square.
+    """
     bmat = bmat.empty_container()
     active_groups_row = bmat.active_groups[0]
     active_groups_col = bmat.active_groups[1]

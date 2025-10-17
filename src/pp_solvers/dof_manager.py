@@ -342,6 +342,8 @@ class DofManager:
     def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> list[int]:
         """Get the block indices associated with a solver.
 
+        # YZ: the consistent name would be groups_of_solvers
+
         Parameters:
             solver: A SinglePhysicsPreconditioner object.
 
@@ -353,11 +355,18 @@ class DofManager:
 
     def petsc_is(
         self,
-        current_solver: groups.AbstractGroup,
-        other_solver: list[groups.AbstractGroup],
+        current_solver: SinglePhysicsPreconditioner,
+        other_solver: list[SinglePhysicsPreconditioner],
         bmat: BlockMatrixStorage,
     ) -> PETSc.IS:
-        """Construct PETSc index sets for the current and other solvers.
+        """Construct PETSc index sets for the current and other solvers.         
+        
+        # YZ: Besides this method and `_construct_is`, this class is PETSc-agnostic.
+        # _construct_is does not use the arrangement stored in DofManager, it is based
+        # on the rearranged block matrix.
+        # Also, these two methods are the only that require an instance of
+        # BlockMatrixStorage, others are agnostic to it.
+        # I suggest moving them somewhere.
 
         Intended used in a Schur-complement setting, where we do a split between the
         current (to be eliminated) group and the other groups (to be kept).
@@ -399,6 +408,8 @@ class DofManager:
         """
         # Identify the contact group in the equation groups
         ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
+        # YZ: I'm afraid treating "-1" as absence of the group can shoot us in a foot at
+        # some point, because of how numpy treats it as a trailing index.
         return ind[0]
 
     def identify_energy_balance_group(self) -> list[int]:
@@ -458,7 +469,7 @@ class DofManager:
                         i += 1
         return -1
 
-    def eq_rows_permutation(self, model):
+    def eq_rows_permutation(self, model: pp.PorePyModel):
         """Get a permutation vector for the full linear system of equations.
 
         This is used to reorder the equations so that the contact equations for single
@@ -604,7 +615,7 @@ class DofManager:
             return PETSc.IS().createGeneral(
                 np.concatenate(
                     dofs,
-                    dtype=np.int32,  # TODO: What if the size is too large for int32?
+                    dtype=np.int32,  # TODO: What if the size is too large for int32? YZ: I believe this is how PETSc is compiled.
                 )
             )
         else:
