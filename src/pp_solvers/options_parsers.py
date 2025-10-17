@@ -6,10 +6,10 @@ import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
 
-from .block_matrix import BlockMatrixStorage
-from .dof_manager import DofManager
-from .mat_utils import clear_petsc_options, csr_to_petsc, inv_block_diag
-from .petsc_solvers import (
+from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.dof_manager import DofManager
+from pp_solvers.petsc_utils import clear_petsc_options, csr_to_petsc
+from pp_solvers.petsc_solvers import (
     LinearSolverWithTransformations,
     PetscKrylovSolver,
     insert_petsc_options,
