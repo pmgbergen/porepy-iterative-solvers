@@ -18,7 +18,6 @@ from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.equation_variable_groups import EquationNames
 from pp_solvers.preconditioners import SinglePhysicsPreconditioner
 
 

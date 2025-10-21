@@ -27,7 +27,6 @@ class MultiPhysicsPreconditioner:
         components: list[SinglePhysicsPreconditioner],
         dof_manager: DofManager,
         model: pp.PorePyModel,
-        options: dict | None = None,
     ):
         """
         Args:
@@ -38,15 +37,14 @@ class MultiPhysicsPreconditioner:
         self._dof_manager = dof_manager
         self._nd = model.nd
         self._model = model
-        self._options = options if options is not None else {}
 
     def configure(
         self,
         bmat: BlockMatrixStorage,
-        pc,  # PC comes from ksp or similar
+        pc: PETSc.PC,  # PC comes from ksp or similar
         user_options: dict | None = None,
         precond_list: list[SinglePhysicsPreconditioner] | None = None,
-        prefix: str | None = None,
+        prefix=""
     ) -> dict:  # TODO: Return None?
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
@@ -62,10 +60,6 @@ class MultiPhysicsPreconditioner:
             precond_list = self._single_physics_precond
 
         options = {}
-
-        if prefix is None:
-            prefix = ""
-
         dof_manager = self._dof_manager
 
         for counter, single_physics_precond in enumerate(precond_list):
@@ -225,9 +219,9 @@ class MultiPhysicsPreconditioner:
             # manual. We explicitly declare using the same operator for KSP and PC.
             keep_ksp.setOperators(pmat, pmat)
 
-        if elim_precond.near_null_space(self._model) is not None:
+        if (near_null_space := elim_precond.near_null_space(self._model)) is not None:
             null_space_vectors = []
-            for b in elim_precond.near_null_space(self._model):
+            for b in near_null_space:
                 null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
                 null_space_vec_petsc.setSizes(b.shape[0], block_size)
                 null_space_vec_petsc.setUp()
@@ -256,9 +250,6 @@ class PetscKSPScheme:
 
     petsc_options: Optional[dict] = None
     """Additional options to be passed to PETSc."""
-
-    compute_eigenvalues: bool = False
-    """Whether to compute the eigenvalues of the matrix."""
 
     def get_groups(self) -> list[int]:
         """Return the groups of the preconditioner."""
@@ -300,9 +291,6 @@ class PetscKSPScheme:
                 pc=petsc_pc,
                 user_options=options,
             )
-        if self.compute_eigenvalues:
-            petsc_ksp.setComputeEigenvalues(True)
-
         petsc_ksp.setUp()
         self.options = options
         return PetscKrylovSolver(petsc_ksp)
@@ -310,10 +298,8 @@ class PetscKSPScheme:
 
 @dataclass
 class LinearTransformedScheme:
-    nd: int
-    """Number of dimensions of the problem."""
 
-    inner: PetscKSPScheme = None
+    inner: PetscKSPScheme
     """The actual solver, to be applied after the transformations."""
 
     left_transformations: Optional[list] = None
@@ -325,8 +311,7 @@ class LinearTransformedScheme:
     def make_solver(
         self, mat_orig: BlockMatrixStorage, options: dict | None = None
     ) -> PetscKrylovSolver | LinearSolverWithTransformations:
-        # groups = self.get_groups()
-        bmat = mat_orig[:]  # [groups]
+        bmat = mat_orig[:]
 
         if self.left_transformations is None or len(self.left_transformations) == 0:
             Qleft = None
@@ -340,10 +325,9 @@ class LinearTransformedScheme:
         if self.right_transformations is None or len(self.right_transformations) == 0:
             Qright = None
         else:
-            # Qright = self.Qright(bmat)
-            Qright = self.right_transformations[0](bmat)  # [groups]
+            Qright = self.right_transformations[0](bmat)
             for tmp in self.right_transformations[1:]:
-                tmp = tmp(bmat)  # [groups]
+                tmp = tmp(bmat)
                 Qright.mat @= tmp.mat
 
         bmat_Q = bmat

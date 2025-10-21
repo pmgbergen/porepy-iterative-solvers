@@ -470,8 +470,6 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "pc_type": "pbjacobi",
-            # TODO: Not sure this will come through in the right way
-            # "mat_schur_complement_ainv_type": "blockdiag",
         }
         return local_opts
 

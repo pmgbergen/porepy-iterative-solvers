@@ -19,7 +19,14 @@ from .options_parsers import (
     MultiPhysicsPreconditioner,
     PetscKSPScheme,
 )
-from .preconditioners import SinglePhysicsPreconditioner
+from .preconditioners import (
+    SinglePhysicsPreconditioner,
+    th_factory,
+    thm_factory,
+    hm_factory,
+    mass_balance_factory,
+    momentum_balance_factory,
+)
 from porepy.viz.solver_statistics import SolverStatistics
 
 __all__ = [
@@ -201,10 +208,13 @@ class IterativeSolverMixin(pp.PorePyModel):
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
-        precond_factory: Callable[[], MultiPhysicsPreconditioner]
-        precond_factory = self.params["linear_solver"]["preconditioner_factory"]
+
+        precond_factory: Callable[[], list[SinglePhysicsPreconditioner]]
+        linear_solver_params = self.params.get("linear_solver", {})
+        precond_factory = linear_solver_params.get("preconditioner_factory", None)
         if precond_factory is None:
-            raise ValueError("Preconditioner factory is not set")
+            precond_factory = default_preconditioner_factory(self)
+
         precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
 
         dof_manager = DofManager(self, precond_list)
@@ -234,7 +244,6 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         if contact_transform is not None or thermal_transform is not None:
             solver_factory = LinearTransformedScheme(
-                nd=self.nd,
                 inner=ksp_factory,
                 right_transformations=contact_transform,
                 left_transformations=thermal_transform,
@@ -264,13 +273,17 @@ class IterativeSolverMixin(pp.PorePyModel):
         # The name of the attribute is really not meaningful..
         self.nonlinear_solver_statistics = LinearSolverStatistics()
 
-    def save_matrix_state(self):
-        save_path = Path("./matrices")
-        save_path.mkdir(exist_ok=True)
-        mat, rhs = self.linear_system
-        name = "matrix"
-        print("Saving matrix", name)
-        mat_id = f"{name}.npz"
-        rhs_id = f"{name}_rhs.npy"
-        sps.save_npz(save_path / mat_id, self.bmat.mat)
-        np.save(save_path / rhs_id, rhs)
+def default_preconditioner_factory(
+    model: pp.PorePyModel,
+) -> Callable[[], list[SinglePhysicsPreconditioner]]:
+    if isinstance(model, pp.SinglePhaseFlow):
+        return mass_balance_factory
+    if isinstance(model, pp.MomentumBalance):
+        return momentum_balance_factory
+    if isinstance(model, pp.MassAndEnergyBalance):
+        return th_factory
+    if isinstance(model, pp.Poromechanics):
+        return hm_factory
+    if isinstance(model, pp.Thermoporomechanics):
+        return thm_factory
+    raise ValueError()

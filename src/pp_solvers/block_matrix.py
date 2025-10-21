@@ -332,7 +332,7 @@ class BlockMatrixStorage:
                     if input_dofs_idx[dof_idx] is None:
                         raise ValueError(f"Taking inactive row {group}")
                     dofs_idx.append(input_dofs_idx[dof_idx])
-            return np.concatenate(dofs_idx)
+            return np.concatenate(dofs_idx) if len(dofs_idx) else np.array([])
 
         row_idx = inner(self.local_dofs_row, groups_i, self.groups_to_blocks_row)
         col_idx = inner(self.local_dofs_col, groups_j, self.groups_to_blocks_col)
@@ -479,7 +479,10 @@ class BlockMatrixStorage:
         self.mat.data[nonzero_idx] = 0
 
     def set_diagonal(
-        self, groups: list[int] | int, values: np.ndarray, additive: bool = False
+        self,
+        groups: list[int] | int,
+        values: np.ndarray | float,
+        additive: bool = False,
     ) -> None:
         """Adds the values to the main diagonal of the given groups. This method avoids
         allocating a dense matrix.
@@ -489,20 +492,28 @@ class BlockMatrixStorage:
 
         """
         groups, _ = self._correct_getitem_key(groups)
-        row_idx = np.concatenate(
-            [
-                self.local_dofs_row[block]
-                for group in groups
-                for block in self.groups_to_blocks_row[group]
-            ]
-        )
-        col_idx = np.concatenate(
-            [
-                self.local_dofs_col[block]
-                for group in groups
-                for block in self.groups_to_blocks_col[group]
-            ]
-        )
+        row_idx = [
+            self.local_dofs_row[block]
+            for group in groups
+            for block in self.groups_to_blocks_row[group]
+        ]
+        col_idx = [
+            self.local_dofs_col[block]
+            for group in groups
+            for block in self.groups_to_blocks_col[group]
+        ]
+
+        # Check for empty groups.
+        if len(row_idx) == 0 or len(col_idx) == 0:
+            return
+
+        row_idx = np.concatenate(row_idx)
+        col_idx = np.concatenate(col_idx)
+        try:
+            len(values)
+        except Exception:
+            # This is a scalar.
+            values = np.full(shape=row_idx.shape, fill_value=values)
         assert row_idx.size == col_idx.size == values.size
 
         if not additive:
