@@ -1,3 +1,8 @@
+"""This file contains various tests mainly to examine slicing in the BlockMatrixStorage
+class.
+
+"""
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -55,7 +60,7 @@ _J22 = [
 
 @pytest.fixture
 def sample_matrix() -> BlockMatrixStorage:
-    """The block matrix we use in all the tests."""
+    """The block matrix we use in all the tests. It contains one empty group."""
     return BlockMatrixStorage(
         mat=sp.block_array(
             [
@@ -66,10 +71,10 @@ def sample_matrix() -> BlockMatrixStorage:
         )
         .astype(float)
         .tocsr(),
-        global_dofs_row=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1]]],
-        global_dofs_col=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1]]],
-        groups_to_blocks_row=[[0], [1], [2]],
-        groups_to_blocks_col=[[0], [1], [2]],
+        global_dofs_row=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]],
+        global_dofs_col=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]],
+        groups_to_blocks_row=[[0], [1], [2], []],
+        groups_to_blocks_col=[[0], [1], [2], []],
     )
 
 
@@ -164,10 +169,12 @@ def test_bad_block_matrix_creation(params):
         {"index": [0, 1, 2], "expected": (9, 9)},
         # J[[2, 0]]  (same as J[[2, 0], [2, 0]]).
         {"index": [2, 0], "expected": (5, 5)},
-        # J[[-1]] (same as in numpy, indexing from end).
-        {"index": [-1], "expected": (2, 2)},
-        # J[[3]] (invalid, index over the bound).
-        {"index": [3], "raises": True},
+        # J[[-2]] (same as in numpy, indexing from end).
+        {"index": [-2], "expected": (2, 2)},
+        # J[[3]] (slicing empty group, same as J[3, 3]).
+        {"index": [3], "expected": (0, 0)},
+        # J[[4]] (invalid, index over the bound).
+        {"index": [4], "raises": True},
         # J[[0, 4]] (invalid, includes good and bad index).
         {"index": [0, 4], "raises": True},
         # J[:2] (same as J[[0, 1]]).
@@ -188,7 +195,7 @@ def test_shape_simple_index(sample_matrix: BlockMatrixStorage, params):
     raises: bool = params.get("raises", False)
     expected: tuple[int, int] | None = params.get("expected", None)
     if not raises:
-        assert sample_matrix[index].shape == expected
+        assert sample_matrix[index].shape == expected, index
     else:
         with pytest.raises(Exception):
             sample_matrix[index]
@@ -206,10 +213,12 @@ PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX = [
     {"index": [0, 1, 2], "expected": 9},
     # J[[2, 0], x]  (same as J[[2, 0], x]).
     {"index": [2, 0], "expected": 5},
-    # J[[-1], x] (same as in numpy, indexing from end).
-    {"index": [-1], "expected": 2},
-    # J[[3], x] (invalid, index over the bound).
-    {"index": [3], "raises": True},
+    # J[[-2], [-2]] (same as in numpy, indexing from end).
+    {"index": [-2], "expected": 2},
+    # J[[3], [3]] (slicing empty group, same as J[3, 3]).
+    {"index": [3], "expected": 0},
+    # J[[4]] (invalid, index over the bound).
+    {"index": [4], "raises": True},
     # J[[0, 4], x] (invalid, includes good and bad index).
     {"index": [0, 4], "raises": True},
     # J[:2, x] (same as J[[0, 1], x]).
@@ -353,6 +362,15 @@ def test_nested_slicing(sample_matrix: BlockMatrixStorage, params):
                 [True, False, False],
             ],
         },
+        {
+            # Empty group. J[:, 3] = 1. Should do nothing.
+            'index': (slice(None, None, None), 3),
+            'modify_submatrices': [
+                [False, False, False],
+                [False, False, False],
+                [False, False, False],
+            ]
+        }
     ],
 )
 def test_setitem(sample_matrix: BlockMatrixStorage, params):
@@ -436,6 +454,10 @@ def test_empty_container(sample_matrix: BlockMatrixStorage):
             "expected_local": [20, 21, 22, 23],
             "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
+        # Empty group.
+        {
+            'index': (3, [0, 1, 2,])
+        }
     ],
 )
 def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, params):
@@ -603,12 +625,24 @@ def test_set_zeros(sample_matrix: BlockMatrixStorage, params):
             "fill_groups": [1],
             "fill_values": [20, 21, 22, 23],
         },
+        # Using scalar.
+        {
+            "expected_diagonal_change": [0, 0, 0, 20, 20, 20, 20, 0, 0],
+            "fill_groups": [1],
+            "fill_values": 20,
+        },
         # Non-contigious groups.
         {
             "expected_diagonal_change": [10, 11, 12, 0, 0, 0, 0, 30, 31],
             "fill_groups": [2, 0],
             "fill_values": [30, 31, 10, 11, 12],
         },
+        # Filling empty group.
+        {
+            'expected_diagonal_change': [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            'fill_groups': [3],
+            'fill_values': []
+        }
     ],
 )
 @pytest.mark.parametrize("additive", [False, True])

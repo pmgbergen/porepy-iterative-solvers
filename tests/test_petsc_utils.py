@@ -24,9 +24,9 @@ def test_csr_to_petsc_to_csr(block_size: int):
 
 
 def test_clear_petsc_options():
-    options = PETSc.Options()
-    options['aaa'] = 'bbb'
-    assert options.getAll() == {'aaa': 'bbb'}
-
-    petsc_utils.clear_petsc_options()
-    assert options.getAll() == {}
+    for i in range(5):
+        options = PETSc.Options()
+        petsc_utils.clear_petsc_options()
+        assert options.getAll() == {}
+        options['aaa'] = f'{i}{i}{i}'
+        assert options.getAll() == {'aaa': f'{i}{i}{i}'}

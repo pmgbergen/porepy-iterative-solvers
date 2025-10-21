@@ -29,7 +29,7 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix
     diagonal_approx = val
     diagonal_approx *= cell_volumes
 
-    density = model.fluid.density(subdomains).value(model.equation_system)
+    density = model.equation_system.evaluate(model.fluid.density(subdomains))
     diagonal_approx *= density
 
     dt = model.time_manager.dt
@@ -67,7 +67,7 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     nd_vec_to_normal = model.normal_component(fractures)
     # The normal component of the contact traction and the displacement jump.
     u_n_operator = nd_vec_to_normal @ model.displacement_jump(fractures)
-    u_n = u_n_operator.value(model.equation_system)
+    u_n = model.equation_system.evaluate(u_n_operator)
 
     if compressibility != 0:
         val = (
@@ -81,7 +81,7 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     cell_volumes = np.concatenate([f.cell_volumes for f in fractures])
     val *= cell_volumes
 
-    density = model.fluid.density(fractures).value(model.equation_system)
+    density = model.equation_system.evaluate(model.fluid.density(fractures))
     val *= density
 
     dt = model.time_manager.dt
