@@ -9,14 +9,15 @@ from petsc4py import PETSc
 
 # This is the place where the user has a change to pass command line options to petsc.
 # Before calling init, all petsc objects are unavailable, so this is a reasonable place
-# to initialize it.p
-petsc4py.init(sys.argv)  
+# to initialize it.
+petsc4py.init(sys.argv)
 
 
 __all__ = [
     "csr_to_petsc",
     "petsc_to_csr",
     "clear_petsc_options",
+    "insert_petsc_options",
 ]
 
 
@@ -31,7 +32,7 @@ def csr_to_petsc(mat: scipy.sparse.csr_matrix, bsize: int = 1) -> PETSc.Mat:
         The PETSc matrix representation of the given CSR matrix.
 
     """
-    assert mat.format == 'csr'
+    assert mat.format == "csr"
     return PETSc.Mat().createAIJ(
         size=mat.shape,
         csr=(mat.indptr, mat.indices, mat.data),
@@ -51,6 +52,12 @@ def petsc_to_csr(petsc_mat: PETSc.Mat) -> scipy.sparse.csr_matrix:
     """
     indptr, indices, data = petsc_mat.getValuesCSR()
     return scipy.sparse.csr_matrix((data, indices, indptr), shape=petsc_mat.getSize())
+
+
+def insert_petsc_options(options):
+    petsc_options = PETSc.Options()
+    for k, v in options.items():
+        petsc_options[k] = v
 
 
 def clear_petsc_options() -> PETSc.Options:

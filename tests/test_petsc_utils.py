@@ -23,10 +23,10 @@ def test_csr_to_petsc_to_csr(block_size: int):
     assert np.all(mat.toarray() == result.toarray())
 
 
-def test_clear_petsc_options():
+def test_insert_clear_petsc_options():
     for i in range(5):
         options = PETSc.Options()
         petsc_utils.clear_petsc_options()
         assert options.getAll() == {}
-        options['aaa'] = f'{i}{i}{i}'
+        petsc_utils.insert_petsc_options({'aaa': f'{i}{i}{i}'})
         assert options.getAll() == {'aaa': f'{i}{i}{i}'}
