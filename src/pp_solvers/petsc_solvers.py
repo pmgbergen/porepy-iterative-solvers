@@ -7,13 +7,7 @@ from typing import Optional
 import numpy as np
 from petsc4py import PETSc
 
-from .block_matrix import BlockMatrixStorage
-
-
-def insert_petsc_options(options):
-    petsc_options = PETSc.Options()
-    for k, v in options.items():
-        petsc_options[k] = v
+from pp_solvers.block_matrix import BlockMatrixStorage
 
 
 class PetscKrylovSolver:
@@ -32,7 +26,10 @@ class PetscKrylovSolver:
         self.ksp = ksp
         petsc_mat = ksp.getOperators()[0]
 
-        # TODO: Why left here?
+        # EK: Why left here?
+        # YZ: Two options: to store them here or to create them every time at solve,
+        # allocating memory every time. I realize it's a premature optimization, but it
+        # does not take more lines than do the latter.
         self.petsc_x = petsc_mat.createVecLeft()
         self.petsc_b = petsc_mat.createVecLeft()
         # self.ksp.setComputeEigenvalues(True)

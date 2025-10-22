@@ -65,7 +65,7 @@ def transform_contact_block(J, row_group: int, col_group: int, nd: int):
     # is no connection between the two sides of a fracture; this is represented in a
     # different block of the full matrix. Approximate the stencil by a block diagonal,
     # and calculate the inverse cheaply.
-    J55_inv = inv_block_diag(J55, nd=nd, lump=False)
+    J55_inv = inv_block_diag(J55, nd=nd)
 
     Qright.mat = csr_ones(Qright.shape[0])
     # Extract the block matrix corresponding to the impact of the contact forces on the
