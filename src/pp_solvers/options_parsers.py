@@ -8,11 +8,14 @@ from petsc4py import PETSc
 
 from pp_solvers.block_matrix import BlockMatrixStorage
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.petsc_utils import clear_petsc_options, csr_to_petsc
+from pp_solvers.petsc_utils import (
+    clear_petsc_options,
+    csr_to_petsc,
+    insert_petsc_options,
+)
 from pp_solvers.petsc_solvers import (
     LinearSolverWithTransformations,
     PetscKrylovSolver,
-    insert_petsc_options,
 )
 from .preconditioners import CompositePreconditioner, SinglePhysicsPreconditioner
 
@@ -44,7 +47,7 @@ class MultiPhysicsPreconditioner:
         pc: PETSc.PC,  # PC comes from ksp or similar
         user_options: dict | None = None,
         precond_list: list[SinglePhysicsPreconditioner] | None = None,
-        prefix=""
+        prefix="",
     ) -> dict:  # TODO: Return None?
         """
         Populate the PETSc preconditioner based on the groups and schemes. This entails
@@ -219,7 +222,8 @@ class MultiPhysicsPreconditioner:
             # manual. We explicitly declare using the same operator for KSP and PC.
             keep_ksp.setOperators(pmat, pmat)
 
-        if (near_null_space := elim_precond.near_null_space(self._model)) is not None:
+        near_null_space = elim_precond.near_null_space(self._model)
+        if near_null_space is not None:
             null_space_vectors = []
             for b in near_null_space:
                 null_space_vec_petsc = PETSc.Vec().create()  # possibly mem leak
@@ -298,7 +302,6 @@ class PetscKSPScheme:
 
 @dataclass
 class LinearTransformedScheme:
-
     inner: PetscKSPScheme
     """The actual solver, to be applied after the transformations."""
 
