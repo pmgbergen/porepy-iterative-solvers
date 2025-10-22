@@ -374,7 +374,8 @@ def test_eq_rows_permutation(dof_manager: DofManager, model: pp.PorePyModel):
     expected_permutation = np.concatenate(eq_dofs_by_blocks)
 
     # Checking if there is contact mechanics in the model.
-    if (contact_group := dof_manager.identify_contact_group()) != -1:
+    contact_group = dof_manager.identify_contact_group()
+    if contact_group != -1:
         # Construct the expected permutation vector: The contact equations should be
         # permuted so that the normal and tangential equations are grouped together for
         # each fracture cell. Other equations should be unperturbed.
