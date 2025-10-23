@@ -6,10 +6,13 @@ import numpy as np
 import porepy as pp
 from petsc4py import PETSc
 
-from . import equation_variable_groups as groups
-from .block_matrix import BlockMatrixStorage
-from .equation_variable_groups import EquationNames
-from .preconditioners import CompositePreconditioner, SinglePhysicsPreconditioner
+from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.equation_variable_groups import EquationNames
+from pp_solvers.preconditioners import (
+    CompositePreconditioner,
+    SinglePhysicsPreconditioner,
+)
+from pp_solvers.equation_variable_groups import EquationGroup
 
 
 class DofManager:
@@ -176,8 +179,8 @@ class DofManager:
         # Construct the mapping from equation names to the group indices. This must be
         # done before identifying the contact group.
         name_to_group_index_map = {}
+        item: EquationGroup
         for i, item in enumerate(equations_by_name):
-            # item is an EquationGroup
             for eq_item in item.items:
                 name = eq_item.name
                 if name not in name_to_group_index_map:
@@ -359,8 +362,8 @@ class DofManager:
         other_solver: list[SinglePhysicsPreconditioner],
         bmat: BlockMatrixStorage,
     ) -> PETSc.IS:
-        """Construct PETSc index sets for the current and other solvers.         
-        
+        """Construct PETSc index sets for the current and other solvers.
+
         # YZ: Besides this method and `_construct_is`, this class is PETSc-agnostic.
         # _construct_is does not use the arrangement stored in DofManager, it is based
         # on the rearranged block matrix.
