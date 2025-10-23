@@ -76,6 +76,122 @@ def csr_ones(n: int) -> scipy.sparse.csr_matrix:
     return scipy.sparse.eye(n, format="csr")
 
 
-def inv_block_diag(mat, nd: int):
-    block_sizes = np.array([nd] * (mat.shape[0] // nd))
-    return pp.matrix_operations.invert_diagonal_blocks(mat=mat, s=block_sizes)
+def inv_block_diag(mat, nd: int, lump: bool = False):
+    # YZ: The equivalent function in porepy is not truly equivalent, because this one
+    # ignores the nonzero entries outside the block diagonal, and PorePy raises an
+    # exception. Thus it cannot be easily replaced.
+    if lump:
+        mat = _lump_nd(mat, nd)
+    if nd == 1:
+        return _extract_diag_inv(mat)
+    if nd == 2:
+        return _inv_block_diag_2x2(mat)
+    if nd == 3:
+        return _inv_block_diag_3x3(mat)
+    print(f"Using inefficient invert block diag, {nd = }")
+    return _inv_direct(_diag_nd(mat, nd=nd))
+
+
+def _extract_diag_inv(mat, eliminate_zeros=False):
+    diag = mat.diagonal()
+    ones = scipy.sparse.eye(mat.shape[0], format="csr")
+    if eliminate_zeros:
+        diag[abs(diag) < 1e-30] = 1
+    diag_inv = 1 / diag
+    ones.data[:] = diag_inv
+    return ones
+
+
+def _inv_block_diag_2x2(mat):
+    ad = mat.diagonal()
+    a = ad[::2]
+    d = ad[1::2]
+    b = mat.diagonal(k=1)[::2]
+    c = mat.diagonal(k=-1)[::2]
+
+    det = a * d - b * c
+
+    assert abs(det).min() > 0
+
+    diag = np.zeros_like(ad)
+    diag[::2] = d / det
+    diag[1::2] = a / det
+    lower = np.zeros(ad.size - 1)
+    lower[::2] = -c / det
+    upper = np.zeros(ad.size - 1)
+    upper[::2] = -b / det
+
+    return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
+
+
+def _lump_nd(mat, nd: int):
+    result = scipy.sparse.lil_matrix(mat.shape)
+    indices = np.arange(0, mat.shape[0], nd)
+    for i in range(nd):
+        for j in range(nd):
+            indices_i = indices + i
+            indices_j = indices + j
+            ind_i, ind_j = np.meshgrid(
+                indices_i, indices_j, copy=False, sparse=True, indexing="ij"
+            )
+            submat = mat[ind_i, ind_j]
+            lump = np.array(submat.sum(axis=1)).ravel()
+            result[indices_i, indices_j] = lump
+    return result.tocsr()
+
+
+def _diag_nd(mat, nd: int):
+    result = scipy.sparse.lil_matrix(mat.shape)
+    indices = np.arange(0, mat.shape[0], nd)
+    for i in range(nd):
+        for j in range(nd):
+            indices_i = indices + i
+            indices_j = indices + j
+            result[indices_i, indices_j] = mat[indices_i, indices_j]
+    return result.tocsr()
+
+
+@njit
+def _inv_list_of_matrices(mats):
+    results = np.zeros_like(mats)
+    for i, mat in enumerate(mats):
+        results[i] = np.linalg.inv(mat)
+    return results
+
+
+def _inv_block_diag_3x3(mat):
+    assert (mat.shape[0] % 3) == 0
+    diag = mat.diagonal()
+    a00 = diag[0::3]
+    a11 = diag[1::3]
+    a22 = diag[2::3]
+
+    diag_m1 = mat.diagonal(k=-1)
+    a10 = diag_m1[0::3]
+    a21 = diag_m1[1::3]
+
+    diag_m2 = mat.diagonal(k=-2)
+    a20 = diag_m2[0::3]
+
+    diag_p1 = mat.diagonal(k=1)
+    a01 = diag_p1[0::3]
+    a12 = diag_p1[1::3]
+
+    diag_p2 = mat.diagonal(k=2)
+    a02 = diag_p2[0::3]
+
+    mats_3x3 = np.array(
+        [
+            [a00, a01, a02],
+            [a10, a11, a12],
+            [a20, a21, a22],
+        ]
+    ).transpose(2, 0, 1)
+    mats_3x3_inv = _inv_list_of_matrices(mats_3x3)
+    return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
+
+
+def _inv_direct(mat):
+    return scipy.sparse.csr_matrix(
+        scipy.sparse.linalg.inv(scipy.sparse.csc_matrix(mat))
+    )

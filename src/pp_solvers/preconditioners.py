@@ -14,7 +14,7 @@ from pp_solvers.petsc_utils import csr_to_petsc
 from pp_solvers.petsc_solvers import PcPythonPermutation
 
 if TYPE_CHECKING:
-    from .dof_manager import DofManager
+    from pp_solvers.dof_manager import DofManager
 
 
 __all__ = [
@@ -173,7 +173,7 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
     def configure(
         self,
         model: pp.PorePyModel,
-        dof_manager: pp.DofManager,
+        dof_manager: DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
@@ -185,6 +185,8 @@ class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 
 class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
+    # YZ: Not used anywhere
+
     def __init__(self):
         self._group = groups.InterfaceEnthalpyFluxGroup()
 
@@ -203,7 +205,7 @@ class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
     def configure(
         self,
         model: pp.PorePyModel,
-        dof_manager: pp.DofManager,
+        dof_manager: DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
@@ -215,6 +217,8 @@ class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
 
 
 class InterfaceFourierFluxPreconditioner(SinglePhysicsPreconditioner):
+    # YZ: Not used anywhere
+
     def __init__(self):
         self._group = groups.InterfaceFourierFluxGroup()
 
@@ -233,7 +237,7 @@ class InterfaceFourierFluxPreconditioner(SinglePhysicsPreconditioner):
     def configure(
         self,
         model: pp.PorePyModel,
-        dof_manager: pp.DofManager,
+        dof_manager: DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
@@ -263,7 +267,7 @@ class InterfaceMassEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
     def configure(
         self,
         model: pp.PorePyModel,
-        dof_manager: pp.DofManager,
+        dof_manager: DofManager,
         opts: dict | None = None,
         has_complement: bool = False,
     ) -> dict:
@@ -323,6 +327,7 @@ class MassBalanceDimSplitCPRPreconditioner(MassBalanceDimSplitPreconditioner):
 
 
 class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
+    # YZ: Not used anywhere
     def __init__(self):
         self._group = groups.MassBalanceGroup()
 
@@ -344,6 +349,7 @@ class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
 
 
 class EnergyBalanceDimSplitPreconditioner(EnergyBalancePreconditioner):
+    # YZ: Not used anywhere
     def __init__(self):
         self._group = groups.EnergyBalanceDimSplitGroup()
 
@@ -533,12 +539,13 @@ class IdentityPreconditioner(SinglePhysicsPreconditioner):
 class CompositePreconditioner(SinglePhysicsPreconditioner):
     """A class for a composite (e.g., multi-stage) preconditioner for a block."""
 
-    def __init__(self, solvers):
+    def __init__(self, solvers: list[list[SinglePhysicsPreconditioner]]):
         self.solvers = solvers
 
         g = []
         for solver in self.solvers:
             if isinstance(solver, SinglePhysicsPreconditioner):
+                # YZ: I would suggest to keep only lists of solvers for consistensy.
                 group = solver.group()
             elif isinstance(solver, list):
                 # If the solver is a list, we assume it contains multiple groups.
