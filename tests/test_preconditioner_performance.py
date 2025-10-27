@@ -69,8 +69,8 @@ factories = {
 expected_linear_iterations = {
     FluidModel: [3, 3],
     MechanicsModel: [5, 6],
-    PoromechanicsModel: [8, 14, 12, 11, 13],
-    ThermoporomechanicsModel: [10, 15, 14, 11, 15],
+    PoromechanicsModel: [8, 12, 10, 11],
+    ThermoporomechanicsModel: [10, 15, 13, 14, 14, 15, 14],
 }
 
 
