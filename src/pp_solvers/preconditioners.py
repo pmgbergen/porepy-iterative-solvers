@@ -373,14 +373,9 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
     def _default_options(self, model, dof_manager) -> dict:
         local_opts = {
             "ksp_type": "preonly",
-            "pc_type": "hmg",
-            "hmg_inner_pc_type": "hypre",
-            "hmg_inner_pc_hypre_type": "boomeramg",
-            "hmg_inner_pc_hypre_boomeramg_strong_threshold": 0.7,
-            "mg_levels_ksp_type": "richardson",
-            "mg_levels_ksp_max_it": 2,
-            # 3D model has bad grid
-            "mg_levels_pc_type": "ilu" if model.nd == 3 else "sor",
+            "pc_type": "hypre",
+            'pc_hypre_type': 'boomeramg',
+            "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
         return local_opts
 

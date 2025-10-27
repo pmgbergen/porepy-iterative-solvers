@@ -159,8 +159,10 @@ def patterns_to_compare(model_kind: str) -> list[str]:
     the interface flow, if the latter is present in the model. The following expressions
     are used:
     - ".*", where "." means "any symbol" and "*" means "zero or more times";
-    - "\s*" at the start of each line to allow for any whitespaces at the line start.
 
+    I did not find a good way to distinguish between amg for mechanics and amg for 
+    the mass balance, as group names can vary and we cannot rely on them. Therefore,
+    the tests check that the number of matches is >= 1, not exactly == 1.    
     """
     contact = [
         r"""PC Object: 1 MPI process
@@ -192,7 +194,7 @@ Preconditioner for the Schur complement formed from user provided matrix""",
     ]
     mechanics_amg = [
         r"""PC Object: .* 1 MPI process
-type: hmg""",
+type: hypre""",
     ]
     isothermal_flow = [
         r"""PC Object: .* 1 MPI process
@@ -244,10 +246,8 @@ def test_ksp_none(petsc_stdout: str, model_kind: str):
 
     """
     matches = find_in_petsc_output(r"KSP Object:.*\n *type: (.+)", petsc_stdout)
-    if model_kind == "flow":
+    if model_kind in ["flow", "mechanics"]:
         assert len(matches) == 2
-    elif model_kind == "mechanics":
-        assert len(matches) == 5  # Why? - because of hmg.
     elif model_kind == "HM":
         assert len(matches) == 6
     elif model_kind == "TH":
@@ -257,8 +257,7 @@ def test_ksp_none(petsc_stdout: str, model_kind: str):
     else:
         raise NotImplementedError(model_kind)
 
-    # Why richardson? - because of hmg.
-    assert all(x in ["preonly", "richardson"] for x in matches)
+    assert all(x == "preonly" for x in matches)
 
 
 def test_petsc_options(petsc_stdout: str, patterns_to_compare):
@@ -268,7 +267,7 @@ def test_petsc_options(petsc_stdout: str, patterns_to_compare):
     """
     for pattern in patterns_to_compare:
         found = find_in_petsc_output(pattern, petsc_stdout)
-        assert len(found) == 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
+        assert len(found) >= 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
 
 
 def test_pass_user_options(
@@ -337,7 +336,7 @@ def test_petsc_ksp_scheme(
     # Checking that the preconditioner is correctly initialized.
     for pattern in patterns_to_compare:
         found = find_in_petsc_output(pattern, petsc_stdout)
-        assert len(found) == 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
+        assert len(found) >= 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
 
     # Checking that the ksp is correctly initialized, including user options.
     pattern_ksp = r"""KSP Object: 1 MPI process
