@@ -663,11 +663,11 @@ def thm_factory():
     # It may or may not be a problem when it comes to parsing. Did we pass a list of two
     # subsolvers to the CPR, or was it a single subsolver, which is a Fieldsplit?
 
-    # YZ: One more thing I'm not happy about is that a subsolver (eg ContactPreconditioner)
-    # determines both (i) what to do with the eliminated group and (ii) how to approximate
-    # the inverse for the kept group. The FixedStressPreconditioner sets the mechanics
-    # be solved with AMG and applies fixed stress. Not sure though, if it can cause any
-    # troubles, or am I just not used to it.
+    # YZ: One more thing I'm not happy about is that a subsolver (eg
+    # ContactPreconditioner) determines both (i) what to do with the eliminated group
+    # and (ii) how to approximate the inverse for the kept group. The
+    # FixedStressPreconditioner sets the mechanics be solved with AMG and applies fixed
+    # stress. Not sure though, if it can cause any troubles, or I'm just not used to it.
 
     # YZ to EK: Did you have something in particular against hierarchical structure that
     # I had before? So that it would have the following structure:
