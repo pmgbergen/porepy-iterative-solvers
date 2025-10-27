@@ -374,7 +374,7 @@ class MechanicsPreconditioner(SinglePhysicsPreconditioner):
         local_opts = {
             "ksp_type": "preonly",
             "pc_type": "hypre",
-            'pc_hypre_type': 'boomeramg',
+            "pc_hypre_type": "boomeramg",
             "pc_hypre_boomeramg_strong_threshold": 0.7,
         }
         return local_opts

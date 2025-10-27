@@ -618,7 +618,9 @@ class DofManager:
             return PETSc.IS().createGeneral(
                 np.concatenate(
                     dofs,
-                    dtype=np.int32,  # TODO: What if the size is too large for int32? YZ: I believe this is how PETSc is compiled.
+                    dtype=np.int32,
+                    # EK: What if the size is too large for int32?
+                    # YZ: I believe this is how PETSc is compiled.
                 )
             )
         else:

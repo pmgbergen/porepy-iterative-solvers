@@ -364,13 +364,13 @@ def test_nested_slicing(sample_matrix: BlockMatrixStorage, params):
         },
         {
             # Empty group. J[:, 3] = 1. Should do nothing.
-            'index': (slice(None, None, None), 3),
-            'modify_submatrices': [
+            "index": (slice(None, None, None), 3),
+            "modify_submatrices": [
                 [False, False, False],
                 [False, False, False],
                 [False, False, False],
-            ]
-        }
+            ],
+        },
     ],
 )
 def test_setitem(sample_matrix: BlockMatrixStorage, params):
@@ -456,10 +456,17 @@ def test_empty_container(sample_matrix: BlockMatrixStorage):
         },
         # Empty group.
         {
-            'index': (3, [0, 1, 2,]),
+            "index": (
+                3,
+                [
+                    0,
+                    1,
+                    2,
+                ],
+            ),
             "expected_local": [],
             "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        }
+        },
     ],
 )
 def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, params):
@@ -523,10 +530,17 @@ def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, para
         },
         # Empty group.
         {
-            'index': ([0, 1, 2,], 3),
+            "index": (
+                [
+                    0,
+                    1,
+                    2,
+                ],
+                3,
+            ),
             "solution_local": [],
             "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        }
+        },
     ],
 )
 def test_project_solution_to_global(sample_matrix: BlockMatrixStorage, params):
@@ -647,10 +661,10 @@ def test_set_zeros(sample_matrix: BlockMatrixStorage, params):
         },
         # Filling empty group.
         {
-            'expected_diagonal_change': [0, 0, 0, 0, 0, 0, 0, 0, 0],
-            'fill_groups': [3],
-            'fill_values': []
-        }
+            "expected_diagonal_change": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "fill_groups": [3],
+            "fill_values": [],
+        },
     ],
 )
 @pytest.mark.parametrize("additive", [False, True])

@@ -44,7 +44,7 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
             return {"cell_size": self.params["cell_size"]}
 
     params = {
-        'linear_solver': {},
+        "linear_solver": {},
         "cell_size": 0.25,
         "cartesian": True,
         "fracture_indices": [0, 1] if with_fractures else [],

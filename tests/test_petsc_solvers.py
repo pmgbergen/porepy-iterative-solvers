@@ -86,7 +86,7 @@ def test_linear_transformed_solver(
     transformed_matrix = sample_matrix.copy()
     if left:
         Qleft = sample_matrix.copy()
-        transformed_matrix.mat = Qleft.mat @ transformed_matrix.mat 
+        transformed_matrix.mat = Qleft.mat @ transformed_matrix.mat
     if right:
         Qright = sample_matrix.copy()
         transformed_matrix.mat = transformed_matrix.mat @ Qright.mat
