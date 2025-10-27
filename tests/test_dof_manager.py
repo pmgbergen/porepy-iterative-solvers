@@ -410,7 +410,9 @@ def test_eq_rows_permutation(dof_manager: DofManager, model: pp.PorePyModel):
     assert np.all(expected_permutation == result)
 
 
-def test_equation_variable_names(dof_manager: DofManager, model: pp.PorePyModel):
+def test_equation_variable_names(
+    dof_manager: DofManager, model: pp.PorePyModel, expected_composition: dict
+):
     """This is a simple regression test ensuring that `equation_names` and
     `variable_names` don't raise.
 

@@ -456,7 +456,9 @@ def test_empty_container(sample_matrix: BlockMatrixStorage):
         },
         # Empty group.
         {
-            'index': (3, [0, 1, 2,])
+            'index': (3, [0, 1, 2,]),
+            "expected_local": [],
+            "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
         }
     ],
 )
@@ -519,6 +521,12 @@ def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, para
             "solution_local": [10, 11, 12, 20, 21, 22, 23, 30, 31],
             "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
+        # Empty group.
+        {
+            'index': ([0, 1, 2,], 3),
+            "solution_local": [],
+            "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        }
     ],
 )
 def test_project_solution_to_global(sample_matrix: BlockMatrixStorage, params):
