@@ -4,7 +4,8 @@ from pp_solvers import petsc_utils
 from scipy.sparse import csr_matrix
 from petsc4py import PETSc
 
-@pytest.mark.parametrize('block_size', [1, 2, 3])
+
+@pytest.mark.parametrize("block_size", [1, 2, 3])
 def test_csr_to_petsc_to_csr(block_size: int):
     n_rows = 6
     mat = np.arange(n_rows * n_rows).reshape(n_rows, n_rows).astype(float)
@@ -28,5 +29,5 @@ def test_insert_clear_petsc_options():
         options = PETSc.Options()
         petsc_utils.clear_petsc_options()
         assert options.getAll() == {}
-        petsc_utils.insert_petsc_options({'aaa': f'{i}{i}{i}'})
-        assert options.getAll() == {'aaa': f'{i}{i}{i}'}
+        petsc_utils.insert_petsc_options({"aaa": f"{i}{i}{i}"})
+        assert options.getAll() == {"aaa": f"{i}{i}{i}"}

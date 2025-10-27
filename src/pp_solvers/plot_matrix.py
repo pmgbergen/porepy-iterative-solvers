@@ -12,7 +12,7 @@ import scipy.sparse
 import seaborn as sns
 from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, spmatrix, coo_matrix
- 
+
 
 def spy(
     mat: spmatrix,

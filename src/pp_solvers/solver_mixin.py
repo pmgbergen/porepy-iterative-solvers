@@ -273,6 +273,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # The name of the attribute is really not meaningful..
         self.nonlinear_solver_statistics = LinearSolverStatistics()
 
+
 def default_preconditioner_factory(
     model: pp.PorePyModel,
 ) -> Callable[[], list[SinglePhysicsPreconditioner]]:

@@ -160,9 +160,9 @@ def patterns_to_compare(model_kind: str) -> list[str]:
     are used:
     - ".*", where "." means "any symbol" and "*" means "zero or more times";
 
-    I did not find a good way to distinguish between amg for mechanics and amg for 
+    I did not find a good way to distinguish between amg for mechanics and amg for
     the mass balance, as group names can vary and we cannot rely on them. Therefore,
-    the tests check that the number of matches is >= 1, not exactly == 1.    
+    the tests check that the number of matches is >= 1, not exactly == 1.
     """
     contact = [
         r"""PC Object: 1 MPI process
