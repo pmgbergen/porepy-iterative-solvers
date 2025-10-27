@@ -53,7 +53,7 @@ def model(with_fractures) -> pp.PorePyModel:
     return model
 
 
-def test_fixed_stress(model: pp_solvers.IterativeSolverMixin):
+def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bool):
     jacobian = model.bmat
 
     # The fixed stress in fractures requires a non-zero u_intf jump.
@@ -91,7 +91,10 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin):
                 assert not submat.nnz == 0, submat
                 np.testing.assert_equal(submat.toarray(), expected_matrix)
             elif row_group == col_group == p_frac_group:
-                assert not submat.nnz == 0, submat
+                if with_fractures:
+                    assert not submat.nnz == 0, submat
+                else:
+                    assert submat.nnz == 0, submat
                 np.testing.assert_equal(submat.toarray(), expected_fractures)
             else:
                 assert submat.nnz == 0, submat
