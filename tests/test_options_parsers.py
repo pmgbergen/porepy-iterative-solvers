@@ -3,6 +3,9 @@ For this, we compare the expected chunks of text with the result produced by Pet
 and PetscKSPView.
 
 """
+# ruff: noqa: E501
+# The line silences ruff about long lines in this file. We need long lines to describe
+# expected PETSc output.
 
 import re
 
