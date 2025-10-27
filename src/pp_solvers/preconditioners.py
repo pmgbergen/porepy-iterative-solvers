@@ -542,14 +542,13 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
     def __init__(self, solvers: list[list[SinglePhysicsPreconditioner]]):
         self.solvers = solvers
 
-        g = []
-        for solver in self.solvers:
-            if isinstance(solver, SinglePhysicsPreconditioner):
+        def get_groups_of_subsolver(subsolver) -> list[groups.AbstractGroup]:
+            if isinstance(subsolver, SinglePhysicsPreconditioner):
                 # YZ: I would suggest to keep only lists of solvers for consistensy.
-                group = solver.group()
-            elif isinstance(solver, list):
+                group = subsolver.group()
+            elif isinstance(subsolver, list):
                 # If the solver is a list, we assume it contains multiple groups.
-                group = [slv.group() for slv in solver]
+                group = [slv.group() for slv in subsolver]
             else:
                 raise TypeError(
                     "The solver must be a SinglePhysicsPreconditioner"
@@ -557,8 +556,27 @@ class CompositePreconditioner(SinglePhysicsPreconditioner):
                 )
             if not isinstance(group, list):
                 group = [group]
-            g += group
-        self._group = g
+            return group
+
+        def are_groups_equal(
+            a: list[groups.AbstractGroup], b: list[groups.AbstractGroup]
+        ):
+            # There is no better way to compare without a model. Anyway, they are kind
+            # of singletones (in a sense that they don't have per-instance states).
+            if len(a) != len(b):
+                return False
+            for x, y in zip(a, b):
+                if x.__class__ != y.__class__:
+                    return False
+            return True
+
+        # Components of a composite preconditioner must approximately invert exactly the
+        # same matrix, hence the groups must be the same. We check it here.
+        groups_expected = get_groups_of_subsolver(self.solvers[0])
+        for solver in self.solvers[1:]:
+            assert are_groups_equal(groups_expected, get_groups_of_subsolver(solver))
+
+        self._group = groups_expected
 
     @property
     def key(self) -> str:
@@ -642,6 +660,69 @@ def thm_factory():
     )
 
     cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
+
+    # YZ: I'm not happy with the list here due to its ambiguity:
+    # - here, it denotes the order of schur complement eliminations
+    # - in CPR, its arguments mean the stages of a composite solver
+    # - in `cpr_1`, it is again the schur complements
+    # It may or may not be a problem when it comes to parsing. Did we pass a list of two
+    # subsolvers to the CPR, or was it a single subsolver, which is a Fieldsplit?
+
+    # YZ: One more thing I'm not happy about is that a subsolver (eg ContactPreconditioner)
+    # determines both (i) what to do with the eliminated group and (ii) how to approximate
+    # the inverse for the kept group. The FixedStressPreconditioner sets the mechanics
+    # be solved with AMG and applies fixed stress. Not sure though, if it can cause any
+    # troubles, or am I just not used to it.
+
+    # YZ to EK: Did you have something in particular against hierarchical structure that
+    # I had before? So that it would have the following structure:
+    #
+    # thm_scheme = FieldSplit(
+    #     groups=ContactGroup(),
+    #     subsolver=BlockDiagonal(),
+    #     approximate_schur=BlockDiagonal(),
+    #     complement=FieldSplit(
+    #         groups=IntfMassAndEnergy(),
+    #         subsolver=ILU(),
+    #         approximate_schur=Diagonal(),
+    #         complement=FieldSplit(
+    #             groups=MomentumBalance() + IntfForce(),
+    #             subsolver=MechanicsAMG(),
+    #             approximate_schur=FixedStress(),
+    #             complement=CompositePreconditioner(
+    #                 # groups deducted from components
+    #                 subsolvers=[
+    #                     FieldSplit(
+    #                         type='additive',
+    #                         groups=EnergyBalance()
+    #                         subsolver=Jacobi(),
+    #                         approximate_schur=Empty(),
+    #                         complement=AtomicPreconditioner(
+    #                             groups=MassBalance(),
+    #                             subsolver=MassBalanceAMG(),
+    #                         )
+    #                     ),
+    #                     AtomicPreconditioner(
+    #                         groups=EnergyBalance() + MassBalance(),
+    #                         subsolver=BlockILU()
+    #                     )
+    #                 ]
+    #             )
+    #         )
+    #     )
+    # )
+    # def contact_preconditioner():
+    #     return dict(
+    #         groups=ContactGroup(),
+    #         subsolver=BlockDiagonal(),
+    #         approximate_schur=BlockDiagonal(),
+    #     )
+    # thm_solver = nested_schur_complements(
+    #     contact_preconditioner(),
+    #     interface_mass_and_energy_preconditioner(),
+    #     momentum_fixed_stress_preconditioner(),
+    #     cpr()
+    # )
 
     return [
         ContactPreconditioner(),

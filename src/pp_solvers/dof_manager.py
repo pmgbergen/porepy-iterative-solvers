@@ -7,7 +7,7 @@ import porepy as pp
 from petsc4py import PETSc
 
 from pp_solvers.block_matrix import BlockMatrixStorage
-from pp_solvers.equation_variable_groups import EquationNames
+from pp_solvers.equation_variable_groups import EquationNames, AbstractGroup
 from pp_solvers.preconditioners import (
     CompositePreconditioner,
     SinglePhysicsPreconditioner,
@@ -75,87 +75,87 @@ class DofManager:
         # single, non-intersecting set of equations and variables.
         for group, slv in zip(self._orderings, solvers):
             if isinstance(group, list):
-                # This is a list of groups, which may contain identical items. First
-                # gather them all.
-                #
                 # First, make sure this is a composite preconditioner; this is a tacit
                 # assumption of the below parsing. Dealing with anything else would
                 # require a more structured approach to the parsing, but EK has neither
                 # the imagination nor the test cases needed to do so now.
                 assert isinstance(slv, CompositePreconditioner)
 
-                # Tacitly assump that the group is a list of lists of AbstractGroup. If
-                # we hit a third nested level, we will need to do recursion of sorts.
-                tmp_var_groups = []
-                tmp_equations_by_name = []
-                for g in group:
-                    tmp_var_groups += g.variable_groups(model)
-                    tmp_equations_by_name += g.equation_groups(model)
-
-                # Find the indices of the subsets that will define a unique set of
-                # variables and equations. By assumption, the variables and equations in
-                # the tmp_x lists match, so that we can use any of them to find indices
-                # that define a unique sublist. It is by far simplest to use the
-                # variables, since we can rely on their hash values to find the sublist
-                # (while the equation list is a confused mess of lists and tuples, which
-                # fortunately works).
-
-                # The implementation below assumes that each variable group contains a
-                # single variable. Expanding this should be doable, but it has not yet
-                # been necessary.
-                assert all(len(x) == 1 for x in tmp_var_groups)
-
-                # Find the sorting indices of the unique variable groups.
-                hash_values = [hash(item[0]) for item in tmp_var_groups]
-                _, sorting_indices = np.unique(hash_values, return_index=True)
-                # Sort the indices to ensure a consistent order.
-                sorting_indices.sort()
-
-                # Extract unique sublists.
+                # These are the "results" of this conditional branch, used below.
                 groups_loc = []
                 vars_loc = []
-                for ind in sorting_indices:
-                    vars_loc.append(tmp_var_groups[ind])
-                    groups_loc.append(tmp_equations_by_name[ind])
 
                 for sub_solver in slv.solvers:
-                    # If the sub-solver is a list, it is by itself a filedsplit
+                    # If the sub-solver is a list, it is by itself a fieldsplit
                     # preconditioner. Treat every sub-solver within the fieldsplit as a
                     # separate solver, and add it to the solver indices.
-                    if isinstance(sub_solver, list):
-                        for ss in sub_solver:
-                            solver_indices[ss] = []
-                            # There could be deeper recursion levels here, which we may
-                            # need to deal with by some recursive approach, but we
-                            # ignore that possibility for now.
-                            assert isinstance(ss, SinglePhysicsPreconditioner)
-                            ss_vars = ss.group().variable_groups(model)
-                            assert isinstance(ss_vars, list)
-                            sub_vars = [ss_vars[i][0] for i in range(len(ss_vars))]
 
-                            # Loop over all variables associated with this subsolver.
-                            # Find it among the unique variable set (if it is not found,
-                            # something is seriously worng), and add the block index to
-                            # the list associated with the subsolver.
-                            for var in sub_vars:
-                                loc_id = int(
-                                    np.where(
-                                        np.array(hash_values)[sorting_indices]
-                                        == hash(var)
-                                    )[0][0]
+                    # If it's not a list, making it a list to generalize the code below.
+                    if isinstance(sub_solver, SinglePhysicsPreconditioner):
+                        sub_solver = [sub_solver]
+                    assert isinstance(sub_solver, list)
+
+                    # This is the inner counter to distinguish subsolver indices within
+                    # a compositional solver.
+                    composite_counter = 0
+
+                    # These lists must be identical for each subsolver of a composite
+                    # preconditioner. We check it and then store the results in the
+                    # global lists of results "groups_loc" and "vars_loc".
+                    groups_loc_composite = []
+                    vars_loc_composite = []
+
+                    for ss in sub_solver:
+                        # There could be deeper recursion levels here, which we may
+                        # need to deal with by some recursive approach, but we
+                        # ignore that possibility for now.
+                        assert isinstance(ss, SinglePhysicsPreconditioner)
+
+                        ss_groups = ss.group()
+                        # It can be either a group or a list of groups.
+                        if isinstance(ss_groups, AbstractGroup):
+                            ss_groups = [ss_groups]
+                        solver_indices[ss] = []
+
+                        for ss_group in ss_groups:
+                            ss_vars = ss_group.variable_groups(model)
+                            groups_loc_composite.extend(ss_group.equation_groups(model))
+                            vars_loc_composite.extend(ss_vars)
+
+                            solver_indices[ss].extend(
+                                list(
+                                    range(
+                                        counter + composite_counter,
+                                        len(ss_vars) + counter + composite_counter,
+                                    )
                                 )
-                                solver_indices[ss].append(loc_id + counter)
+                            )
+                            composite_counter += len(ss_vars)
+
+                    # Make sure they are the same for each composite subsolver. This
+                    # check is performed starting from the second subsolver.
+                    if len(groups_loc) != 0:
+                        # It is easy to compare equation groups.
+                        assert groups_loc == groups_loc_composite
+
+                        # And more involved to compare variable groups. MDVariables have
+                        # different ids, so are technically different objects. We ensure
+                        # that the names and domains are the same.
+                        for var_loc, var_loc_composite in zip(
+                            vars_loc, vars_loc_composite
+                        ):
+                            for md_var_expected, md_var in zip(
+                                var_loc, var_loc_composite
+                            ):
+                                assert md_var.domains == md_var_expected.domains
+                                assert md_var.name == md_var_expected.name
                     else:
-                        # Assume here that the sub-solver is a
-                        # SinglePhysicsPreconditioner. If we at some point need nested
-                        # composite preconditioners, something will go wrong here. There
-                        # are surely other cases that can break this as well.
-                        solver_indices[sub_solver] = [
-                            counter + int(i) for i in sorting_indices
-                        ]
+                        # This is the first subsolver, just assign them.
+                        groups_loc = groups_loc_composite
+                        vars_loc = vars_loc_composite
 
             else:
-                # This is a single group, we can add its variables and equations.
+                # This is not a compositional preconditioner group.
                 groups_loc = group.equation_groups(model)
                 vars_loc = group.variable_groups(model)
 
