@@ -5,6 +5,8 @@
 *.geo_unrolled
 *.npz
 *.npy
+*.pyc
+
 figures/
 src/pp_solvers.egg-info/*
 
