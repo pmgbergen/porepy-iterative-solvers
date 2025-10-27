@@ -76,12 +76,10 @@ def csr_ones(n: int) -> scipy.sparse.csr_matrix:
     return scipy.sparse.eye(n, format="csr")
 
 
-def inv_block_diag(mat, nd: int, lump: bool = False):
+def inv_block_diag(mat, nd: int):
     # YZ: The equivalent function in porepy is not truly equivalent, because this one
     # ignores the nonzero entries outside the block diagonal, and PorePy raises an
     # exception. Thus it cannot be easily replaced.
-    if lump:
-        mat = _lump_nd(mat, nd)
     if nd == 1:
         return _extract_diag_inv(mat)
     if nd == 2:
@@ -122,22 +120,6 @@ def _inv_block_diag_2x2(mat):
     upper[::2] = -b / det
 
     return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
-
-
-def _lump_nd(mat, nd: int):
-    result = scipy.sparse.lil_matrix(mat.shape)
-    indices = np.arange(0, mat.shape[0], nd)
-    for i in range(nd):
-        for j in range(nd):
-            indices_i = indices + i
-            indices_j = indices + j
-            ind_i, ind_j = np.meshgrid(
-                indices_i, indices_j, copy=False, sparse=True, indexing="ij"
-            )
-            submat = mat[ind_i, ind_j]
-            lump = np.array(submat.sum(axis=1)).ravel()
-            result[indices_i, indices_j] = lump
-    return result.tocsr()
 
 
 def _diag_nd(mat, nd: int):

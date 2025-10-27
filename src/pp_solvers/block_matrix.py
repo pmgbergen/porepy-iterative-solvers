@@ -395,6 +395,8 @@ class BlockMatrixStorage:
             for i in self.active_groups[0]
             for j in self.groups_to_blocks_row[i]
         ]
+        if len(row_idx) == 0:
+            return np.array([])
         row_idx = np.concatenate(row_idx)
         return global_rhs[row_idx]
 
@@ -411,29 +413,33 @@ class BlockMatrixStorage:
                 not part of the active groups.
 
         """
-        row_idx = np.concatenate(
-            [
-                self.global_dofs_row[j]
-                for i in self.active_groups[0]
-                for j in self.groups_to_blocks_row[i]
-            ]
-        )
+        row_idx = [
+            self.global_dofs_row[j]
+            for i in self.active_groups[0]
+            for j in self.groups_to_blocks_row[i]
+        ]
         total_size = sum(x.size for x in self.global_dofs_col)
         result = np.zeros(total_size, dtype=local_rhs.dtype)
+        if len(row_idx) == 0:
+            return result
+
+        row_idx = np.concatenate(row_idx)
         result[row_idx] = local_rhs
         return result
 
     def project_solution_to_global(self, x: np.ndarray) -> np.ndarray:
         """The same as `project_rhs_to_global, but in the solution space."""
-        col_idx = np.concatenate(
-            [
-                self.global_dofs_col[j]
-                for i in self.active_groups[1]
-                for j in self.groups_to_blocks_col[i]
-            ]
-        )
+        col_idx = [
+            self.global_dofs_col[j]
+            for i in self.active_groups[1]
+            for j in self.groups_to_blocks_col[i]
+        ]
         total_size = sum(x.size for x in self.global_dofs_col)
         result = np.zeros(total_size)
+        if len(col_idx) == 0:
+            return result
+
+        col_idx = np.concatenate(col_idx)
         result[col_idx] = x
         return result
 
