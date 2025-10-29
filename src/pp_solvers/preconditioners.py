@@ -740,7 +740,7 @@ def _to_cell_ordering(J, group_lists: list[list[int]]):
         get_dofs_of_groups(J.groups_to_blocks_row, J.local_dofs_row, group)
         for group in group_lists
     ]
-    return np.row_stack(rows).ravel("F")
+    return np.vstack(rows).ravel("F")
 
 
 def get_dofs_of_groups(

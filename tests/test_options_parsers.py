@@ -345,7 +345,7 @@ def test_petsc_ksp_scheme(
     pattern_ksp = r"""KSP Object: 1 MPI process
 type: bcgs
 maximum iterations=120, initial guess is zero
-tolerances:  relative=5e-05, absolute=1e-50, divergence=10000.
+tolerances: relative=5e-05, absolute=1e-50, divergence=10000.
 right preconditioning
 using UNPRECONDITIONED norm type for convergence test
 """
