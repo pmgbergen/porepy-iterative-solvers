@@ -1,6 +1,8 @@
 FROM porepy/dev:latest
 
 # HOME should be inherited from the porepy image.
+# We do not pollute global environment with PETSC_DIR variable, used by PETSc. We pass
+# it manually when needed.
 ENV PETSC_SRC_DIR=${HOME}/petsc \
     PETSC_ARCH=arch-linux-c-opt \
     PETSC_INSTALL_DIR=${HOME}/petsc_dist
@@ -55,13 +57,28 @@ RUN echo "Configuring PETSc in $PETSC_SRC_DIR" && \
     echo "Building PETSc" && \
     make PETSC_DIR=$PETSC_SRC_DIR PETSC_ARCH=$PETSC_ARCH all
 
-# This command copies action 
-RUN make -j$(nproc) test && \
-    make install && \
+# make test -- runs all PETSc tests. This takes significant time ~1 hour on my machine,
+# which has 10 cores (12 logical processors). In my case, 103 (0.8%) tests failed. Not
+# sure why.
+# RUN make -j$(nproc) test
+
+# make clean -- removes .o files. Not doing this, as removing them would require a full
+# recompilation if something needs to be tested (e.g. make test).
+# RUN make clean
+
+# make install -- copies only the compiled PETSc runtime to PETSC_INSTALL_DIR folder.
+# make check -- runs a few tests after copying. Does not take much time. 
+RUN make install && \
     make -j$(nproc) PETSC_DIR=${PETSC_INSTALL_DIR} PETSC_ARCH="" check
 
 # Changing workdir to HOME.
 WORKDIR ${HOME}
 
 # Add petsc4py and mpi4py to PYTHONPATH
-ENV PYTHONPATH=${PYTHONPATH}:${PETSC_INSTALL_DIR}/lib
+ENV PYTHONPATH=${PYTHONPATH}:${PETSC_INSTALL_DIR}/lib \
+    PP_SOLVERS_DIR=${HOME}/pp_solvers
+
+
+RUN git clone --branch maint_updates https://github.com/pmgbergen/porepy-iterative-solvers.git $PP_SOLVERS_DIR && \
+    pip install -e $PP_SOLVERS_DIR && \
+    pytest $PP_SOLVERS_DIR
