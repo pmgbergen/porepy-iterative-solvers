@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      DOCKER_IMAGE: porepy/dev:latest
+      DOCKER_IMAGE: porepy/extended:latest
       TEST_BRANCH: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
 
     steps:
