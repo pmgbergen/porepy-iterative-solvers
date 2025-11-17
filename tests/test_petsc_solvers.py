@@ -11,7 +11,7 @@ from pp_solvers.petsc_solvers import PetscKrylovSolver, LinearSolverWithTransfor
 
 
 @pytest.fixture
-def sample_matrix() -> BlockLinearSystem:
+def sample_linear_system() -> BlockLinearSystem:
     J00 = [
         [2, -1, 0, 0, 0, 0],
         [-1, 2, -1, 0, 0, 0],
@@ -39,7 +39,7 @@ def sample_matrix() -> BlockLinearSystem:
 
 
 @pytest.fixture
-def ksp(sample_matrix: BlockLinearSystem) -> PETSc.KSP:
+def ksp(sample_linear_system: BlockLinearSystem) -> PETSc.KSP:
     ksp = PETSc.KSP().create()
     pp_solvers.insert_petsc_options(
         {
@@ -53,7 +53,7 @@ def ksp(sample_matrix: BlockLinearSystem) -> PETSc.KSP:
     )
     ksp.setFromOptions()
 
-    petsc_mat = pp_solvers.csr_to_petsc(sample_matrix.mat)
+    petsc_mat = pp_solvers.csr_to_petsc(sample_linear_system.mat)
     ksp.setOperators(petsc_mat, petsc_mat)
 
     yield ksp
@@ -64,13 +64,13 @@ def ksp(sample_matrix: BlockLinearSystem) -> PETSc.KSP:
 
 def test_petsc_krylov_solver(
     ksp: PETSc.KSP,
-    sample_matrix: BlockLinearSystem,
+    sample_linear_system: BlockLinearSystem,
 ):
     rhs = np.arange(12, dtype=float)
     solver = PetscKrylovSolver(ksp=ksp)
     result = solver.solve(rhs)
 
-    expected = spsolve(sample_matrix.mat, rhs)
+    expected = spsolve(sample_linear_system.mat, rhs)
     np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
 
 
@@ -78,19 +78,19 @@ def test_petsc_krylov_solver(
 @pytest.mark.parametrize("right", [True, False])
 def test_linear_transformed_solver(
     ksp: PETSc.KSP,
-    sample_matrix: BlockLinearSystem,
+    sample_linear_system: BlockLinearSystem,
     left: bool,
     right: bool,
 ):
     # Generating some transformation matrices.
     Qleft = None
     Qright = None
-    transformed_matrix = sample_matrix.copy()
+    transformed_matrix = sample_linear_system.copy()
     if left:
-        Qleft = sample_matrix.copy()
+        Qleft = sample_linear_system.copy()
         transformed_matrix.mat = Qleft.mat @ transformed_matrix.mat
     if right:
-        Qright = sample_matrix.copy()
+        Qright = sample_linear_system.copy()
         transformed_matrix.mat = transformed_matrix.mat @ Qright.mat
 
     # Informing PETSc about the transformed matrix.
@@ -105,8 +105,20 @@ def test_linear_transformed_solver(
     result = solver.solve(rhs)
 
     # Should return the non-transformed rhs, no matter what transformations we did.
-    expected = spsolve(sample_matrix.mat, rhs)
+    expected = spsolve(sample_linear_system.mat, rhs)
     np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
 
     # Manual teardown.
     petsc_mat.destroy()
+
+
+@pytest.mark.parametrize('groups', [[1], [1, 0]])
+def test_construct_is(sample_linear_system: BlockLinearSystem, groups: list[int]):
+    indexer = sample_linear_system.indexer
+    petsc_is = pp_solvers.construct_is(indexer=indexer, groups=groups)
+    
+    key = indexer.correct_validate_getitem_key(groups)
+    np.testing.assert_equal(petsc_is.array, indexer.get_dofs_of_groups(key)[0])
+    
+    # Manual teardown.
+    petsc_is.destroy()
