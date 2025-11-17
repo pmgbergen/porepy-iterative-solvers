@@ -59,7 +59,7 @@ _J22 = [
 
 
 @pytest.fixture
-def sample_matrix() -> BlockLinearSystem:
+def sample_linear_system() -> BlockLinearSystem:
     """The block matrix we use in all the tests. It contains one empty group."""
     return BlockLinearSystem(
         # The matrix is intentionally shuffled from the start, as we expect PorePy to
@@ -92,75 +92,130 @@ def sample_matrix() -> BlockLinearSystem:
         # Diagonal blocks are not square submatrices.
         {
             "submatrices": [[_J10, _J11], [_J00, _J01]],
-            "global_dofs_row": [[0, 1, 2, 3], [4, 5, 6]],
-            "global_dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
-            "groups_to_blocks_row": [[0], [1]],
-            "groups_to_blocks_col": [[0], [1]],
+            "dofs_row": [[0, 1, 2, 3], [4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "raises": True,
         },
-        # Block indices are inconsistent - too few.
+        # Too few dofs.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[0, 1, 2], [3, 4, 5]],
-            "global_dofs_col": [[0, 1, 2], [3, 4, 5]],
-            "groups_to_blocks_row": [[0], [1]],
-            "groups_to_blocks_col": [[0], [1]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5]],
+            "raises": True,
         },
-        # Block indices are inconsistent - too many.
+        # Too many dofs.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[0, 1, 2, 3], [4, 5, 6, 7]],
-            "global_dofs_col": [[0, 1, 2, 3], [4, 5, 6, 7]],
-            "groups_to_blocks_row": [[0], [1]],
-            "groups_to_blocks_col": [[0], [1]],
+            "dofs_row": [[0, 1, 2, 3], [4, 5, 6, 7]],
+            "dofs_col": [[0, 1, 2, 3], [4, 5, 6, 7]],
+            "raises": True,
         },
-        # Block indices are inconsistent - correct shape but garbage values.
+        # Correct shape but garbage values.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[1, 7, 123, 3], [3, 55, 66, 87]],
-            "global_dofs_col": [[643, 12, 42, 1], [312, 2, 32, 52]],
-            "groups_to_blocks_row": [[0], [1]],
-            "groups_to_blocks_col": [[0], [1]],
+            "dofs_row": [[1, 7, 123], [3, 55, 66, 87]],
+            "dofs_col": [[643, 12, 42], [312, 2, 32, 52]],
+            "raises": True,
         },
-        # Group indices are inconsistent - too few.
+        # Too few enabled groups.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
-            "global_dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
-            "groups_to_blocks_row": [[0]],
-            "groups_to_blocks_col": [[0]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "enabled_groups_row": [1],
+            "enabled_groups_col": [1],
+            "raises": True,
         },
-        # Group indices are inconsistent - too many.
+        # Too many enabled groups.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
-            "global_dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
-            "groups_to_blocks_row": [[0, 1, 2]],
-            "groups_to_blocks_col": [[0, 1, 2]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "enabled_groups_row": [0, 1, 2],
+            "enabled_groups_col": [0, 1, 2],
+            "raises": True,
         },
-        # Group indices are inconsistent - correct shape but garbage values.
+        # Correct number of enabled groups, but garbage values.
         {
             "submatrices": [[_J00, _J01], [_J10, _J11]],
-            "global_dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
-            "global_dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
-            "groups_to_blocks_row": [[0, 5]],
-            "groups_to_blocks_col": [[0, 5]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "enabled_groups_row": [0, 5],
+            "enabled_groups_col": [0, 5],
+            "raises": True,
+        },
+        # Just a normal matrix creation with all default parameters.
+        {
+            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "raises": False,
+        },
+        # Inconsistent rhs shape.
+        {
+            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "rhs": np.ones(8, dtype=float),
+            "raises": True,
+        },
+        # Inconsistent group names - too few.
+        {
+            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "group_names_row": ["a"] * 6,
+            "group_names_col": ["b"] * 6,
+            "raises": True,
+        },
+        # Inconsistent group names - too many.
+        {
+            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
+            "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
+            "group_names_row": ["a"] * 8,
+            "group_names_col": ["b"] * 8,
+            "raises": True,
         },
     ],
 )
-def test_bad_block_matrix_creation(params):
+def test_block_linear_system_creation(params):
     """This test examines invalid arguments passed to the block matrix constructor."""
     submatrices = params["submatrices"]
-    global_dofs_row = params["global_dofs_row"]
-    global_dofs_col = params["global_dofs_col"]
-    groups_to_blocks_row = params["groups_to_blocks_row"]
-    groups_to_blocks_col = params["groups_to_blocks_col"]
-    with pytest.raises(Exception):
+    dofs_row = params["dofs_row"]
+    dofs_col = params["dofs_col"]
+    raises = params["raises"]
+    rhs = params.get("rhs", [1] * 7)
+    enabled_groups_row = params.get("enabled_groups_row", None)
+    enabled_groups_col = params.get("enabled_groups_col", None)
+    group_names_row = params.get("group_names_row", None)
+    group_names_col = params.get("group_names_col", None)
+    if raises:
+        with pytest.raises(Exception):
+            return BlockLinearSystem(
+                mat=sp.block_array(submatrices).astype(float).tocsr(),
+                rhs=np.array(rhs, dtype=float),
+                indexer=LinearSystemIndexer(
+                    dofs_row=[np.array(x) for x in dofs_row],
+                    dofs_col=[np.array(x) for x in dofs_col],
+                    enabled_groups_row=enabled_groups_row,
+                    enabled_groups_col=enabled_groups_col,
+                    group_names_row=group_names_row,
+                    group_names_col=group_names_col,
+                ),
+            )
+    else:
         return BlockLinearSystem(
             mat=sp.block_array(submatrices).astype(float).tocsr(),
-            global_dofs_row=[np.array(x) for x in global_dofs_row],
-            global_dofs_col=[np.array(x) for x in global_dofs_col],
-            groups_to_blocks_row=groups_to_blocks_row,
-            groups_to_blocks_col=groups_to_blocks_col,
+            rhs=np.ones(7, dtype=float),
+            indexer=LinearSystemIndexer(
+                dofs_row=[np.array(x) for x in dofs_row],
+                dofs_col=[np.array(x) for x in dofs_col],
+                enabled_groups_row=enabled_groups_row,
+                enabled_groups_col=enabled_groups_col,
+                group_names_row=group_names_row,
+                group_names_col=group_names_col,
+            ),
         )
 
 
@@ -197,16 +252,16 @@ def test_bad_block_matrix_creation(params):
         {"index": slice(None, None, -1), "raises": True},
     ],
 )
-def test_shape_simple_index(sample_matrix: BlockLinearSystem, params):
+def test_shape_simple_index(sample_linear_system: BlockLinearSystem, params):
     """All the possible combinations of simple indexing, e.g. J[x]."""
     index: slice | int | list[int] = params["index"]
     raises: bool = params.get("raises", False)
     expected: tuple[int, int] | None = params.get("expected", None)
     if not raises:
-        assert sample_matrix[index].shape == expected, index
+        assert sample_linear_system[index].shape == expected, index
     else:
         with pytest.raises(Exception):
-            sample_matrix[index]
+            sample_linear_system[index]
 
 
 # We test indexing with the Cartesian product of these parameters for rows and cols.
@@ -241,7 +296,9 @@ PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX = [
 
 @pytest.mark.parametrize("params_row", PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX)
 @pytest.mark.parametrize("params_col", PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX)
-def test_shape_tuple_index(sample_matrix: BlockLinearSystem, params_row, params_col):
+def test_shape_tuple_index(
+    sample_linear_system: BlockLinearSystem, params_row, params_col
+):
     """All the possible combinations of tuple indexing, e.g. J[x, y]."""
     ind_row: slice | int | list[int] = params_row["index"]
     raises_row: bool = params_row.get("raises", False)
@@ -250,10 +307,13 @@ def test_shape_tuple_index(sample_matrix: BlockLinearSystem, params_row, params_
     raises_col: bool = params_col.get("raises", False)
     expected_col: int | None = params_col.get("expected", None)
     if not (raises_row or raises_col):
-        assert sample_matrix[ind_row, ind_col].shape == (expected_row, expected_col)
+        assert sample_linear_system[ind_row, ind_col].shape == (
+            expected_row,
+            expected_col,
+        )
     else:
         with pytest.raises(Exception):
-            sample_matrix[ind_row, ind_col]
+            sample_linear_system[ind_row, ind_col]
 
 
 @pytest.mark.parametrize(
@@ -290,13 +350,13 @@ def test_shape_tuple_index(sample_matrix: BlockLinearSystem, params_row, params_
         {"index": (1, slice(None, None, None)), "expected": [[_J10, _J11, _J12]]},
     ],
 )
-def test_slicing(sample_matrix: BlockLinearSystem, params):
+def test_slicing(sample_linear_system: BlockLinearSystem, params):
     """These test ensures that the sliced matrices exactly match the expectation."""
     index = params["index"]
     expected = params["expected"]
     expected = [[sp.csr_array(submat) for submat in row] for row in expected]
     expected = sp.block_array(expected).astype(float).toarray()
-    np.testing.assert_array_equal(sample_matrix[index].mat.toarray(), expected)
+    np.testing.assert_array_equal(sample_linear_system[index].mat.toarray(), expected)
 
 
 @pytest.mark.parametrize(
@@ -322,7 +382,7 @@ def test_slicing(sample_matrix: BlockLinearSystem, params):
         },
     ],
 )
-def test_nested_slicing(sample_matrix: BlockLinearSystem, params):
+def test_nested_slicing(sample_linear_system: BlockLinearSystem, params):
     """Tests that the slice of a slice works as expected. For some cases, second
     indexing is expected to fail.
 
@@ -332,8 +392,7 @@ def test_nested_slicing(sample_matrix: BlockLinearSystem, params):
     expected = params.get("expected", None)
     raises: bool = params.get("raises", False)
 
-    tmp = sample_matrix[index1]
-    print(tmp)
+    tmp = sample_linear_system[index1]
     if not raises:
         assert tmp[index2].shape == expected
     else:
@@ -382,7 +441,7 @@ def test_nested_slicing(sample_matrix: BlockLinearSystem, params):
         },
     ],
 )
-def test_setitem(sample_matrix: BlockLinearSystem, params):
+def test_setitem(sample_linear_system: BlockLinearSystem, params):
     """Tests that __setitem__ works as expected."""
     index = params["index"]
     modify_submatrices = params["modify_submatrices"]
@@ -407,21 +466,28 @@ def test_setitem(sample_matrix: BlockLinearSystem, params):
             expected_row.append(submat)
     expected = sp.block_array(expected).astype(float).toarray()
 
-    sample_matrix[index] = fill_value
-    np.testing.assert_array_equal(sample_matrix[:].mat.toarray(), expected)
+    sample_linear_system[index] = fill_value
+    np.testing.assert_array_equal(sample_linear_system[:].mat.toarray(), expected)
 
 
-def test_copy(sample_matrix: BlockLinearSystem):
-    copied_mat = sample_matrix.copy()
-    assert copied_mat.shape == sample_matrix.shape
-    np.testing.assert_array_equal(sample_matrix.mat.toarray(), copied_mat.mat.toarray())
-    assert sample_matrix.mat.data is not copied_mat.mat.data
+def test_copy(sample_linear_system: BlockLinearSystem):
+    copied_mat = sample_linear_system.copy()
+    assert copied_mat.shape == sample_linear_system.shape
+    np.testing.assert_array_equal(
+        sample_linear_system.mat.toarray(), copied_mat.mat.toarray()
+    )
+    assert sample_linear_system.mat.data is not copied_mat.mat.data
 
 
-def test_empty_container(sample_matrix: BlockLinearSystem):
-    empty_matrix = sample_matrix.empty_container()
-    assert empty_matrix.shape == sample_matrix.shape
+def test_print(sample_linear_system: BlockLinearSystem):
+    print(sample_linear_system)
+
+
+def test_empty_container(sample_linear_system: BlockLinearSystem):
+    empty_matrix = sample_linear_system.empty_container()
+    assert empty_matrix.shape == sample_linear_system.shape
     assert empty_matrix.mat.nnz == 0
+    assert np.all(empty_matrix.rhs == 0)
 
 
 @pytest.mark.parametrize(
@@ -430,38 +496,38 @@ def test_empty_container(sample_matrix: BlockLinearSystem):
         # Original matrix, nothing changes.
         {
             "index": [2, 1, 0],
-            "expected_local": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "expected_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # Full matrix, sorted groups.
         {
             "index": [0, 1, 2],
-            "expected_local": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # One row and one column, same as J[1, 1].
         {
             "index": [1],
-            "expected_local": [20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "expected_permuted": [20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # Repeated group index, same as J[[1, 1]].
         {
             "index": [1, 1],
-            "expected_local": [20, 21, 22, 23, 20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "expected_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # All rows, one column, same as J[:, 1]. Rhs should NOT be truncated.
         {
             "index": ([0, 1, 2], 1),
-            "expected_local": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # All columns, one row, same as J[1, :]. RHS should be truncated.
         {
             "index": (1, [0, 1, 2]),
-            "expected_local": [20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "expected_permuted": [20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # Empty group.
         {
@@ -473,13 +539,13 @@ def test_empty_container(sample_matrix: BlockLinearSystem):
                     2,
                 ],
             ),
-            "expected_local": [],
-            "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "expected_permuted": [],
+            "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
         },
     ],
 )
 def test_permute_left_vector_to_local_and_original(
-    sample_matrix: BlockLinearSystem, params
+    sample_linear_system: BlockLinearSystem, params
 ):
     """Tests projecting the left vector (rhs) to the permuted arrangement and the
     reverse transformation from it with `permute_left_vector_to_original`.
@@ -488,16 +554,16 @@ def test_permute_left_vector_to_local_and_original(
     # The original rhs is arranged for groups [2, 1, 0], same as the original matrix.
     # rhs original: [30, 31, 20, 21, 22, 23, 10, 11, 12]
     index = params["index"]
-    expected_local = params["expected_local"]
-    expected_global = params["expected_global"]
+    expected_permuted = params["expected_permuted"]
+    expected_original = params["expected_original"]
 
-    sample_matrix = sample_matrix[index]
+    sample_linear_system = sample_linear_system[index]
 
-    rhs_local = sample_matrix.rhs
-    np.testing.assert_array_equal(rhs_local, expected_local)
+    rhs_local = sample_linear_system.rhs
+    np.testing.assert_array_equal(rhs_local, expected_permuted)
 
-    rhs_back_to_global = sample_matrix.permute_left_vector_to_original(rhs_local)
-    np.testing.assert_array_equal(rhs_back_to_global, expected_global)
+    rhs_back_to_orig = sample_linear_system.permute_left_vector_to_original(rhs_local)
+    np.testing.assert_array_equal(rhs_back_to_orig, expected_original)
 
 
 @pytest.mark.parametrize(
@@ -506,71 +572,66 @@ def test_permute_left_vector_to_local_and_original(
         # Original matrix, nothing changes.
         {
             "index": [2, 1, 0],
-            "solution_local": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "solution_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # Full matrix, sorted groups.
         {
             "index": [0, 1, 2],
-            "solution_local": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # One row and one column, same as J[1, 1].
         {
             "index": [1],
-            "solution_local": [20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "solution_permuted": [20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # Repeated group index, same as J[[1, 1]].
         {
             "index": [1, 1],
-            "solution_local": [20, 21, 22, 23, 20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "solution_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # All rows, one column, same as J[:, 1]. Soultion should be truncated.
         {
             "index": ([0, 1, 2], 1),
-            "solution_local": [20, 21, 22, 23],
-            "expected_global": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+            "solution_permuted": [20, 21, 22, 23],
+            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
         },
         # All columns, one row, same as J[1, :]. Soultion should NOT be truncated.
         {
             "index": (1, [0, 1, 2]),
-            "solution_local": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_global": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+            "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
         },
         # Empty group.
         {
-            "index": (
-                [
-                    0,
-                    1,
-                    2,
-                ],
-                3,
-            ),
-            "solution_local": [],
-            "expected_global": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "index": ([0, 1, 2], 3),
+            "solution_permuted": [],
+            "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
         },
     ],
 )
-def test_permute_right_vector_to_original(sample_matrix: BlockLinearSystem, params):
+def test_permute_right_vector_to_original(
+    sample_linear_system: BlockLinearSystem, params
+):
     """Tests `permute_right_vector_to_original`. Results should be different from
     `permute_left_vector_to_original`, because the solution corresponds to the space
     defined by columns of the matrix, and the rhs - to the one defined by rows (Ax = b).
 
     """
     index = params["index"]
-    solution_local = params["solution_local"]
-    expected_global = params["expected_global"]
+    solution_permuted = params["solution_permuted"]
+    expected_original = params["expected_original"]
 
-    sample_matrix = sample_matrix[index]
-    solution_local = np.array(solution_local)
+    sample_linear_system = sample_linear_system[index]
+    solution_permuted = np.array(solution_permuted)
 
-    solution_back_to_global = sample_matrix.permute_right_vector_to_original(
-        solution_local
+    solution_back_to_global = sample_linear_system.permute_right_vector_to_original(
+        solution_permuted
     )
-    np.testing.assert_array_equal(solution_back_to_global, expected_global)
+    np.testing.assert_array_equal(solution_back_to_global, expected_original)
 
 
 @pytest.mark.parametrize(
@@ -608,7 +669,7 @@ def test_permute_right_vector_to_original(sample_matrix: BlockLinearSystem, para
         },
     ],
 )
-def test_set_zeros(sample_matrix: BlockLinearSystem, params):
+def test_set_zeros(sample_linear_system: BlockLinearSystem, params):
     index_row = params["index_row"]
     index_col = params["index_col"]
     modify_submatrices = params["modify_submatrices"]
@@ -633,10 +694,12 @@ def test_set_zeros(sample_matrix: BlockLinearSystem, params):
     expected = sp.block_array(expected).astype(float).toarray()
 
     # Rearranging the matrix a few times to make it more challenging.
-    sample_matrix = sample_matrix[[1, 2, 0], [2, 0, 1]][[2, 1, 0]][[0, 2, 1]]
+    sample_linear_system = sample_linear_system[[1, 2, 0], [2, 0, 1]][[2, 1, 0]][
+        [0, 2, 1]
+    ]
 
-    sample_matrix.set_zeros(group_row_idx=index_row, group_col_idx=index_col)
-    np.testing.assert_array_equal(sample_matrix[:].mat.toarray(), expected)
+    sample_linear_system.set_zeros(group_row_idx=index_row, group_col_idx=index_col)
+    np.testing.assert_array_equal(sample_linear_system[:].mat.toarray(), expected)
 
 
 @pytest.mark.parametrize(
@@ -681,13 +744,13 @@ def test_set_zeros(sample_matrix: BlockLinearSystem, params):
     ],
 )
 @pytest.mark.parametrize("additive", [False, True])
-def test_set_diagonal(sample_matrix: BlockLinearSystem, params, additive: bool):
+def test_set_diagonal(sample_linear_system: BlockLinearSystem, params, additive: bool):
     expected_diagonal_change = params["expected_diagonal_change"]
     fill_groups = params["fill_groups"]
     fill_values = params["fill_values"]
 
     # Generating the expected matrix.
-    expected_mat = sample_matrix[:]
+    expected_mat = sample_linear_system[:]
     if not additive:
         expected_mat[fill_groups] = (
             expected_mat[fill_groups].mat
@@ -695,9 +758,9 @@ def test_set_diagonal(sample_matrix: BlockLinearSystem, params, additive: bool):
         )
     expected_mat.mat += sp.diags(np.array(expected_diagonal_change))
 
-    sample_matrix.set_diagonal(
+    sample_linear_system.set_diagonal(
         groups=fill_groups, values=np.array(fill_values), additive=additive
     )
     np.testing.assert_array_equal(
-        sample_matrix[:].mat.toarray(), expected_mat.mat.toarray()
+        sample_linear_system[:].mat.toarray(), expected_mat.mat.toarray()
     )

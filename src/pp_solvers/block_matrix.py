@@ -672,6 +672,7 @@ def validate_block_matrix(bmat: BlockLinearSystem) -> None:
         ValueError: If the groups (submatrices) on the diagonal are not square.
         ValueError: If the number of groups is different from the number of group names.
         ValueError: If the matrix shape is inconsistent with the indexer.
+        ValueError: If the matrix shape is inconsistent with the rhs shape.
     """
     # Checking that the disabled groups are empty and the diagonal enabled groups are
     # square matrices.
@@ -706,15 +707,30 @@ def validate_block_matrix(bmat: BlockLinearSystem) -> None:
     # Making sure that the sum of indexed shapes matches the original matrix shape.
     shape_sum_row = 0
     shape_sum_col = 0
+    expected_shape = bmat.shape
     for dofs_row in indexer.dofs_row:
         shape_sum_row += len(dofs_row)
+        if np.any(dofs_row > expected_shape[0]):
+            raise ValueError(
+                f"Bad DoFs index for a matrix with shape {expected_shape}."
+            )
     for dofs_col in indexer.dofs_col:
         shape_sum_col += len(dofs_col)
-    expected_shape = (shape_sum_row, shape_sum_col)
-    if bmat.shape != expected_shape:
+        if np.any(dofs_col > expected_shape[1]):
+            raise ValueError(
+                f"Bad DoFs index for a matrix with shape {expected_shape}."
+            )
+    result_shape = (shape_sum_row, shape_sum_col)
+    if result_shape != expected_shape:
         raise ValueError(
-            f"Matrix shape {bmat.shape} is inconsistent with the groups shape "
-            f"{expected_shape}."
+            f"Matrix shape {expected_shape} is inconsistent with the groups shape "
+            f"{result_shape}."
+        )
+
+    # Checking the RHS.
+    if bmat.rhs.shape[0] != bmat.mat.shape[0]:
+        raise ValueError(
+            f"Inconsistent RHS shape: {bmat.rhs.shape = }, {bmat.mat.shape = }."
         )
 
 
