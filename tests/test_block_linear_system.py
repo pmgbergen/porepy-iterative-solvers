@@ -192,7 +192,7 @@ def test_block_linear_system_creation(params):
     group_names_col = params.get("group_names_col", None)
     if raises:
         with pytest.raises(Exception):
-            return BlockLinearSystem(
+            _ = BlockLinearSystem(
                 mat=sp.block_array(submatrices).astype(float).tocsr(),
                 rhs=np.array(rhs, dtype=float),
                 indexer=LinearSystemIndexer(
@@ -205,7 +205,7 @@ def test_block_linear_system_creation(params):
                 ),
             )
     else:
-        return BlockLinearSystem(
+        _ = BlockLinearSystem(
             mat=sp.block_array(submatrices).astype(float).tocsr(),
             rhs=np.ones(7, dtype=float),
             indexer=LinearSystemIndexer(
@@ -764,3 +764,73 @@ def test_set_diagonal(sample_linear_system: BlockLinearSystem, params, additive:
     np.testing.assert_array_equal(
         sample_linear_system[:].mat.toarray(), expected_mat.mat.toarray()
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def matplotlib_use_dummy_backend():
+    import matplotlib
+
+    matplotlib.use("template")
+
+
+# Ignoring a warning that we cannot show matplotlib figures.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*FigureCanvasTemplate is non-interactive.*:UserWarning"
+)
+
+
+@pytest.mark.parametrize("annot", [True, False])
+@pytest.mark.parametrize("mean", [True, False])
+def test_plot_max(sample_linear_system: BlockLinearSystem, annot: bool, mean: bool):
+    sample_linear_system.plot_max(annot=annot, mean=mean)
+
+
+@pytest.mark.parametrize("log", [True, False])
+@pytest.mark.parametrize("show", [True, False])
+@pytest.mark.parametrize("aspect", ["auto", "equal"])
+def test_matshow(
+    sample_linear_system: BlockLinearSystem, log: bool, show: bool, aspect
+):
+    sample_linear_system.matshow(log=log, show=show, threshold=1e-5, aspect=aspect)
+
+
+@pytest.mark.parametrize("log", [True, False])
+@pytest.mark.parametrize("show", [True, False])
+def test_matshow_groups(sample_linear_system: BlockLinearSystem, log: bool, show: bool):
+    sample_linear_system.matshow_groups(log=log, show=show)
+
+
+@pytest.mark.parametrize("show", [True, False])
+@pytest.mark.parametrize("aspect", ["auto", "equal"])
+@pytest.mark.parametrize("marker", [".", "+", None])
+@pytest.mark.parametrize("color", [True, False])
+@pytest.mark.parametrize("hatch", [True, False])
+@pytest.mark.parametrize("draw_marker", [True, False])
+def test_color_spy(
+    sample_linear_system: BlockLinearSystem,
+    show: bool,
+    aspect,
+    marker: str,
+    color: bool,
+    draw_marker: bool,
+    hatch: bool,
+):
+    sample_linear_system.color_spy(
+        show=show,
+        aspect=aspect,
+        marker=marker,
+        color=color,
+        hatch=hatch,
+        draw_marker=draw_marker,
+        alpha=0.4,
+    )
+
+
+@pytest.mark.parametrize("log", [True, False])
+def test_plot_solution(sample_linear_system: BlockLinearSystem, log: bool):
+    sample_linear_system.plot_solution(sample_linear_system.rhs, log=log)
+
+
+@pytest.mark.parametrize("log", [True, False])
+def test_plot_rhs(sample_linear_system: BlockLinearSystem, log: bool):
+    sample_linear_system.plot_rhs(sample_linear_system.rhs, log=log)

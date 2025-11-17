@@ -6,11 +6,9 @@ import numpy as np
 import scipy.sparse
 from scipy.sparse import coo_matrix, csr_matrix, spmatrix
 from numpy.typing import DTypeLike
-# import matplotlib
-# import seaborn as sns
-# from matplotlib import pyplot as plt
-# from itertools import product
-# from pp_solvers.plot_matrix import color_spy, plot_mat
+
+from pp_solvers.plot_linear_system import color_spy, matshow, plot_max, plot_vector
+
 
 __all__ = ["BlockLinearSystem"]
 
@@ -490,178 +488,100 @@ class BlockLinearSystem:
 
     # Visualization
 
-    # def get_active_local_dofs(self, grouped=False):
-    #     def inner(
-    #         local_dofs, groups_to_blocks, active_groups
-    #     ) -> list[list[np.ndarray]]:
-    #         # YZ: No idea what's going on here.
-    #         data = []
-    #         for active_group in active_groups:
-    #             group_i = groups_to_blocks[active_group]
-    #             group_data = []
-    #             for i in group_i:
-    #                 dofs = local_dofs[i]
-    #                 if dofs is not None:
-    #                     group_data.append(dofs)
-    #             if len(group_data) > 0:
-    #                 data.append(group_data)
-    #         return data
+    def color_spy(
+        self,
+        show=True,
+        aspect: Literal["equal", "auto"] = "equal",
+        marker=None,
+        color=True,
+        hatch=False,
+        draw_marker=True,
+        alpha=0.3,
+    ):
+        """Draws a sparse matrix stencil and colors the rows and columns to distinguish
+        different groups.
 
-    #     row_idx = inner(
-    #         self.local_dofs_row, self.groups_to_blocks_row, self.active_groups[0]
-    #     )
-    #     col_idx = inner(
-    #         self.local_dofs_col, self.groups_to_blocks_col, self.active_groups[1]
-    #     )
-    #     if not grouped:
-    #         # Spells below flatten a list of lists into a single list.
-    #         row_idx = [y for x in row_idx for y in x]
-    #         col_idx = [y for x in col_idx for y in x]
-    #     else:
-    #         row_idx = [np.concatenate(x) for x in row_idx]
-    #         col_idx = [np.concatenate(x) for x in col_idx]
-    #     return row_idx, col_idx
+        Parameters:
+            show: Whether to call `plt.show()`.
+            aspect: Passed to `plt.spy()`. "auto" can be useful if the aspect ratio is
+                too high. Otherwise, "equal" is better.
+            marker: Which marker to use for the matrix stencil. Default value changes
+                based on the matrix size.
+            color: Whether to color the background.
+            hatch: Whether to hatch the background.
+            draw_marker: If not, only colors / hatches the background.
+            alpha: Background transparency.
 
-    # def get_active_group_names(self):
-    #     def inner(group_names, active_groups):
-    #         if group_names is not None:
-    #             names = [
-    #                 f"{i}: {group_names[i]}" if group_names[i] != "" else str(i)
-    #                 for i in active_groups
-    #             ]
-    #         else:
-    #             names = active_groups
-    #         return names
+        """
+        color_spy(
+            bmat=self,
+            show=show,
+            aspect=aspect,
+            marker=marker,
+            alpha=alpha,
+            color=color,
+            hatch=hatch,
+            draw_marker=draw_marker,
+        )
 
-    #     row_names = inner(self.group_names_row, self.active_groups[0])
-    #     col_names = inner(self.group_names_col, self.active_groups[1])
-    #     return row_names, col_names
+    def matshow(
+        self,
+        log=True,
+        show=True,
+        threshold: float = 1e-30,
+        aspect: Literal["equal", "auto"] = "equal",
+    ):
+        """Displays the values of a sparse matrix. Converts it to a dense matrix, so
+        should not be called for large matrices.
 
-    # def color_spy(
-    #     self,
-    #     groups=True,
-    #     show=True,
-    #     aspect: Literal["equal", "auto"] = "equal",
-    #     marker=None,
-    #     color=True,
-    #     hatch=False,
-    #     draw_marker=True,
-    #     alpha=0.3,
-    # ):
-    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-    #     if not groups:
-    #         row_names = col_names = None
-    #     else:
-    #         row_names, col_names = self.get_active_group_names()
-    #     color_spy(
-    #         self.mat,
-    #         row_idx,
-    #         col_idx,
-    #         row_names=row_names,
-    #         col_names=col_names,
-    #         show=show,
-    #         aspect=aspect,
-    #         marker=marker,
-    #         alpha=alpha,
-    #         color=color,
-    #         hatch=hatch,
-    #         draw_marker=draw_marker,
-    #     )
+        Parameters:
+            log: Whether to use the log scale.
+            show: Whether to call `plt.show()`.
+            threshold: Does not display the values with `abs(x) < theshold`.
+            aspect: Passed to `plt.matshow()`. "auto" can be useful if the aspect ratio
+            is too high. Otherwise, "equal" is better.
 
-    # def matshow(
-    #     self,
-    #     log=True,
-    #     show=True,
-    #     threshold: float = 1e-30,
-    #     aspect: Literal["equal", "auto"] = "equal",
-    # ):
-    #     plot_mat(self.mat, log=log, show=show, threshold=threshold, aspect=aspect)
+        """
+        matshow(self.mat, log=log, show=show, threshold=threshold, aspect=aspect)
 
-    # def matshow_blocks(self, log=True, show=True, groups=True):
-    #     self.matshow(log=log, show=False)
-    #     self.color_spy(
-    #         show=show, groups=groups, color=False, hatch=True, draw_marker=False
-    #     )
+    def matshow_groups(self, log=True, show=True):
+        """The combination of `matshow` and `color_spy`. Shows the values in the matrix
+        and hatches the background to see different groups.
 
-    # def plot_max(
-    #     self,
-    #     groups=True,
-    #     annot=True,
-    #     mean=False,
-    # ):
-    #     # It should be moved
-    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-    #     data = []
+        Parameters:
+            log: Whether to use the log scale.
+            show: Whether to call `plt.show()`.
 
-    #     for row in row_idx:
-    #         row_data = []
-    #         for col in col_idx:
-    #             ind_i, ind_j = np.meshgrid(
-    #                 row, col, sparse=True, indexing="ij", copy=False
-    #             )
-    #             submat = self.mat[ind_i, ind_j]
-    #             if submat.data.size == 0:
-    #                 row_data.append(np.nan)
-    #             else:
-    #                 if not mean:
-    #                     row_data.append(abs(submat).max())
-    #                 else:
-    #                     row_data.append(abs(submat).mean())
-    #         data.append(row_data)
+        """
+        self.matshow(log=log, show=False)
+        self.color_spy(show=show, color=False, hatch=True, draw_marker=False)
 
-    #     if groups:
-    #         y_tick_labels, x_tick_labels = self.get_active_group_names()
-    #     else:
-    #         y_tick_labels = x_tick_labels = "auto"
+    def plot_max(self, annot=True, mean=False):
+        """Displays a table, where each cell represents a matrix group. Useful to get
+        the idea about the groups and which of them are not empty.
 
-    #     ax = plt.gca()
-    #     sns.heatmap(
-    #         data=np.array(data),
-    #         square=False,
-    #         annot=annot,
-    #         norm=matplotlib.colors.LogNorm(),
-    #         fmt=".1e",
-    #         xticklabels=x_tick_labels,
-    #         yticklabels=y_tick_labels,
-    #         ax=ax,
-    #         linewidths=0.01,
-    #         linecolor="grey",
-    #         cbar=False,
-    #         cmap=sns.color_palette("coolwarm", as_cmap=True),
-    #     )
+        Parameters:
+            annot: Display the aggregated max / mean value for each cell.
+            mean: Whether to show the mean value. Otherwise, shows the abs(max) value.
 
-    # def color_left_vector(
-    #     self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None
-    # ):
-    #     y_tick_labels, x_tick_labels = self.get_active_group_names()
-    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-    #     row_names = y_tick_labels
-    #     alpha = 0.3
+        """
+        plot_max(bmat=self, annot=annot, mean=mean)
 
-    #     # this repeats the code of color_spy()
-    #     row_sep = [0]
-    #     for row in row_idx:
-    #         row_sep.append(row[-1] + 1)
-    #     row_sep = sorted(row_sep)
+    def plot_solution(self, permuted_solution, log: bool = True):
+        """Displays a solution vector and colors the background to see different groups.
 
-    #     if row_names is None:
-    #         row_names = list(range(len(row_sep) - 1))
+        Parameters:
+            permuted_solution: The solution vector, in the same arrangement as this
+                block linear system object.
+            log: Whether to use the log scale.
 
-    #     ax = plt.gca()
-    #     row_label_pos = []
-    #     for i in range(len(row_names)):
-    #         ystart, yend = row_sep[i : i + 2]
-    #         row_label_pos.append(ystart + (yend - ystart) / 2)
-    #         kwargs = {}
-    #         kwargs["facecolor"] = f"C{i}"
-    #         plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, kwargs=kwargs)
-    #     ax.xaxis.set_ticks(row_label_pos)
-    #     ax.set_xticklabels(row_names, rotation=45)
-    #     if log:
-    #         local_rhs = abs(local_rhs)
-    #         plt.yscale("log")
+        """
+        plot_vector(bmat=self, vec=permuted_solution, side="right", log=log)
 
-    #     plt.plot(local_rhs, label=label)
+    def plot_rhs(self, permuted_rhs: Optional[np.ndarray] = None, log: bool = True):
+        if permuted_rhs is None:
+            permuted_rhs = self.rhs
+        plot_vector(bmat=self, vec=permuted_rhs, side="left", log=log)
 
 
 def validate_block_matrix(bmat: BlockLinearSystem) -> None:
@@ -675,7 +595,7 @@ def validate_block_matrix(bmat: BlockLinearSystem) -> None:
         ValueError: If the matrix shape is inconsistent with the rhs shape.
     """
     # Checking that the disabled groups are empty and the diagonal enabled groups are
-    # square matrices.
+    # square matrices. First, preparing the data structures for this.
     indexer = bmat.indexer
     is_enabled_group_row = [False] * len(indexer.dofs_row)
     for i in indexer.enabled_groups_row:
@@ -683,7 +603,7 @@ def validate_block_matrix(bmat: BlockLinearSystem) -> None:
     is_enabled_group_col = [False] * len(indexer.dofs_col)
     for i in indexer.enabled_groups_col:
         is_enabled_group_col[i] = True
-
+    # Then, perform the check.
     for i in range(len(indexer.dofs_row)):
         if not is_enabled_group_row[i] and len(indexer.dofs_row[i]) != 0:
             raise ValueError(f"Disabled row group {i} has nonzero size.")
