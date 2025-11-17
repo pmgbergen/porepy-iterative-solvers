@@ -6,7 +6,7 @@ from scipy.sparse.linalg import spsolve
 
 import pp_solvers
 from pp_solvers import BlockLinearSystem
-from pp_solvers.block_matrix import LinearSystemIndexer
+from pp_solvers.block_linear_system import LinearSystemIndexer
 from pp_solvers.petsc_solvers import PetscKrylovSolver, LinearSolverWithTransformations
 
 

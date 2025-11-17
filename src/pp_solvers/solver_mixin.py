@@ -11,7 +11,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 
-from .block_matrix import (
+from .block_linear_system import (
     BlockLinearSystem,
     LinearSystemIndexer,
     concatenate_dof_indices,

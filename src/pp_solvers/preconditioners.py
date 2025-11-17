@@ -12,7 +12,7 @@ from pp_solvers.equation_variable_groups import EquationNames
 from pp_solvers.fixed_stress import make_fs_analytical_slow_new
 from pp_solvers.petsc_utils import csr_to_petsc
 from pp_solvers.petsc_solvers import PcPythonPermutation
-from pp_solvers.block_matrix import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem
 
 if TYPE_CHECKING:
     from pp_solvers.dof_manager import DofManager

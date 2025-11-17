@@ -6,7 +6,7 @@ import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
 
-from pp_solvers.block_matrix import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.petsc_utils import (
     clear_petsc_options,

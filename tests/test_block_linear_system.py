@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from pp_solvers.block_matrix import BlockLinearSystem, LinearSystemIndexer
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
 
 # The submatrices of the tested matrix are defined globally to generate tests.

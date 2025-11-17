@@ -7,7 +7,7 @@ import petsc4py
 import scipy.sparse
 from petsc4py import PETSc
 
-from pp_solvers.block_matrix import LinearSystemIndexer
+from pp_solvers.block_linear_system import LinearSystemIndexer
 
 # This is the place where the user has a change to pass command line options to petsc.
 # Before calling init, all petsc objects are unavailable, so this is a reasonable place

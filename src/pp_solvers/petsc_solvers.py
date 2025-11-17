@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 from petsc4py import PETSc
 
-from pp_solvers.block_matrix import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem
 
 
 class PetscKrylovSolver:

@@ -2,7 +2,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 
-from .block_matrix import BlockLinearSystem
+from .block_linear_system import BlockLinearSystem
 
 
 def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix:
