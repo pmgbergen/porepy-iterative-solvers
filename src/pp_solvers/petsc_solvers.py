@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 from petsc4py import PETSc
 
-from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.block_matrix import BlockLinearSystem
 
 
 class PetscKrylovSolver:
@@ -65,11 +65,11 @@ class LinearSolverWithTransformations:
     def __init__(
         self,
         inner: PetscKrylovSolver,
-        Qleft: Optional[BlockMatrixStorage] = None,
-        Qright: Optional[BlockMatrixStorage] = None,
+        Qleft: Optional[BlockLinearSystem] = None,
+        Qright: Optional[BlockLinearSystem] = None,
     ):
-        self.Qleft: BlockMatrixStorage | None = Qleft
-        self.Qright: BlockMatrixStorage | None = Qright
+        self.Qleft: BlockLinearSystem | None = Qleft
+        self.Qright: BlockLinearSystem | None = Qright
         self.inner: PetscKrylovSolver = inner
         self.ksp = inner.ksp
 

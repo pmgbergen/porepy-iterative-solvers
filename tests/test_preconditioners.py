@@ -5,6 +5,7 @@ from porepy.applications.test_utils.models import add_mixin
 from scipy.sparse.linalg import spsolve
 
 import pp_solvers
+from pp_solvers.solver_mixin import IterativeSolverMixin
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -58,8 +59,8 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
     return model
 
 
-def test_solve_linear_system(model: pp.PorePyModel):
-    model.rhs_reordered[:] = 1
+def test_solve_linear_system(model: IterativeSolverMixin):
+    model.bmat.rhs[:] = 1
     result = model.solve_linear_system()
     mat, rhs = model.linear_system
     rhs[:] = 1

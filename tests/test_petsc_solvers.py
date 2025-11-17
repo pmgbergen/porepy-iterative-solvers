@@ -5,12 +5,13 @@ from petsc4py import PETSc
 from scipy.sparse.linalg import spsolve
 
 import pp_solvers
-from pp_solvers import BlockMatrixStorage
+from pp_solvers import BlockLinearSystem
+from pp_solvers.block_matrix import LinearSystemIndexer
 from pp_solvers.petsc_solvers import PetscKrylovSolver, LinearSolverWithTransformations
 
 
 @pytest.fixture
-def sample_matrix() -> BlockMatrixStorage:
+def sample_matrix() -> BlockLinearSystem:
     J00 = [
         [2, -1, 0, 0, 0, 0],
         [-1, 2, -1, 0, 0, 0],
@@ -27,17 +28,18 @@ def sample_matrix() -> BlockMatrixStorage:
         ]
     )
     dofs = [np.array(x) for x in [[0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11]]]
-    return BlockMatrixStorage(
+    return BlockLinearSystem(
         mat=J,
-        global_dofs_row=dofs,
-        global_dofs_col=dofs,
-        groups_to_blocks_row=[[0], [1]],
-        groups_to_blocks_col=[[0], [1]],
+        rhs=np.arange(12, dtype=float) + 1,
+        indexer=LinearSystemIndexer(
+            dofs_row=dofs,
+            dofs_col=dofs,
+        )
     )
 
 
 @pytest.fixture
-def ksp(sample_matrix: BlockMatrixStorage) -> PETSc.KSP:
+def ksp(sample_matrix: BlockLinearSystem) -> PETSc.KSP:
     ksp = PETSc.KSP().create()
     pp_solvers.insert_petsc_options(
         {
@@ -62,7 +64,7 @@ def ksp(sample_matrix: BlockMatrixStorage) -> PETSc.KSP:
 
 def test_petsc_krylov_solver(
     ksp: PETSc.KSP,
-    sample_matrix: BlockMatrixStorage,
+    sample_matrix: BlockLinearSystem,
 ):
     rhs = np.arange(12, dtype=float)
     solver = PetscKrylovSolver(ksp=ksp)
@@ -76,7 +78,7 @@ def test_petsc_krylov_solver(
 @pytest.mark.parametrize("right", [True, False])
 def test_linear_transformed_solver(
     ksp: PETSc.KSP,
-    sample_matrix: BlockMatrixStorage,
+    sample_matrix: BlockLinearSystem,
     left: bool,
     right: bool,
 ):

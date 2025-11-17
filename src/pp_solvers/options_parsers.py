@@ -6,10 +6,11 @@ import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
 
-from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.block_matrix import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
+    construct_is,
     csr_to_petsc,
     insert_petsc_options,
 )
@@ -43,7 +44,7 @@ class MultiPhysicsPreconditioner:
 
     def configure(
         self,
-        bmat: BlockMatrixStorage,
+        bmat: BlockLinearSystem,
         pc: PETSc.PC,  # PC comes from ksp or similar
         user_options: dict | None = None,
         precond_list: list[SinglePhysicsPreconditioner] | None = None,
@@ -160,28 +161,28 @@ class MultiPhysicsPreconditioner:
     def _parse_fieldsplit_pc(
         self,
         precond_list,
-        bmat: BlockMatrixStorage,
+        bmat: BlockLinearSystem,
         pc: PETSc.PC,
         prefix: str,
         tagged_options: dict | None = None,
     ):
         dof_manager = self._dof_manager
-
         elim_precond = precond_list[0]
-
-        elim_group = dof_manager.blocks_of_solver(elim_precond)
-        keep_group = []
-        for i in range(1, len(precond_list)):
-            keep_group += dof_manager.blocks_of_solver(precond_list[i])
-
-        empty_bmat = bmat.empty_container()[elim_group + keep_group]
-
         block_size = 1 if elim_precond.unit_block_size else self._nd
 
-        # Get the IS for the group, but only if complement is not None.
-        is_elim, is_keep = self._dof_manager.petsc_is(
-            elim_precond, precond_list[1:], empty_bmat
-        )
+        # Collecting two lists of groups. One for the current groups to be elimitated,
+        # the other for the remaining groups to be kept - the Schur complement for the
+        # current groups.
+        elim_groups = dof_manager.blocks_of_solver(elim_precond)
+        keep_groups = []
+        for group in precond_list[1:]:
+            keep_groups.extend(dof_manager.blocks_of_solver(group))
+
+        # Constructing PETSc IS (index set) objects, corresponding to these two groups.
+        indexer = bmat.empty_container()[elim_groups + keep_groups].indexer
+        is_elim = construct_is(indexer, groups=elim_groups)
+        is_keep = construct_is(indexer, groups=keep_groups)
+
         is_elim.setBlockSize(block_size)
         elim_tag = elim_precond.tag
         keep_tag = elim_precond.complement_tag
@@ -194,7 +195,7 @@ class MultiPhysicsPreconditioner:
         # for hydromechanical problems is applied. Note to self: Need to send in
         # all remaining groups to the inverter to make sure the returned matrix is
         # correct.
-        inverter = elim_precond.inverter(self._model, dof_manager, keep_group)
+        inverter = elim_precond.inverter(self._model, dof_manager, keep_groups)
         if inverter is not None:
             S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
             petsc_stab = inverter(bmat)
@@ -259,7 +260,7 @@ class PetscKSPScheme:
         """Return the groups of the preconditioner."""
         return self.preconditioner.get_groups()
 
-    def make_solver(self, mat_orig: BlockMatrixStorage, options: dict | None = None):
+    def make_solver(self, mat_orig: BlockLinearSystem, options: dict | None = None):
         # Construct a PETSc matrix from the scipy matrix.
         # TODO: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
@@ -312,7 +313,7 @@ class LinearTransformedScheme:
         return self.inner.get_groups()
 
     def make_solver(
-        self, mat_orig: BlockMatrixStorage, options: dict | None = None
+        self, mat_orig: BlockLinearSystem, options: dict | None = None
     ) -> PetscKrylovSolver | LinearSolverWithTransformations:
         bmat = mat_orig[:]
 

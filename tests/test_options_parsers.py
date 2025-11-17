@@ -16,7 +16,7 @@ from petsc4py import PETSc
 from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
-from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.block_matrix import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.options_parsers import (
     LinearTransformedScheme,
@@ -102,7 +102,7 @@ def dof_manager(
 
 
 @pytest.fixture
-def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockMatrixStorage:
+def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockLinearSystem:
     bmat = model.bmat
     contact = dof_manager.identify_contact_group()
     if contact != -1:
@@ -111,7 +111,7 @@ def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockMatrixStora
 
 
 @pytest.fixture
-def pc(jacobian: BlockMatrixStorage) -> PETSc.PC:
+def pc(jacobian: BlockLinearSystem) -> PETSc.PC:
     petsc_mat = pp_solvers.csr_to_petsc(jacobian.mat)
     pc = PETSc.PC().create()
     pc.setOperators(petsc_mat, petsc_mat)
@@ -127,7 +127,7 @@ def pc(jacobian: BlockMatrixStorage) -> PETSc.PC:
 @pytest.fixture
 def petsc_stdout(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockMatrixStorage,
+    jacobian: BlockLinearSystem,
     pc: PETSc.PC,
     model: pp.PorePyModel,
     dof_manager: DofManager,
@@ -275,7 +275,7 @@ def test_petsc_options(petsc_stdout: str, patterns_to_compare):
 
 def test_pass_user_options(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockMatrixStorage,
+    jacobian: BlockLinearSystem,
     pc: PETSc.PC,
     model: pp.PorePyModel,
     dof_manager: DofManager,
@@ -314,7 +314,7 @@ def test_pass_user_options(
 
 def test_petsc_ksp_scheme(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockMatrixStorage,
+    jacobian: BlockLinearSystem,
     model: pp.PorePyModel,
     dof_manager: DofManager,
     solvers: list[SinglePhysicsPreconditioner],
@@ -356,7 +356,7 @@ using UNPRECONDITIONED norm type for convergence test
 @pytest.mark.parametrize("left", [True, False])
 @pytest.mark.parametrize("right", [True, False])
 def test_linear_transformed_scheme(
-    jacobian: BlockMatrixStorage, left: bool, right: bool
+    jacobian: BlockLinearSystem, left: bool, right: bool
 ):
     # Sorting the blocks in the matrix, same as it is done in the solver code.
     jacobian = jacobian[:]

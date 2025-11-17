@@ -2,152 +2,158 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-import matplotlib
 import numpy as np
 import scipy.sparse
-import seaborn as sns
-from matplotlib import pyplot as plt
 from scipy.sparse import coo_matrix, csr_matrix, spmatrix
-from itertools import product
+from numpy.typing import DTypeLike
+# import matplotlib
+# import seaborn as sns
+# from matplotlib import pyplot as plt
+# from itertools import product
+# from pp_solvers.plot_matrix import color_spy, plot_mat
 
-from pp_solvers.plot_matrix import color_spy, plot_mat
-
-__all__ = ["BlockMatrixStorage"]
+__all__ = ["BlockLinearSystem"]
 
 
-class BlockMatrixStorage:
-    """Storage class for block matrices with utility functions for indexing.
-
-    The block matrix bridges three different levels of indexing:
-    - The global indexes. These run over all rows and columns of the global matrix.
-    - The block indices. Each of these represents an equation (row) or variable (column)
-        defined on a geometric entity (e.g., a subdomain or an interface).
-    - Groups of blocks. These are collections of blocks that are treated together in the
-        solution process. For instance, a group can be all the blocks corresponding to
-        fracture contact mechanics (on all fracture subdomains), or the mass
-        conservation equation stated on all subdomains. Similar examples can be given
-        for variables.
-
-    """
+class LinearSystemIndexer:
+    """This class bookkeeps the information about row/column degrees of freedom of
+    groups of a block linear system."""
 
     def __init__(
         self,
-        mat: csr_matrix,
-        global_dofs_row: list[np.ndarray],
-        global_dofs_col: list[np.ndarray],
-        groups_to_blocks_row: list[list[int]],
-        groups_to_blocks_col: list[list[int]],
-        local_dofs_row: Optional[list[np.ndarray]] = None,
-        local_dofs_col: Optional[list[np.ndarray]] = None,
-        active_groups_row: Optional[list[int]] = None,
-        active_groups_col: Optional[list[int]] = None,
+        dofs_row: list[np.ndarray],
+        dofs_col: list[np.ndarray],
+        original_dofs_row: Optional[list[np.ndarray]] = None,
+        original_dofs_col: Optional[list[np.ndarray]] = None,
         group_names_row: Optional[list[str]] = None,
         group_names_col: Optional[list[str]] = None,
-        validate_input: bool = True,
-    ):
-        self.mat: csr_matrix = mat
-        """The matrix itself."""
+        enabled_groups_row: Optional[list[int]] = None,
+        enabled_groups_col: Optional[list[int]] = None,
+    ) -> None:
+        assert len(dofs_row) == len(dofs_col)
+        self.dofs_row: list[np.ndarray] = dofs_row
+        """List of row indices of a block linear systems. i-th element is an array of
+        indices that points to the rows of a linear system, corresponding to i-th group.
 
-        self.groups_to_blocks_row: list[list[int]] = groups_to_blocks_row
-        """The outer list is the different equation groups specified for the matrix.
-        The inner list is the blocks that belong to each equation group."""
+        """
+        self.dofs_col: list[np.ndarray] = dofs_col
+        """List of column indices of a block linear systems. i-th element is an array of
+        indices that points to the columns of a linear system, corresponding to i-th
+        group.
 
-        self.groups_to_blocks_col: list[list[int]] = groups_to_blocks_col
-        """The outer list is the different variable groups specified for the matrix.
-        The inner list is the blocks that belong to each variable group."""
+        """
 
-        self.group_names_row: Optional[list[str]] = group_names_row
+        if enabled_groups_row is None:
+            enabled_groups_row = list(range(len(dofs_row)))
+        if enabled_groups_col is None:
+            enabled_groups_col = list(range(len(dofs_col)))
+        self.enabled_groups_row: list[int] = enabled_groups_row
+        """List of row groups that are enabled. A group is enabled by default, but can
+        be disabled if we slice a submatrix without this group. Also indicates the order
+        of row permutations.
+ 
+        """
+        self.enabled_groups_col: list[int] = enabled_groups_col
+        """List of column groups that are enabled. A group is enabled by default, but
+        can be disabled if we slice a submatrix without this group. Also indicates the
+        order of column permutations.
+ 
+        """
+
+        if original_dofs_row is None:
+            original_dofs_row = [x.copy() for x in dofs_row]
+        if original_dofs_col is None:
+            original_dofs_col = [x.copy() for x in dofs_col]
+        self.original_dofs_row: list[np.ndarray] = original_dofs_row
+        """Same as `dofs_row`, but this list does not change after slicing or
+        permutations. Needed for reverse transformations to the original PorePy
+        arrangement.
+ 
+        """
+        self.original_dofs_col: list[np.ndarray] = original_dofs_col
+        """Same as `dofs_col`, but this list does not change after slicing or
+        permutations. Needed for reverse transformations to the original PorePy
+        arrangement.
+ 
+        """
+
+        if group_names_row is None:
+            group_names_row = [str(i) for i in range(len(dofs_row))]
+        if group_names_col is None:
+            group_names_col = [str(i) for i in range(len(dofs_col))]
+        self.group_names_row: list[str] = group_names_row
         """List of group names for the rows."""
 
-        self.group_names_col: Optional[list[str]] = group_names_col
+        self.group_names_col: list[str] = group_names_col
         """List of group names for the columns."""
 
-        def init_global_dofs(global_dofs: list[np.ndarray]):
-            # Cast dofs to numpy arrays.
-            return [np.atleast_1d(x) for x in global_dofs]
+    def get_dofs_of_groups(
+        self, key: tuple[list[int], list[int]]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Builds indices that can be used to slice a submatrix, corresponding to the
+        provided groups.
 
-        # YZ: The difference between "global" and "local" dofs is that global reflects
-        # the original matrix arrangement produced by PorePy. Local reflects how it is
-        # actually arranged in `self.mat`. It can change from "global" if we reorder the
-        # matrix, e.g. J[[2,1,0]], or if we index some groups, e.g. J[[0,2]].
-        # TODO: Why do we need to store global?
+        Parameters:
+            key: The groups of rows and columns. Does not validate input, so if key is
+            passed in arbitrary format (e.g. from `__getitem__`), it must be formatted
+            on the caller side by calling the `correct_validate_getitem_key` method.
 
-        self.global_dofs_row: list[np.ndarray] = init_global_dofs(global_dofs_row)
-        """List of global dofs for the rows. One list item per equation group (EK
-        believes)."""
+        Returns:
+            Two arrays, corresponding to row and column indices.
 
-        self.global_dofs_col: list[np.ndarray] = init_global_dofs(global_dofs_col)
-        """List of global dofs for the columns. One list item per variable group (EK
-        believes)."""
+        """
+        groups_row, groups_col = key
 
-        def init_local_dofs(
-            local_dofs: list[np.ndarray] | None, global_dofs: list[np.ndarray]
-        ):
-            # Cast the local dofs to 1d numpy arrays, unless the list item is None,
-            # in which case it is left as None.
-            if local_dofs is None:
-                local_dofs = global_dofs
-            return [np.atleast_1d(x) if x is not None else x for x in local_dofs]
+        dofs_row = []
+        for group in groups_row:
+            dofs_row.append(self.dofs_row[group])
 
-        self.local_dofs_row: list[np.ndarray] = init_local_dofs(
-            local_dofs_row, self.global_dofs_row
-        )
-        """List of local dofs for the rows. One list item per equation group. A list
-        item None corresponds to a group of the global matrix that is not active in this
-        local matrix."""
+        dofs_col = []
+        for group in groups_col:
+            dofs_col.append(self.dofs_col[group])
 
-        self.local_dofs_col: list[np.ndarray] = init_local_dofs(
-            local_dofs_col, self.global_dofs_col
-        )
+        return concatenate_dof_indices(dofs_row), concatenate_dof_indices(dofs_col)
 
-        """List of local dofs for the columns. One list item per variable group. A list
-        item None corresponds to a group of the global matrix that is not active in this
-        local matrix."""
+    def make_permutation_after_slicing(
+        self, key: tuple[list[int], list[int]]
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Indices produced by `get_dofs_of_groups` can be used to slice a submatrix A.
+        This method returns indices that are used during creation of a
+        `BlockLinearSystem` of the submatrix A. They will be used later if we need to
+        slice a submatrix B originating from submatrix A.
 
-        def init_active_groups(
-            groups_to_blocks: list[list[int]], active_groups: list[int] | None
-        ) -> list[int]:
-            if active_groups is not None:
-                tmp = active_groups
-            else:
-                tmp = list(
-                    np.argsort([x[0] if len(x) else -1 for x in groups_to_blocks])
-                )
-            # Filter empty groups, e.g., when no fractures are present.
-            return [group_idx for group_idx in tmp if len(groups_to_blocks[group_idx])]
+        Parameters:
+            key: The groups of rows and columns. Does not validate input, so if key is
+            passed in arbitrary format (e.g. from `__getitem__`), it must be formatted
+            on the caller side by calling the `correct_validate_getitem_key` method.
 
-        # EK: What is an active group?
-        # YZ: You have the full Jacobian J. You index, e.g. only mass (group 5) and
-        # energy (group 6). A = J[[5, 6]]. The new matrix a has active groups [5, 6].
-        # self.active_groups == ([5, 6], [5, 6]). One for rows and one for columns.
-        # Maybe the right word to use instead of "active" is "enabled".
-        self.active_groups: tuple[list[int], list[int]] = (
-            init_active_groups(groups_to_blocks_row, active_groups_row),
-            init_active_groups(groups_to_blocks_col, active_groups_col),
-        )
+        Returns:
+            Two arrays, corresponding to row and column indices.
 
-        if validate_input:
-            validate_block_matrix(self)
+        """
+        groups_row, groups_col = key
 
-    @property
-    def shape(self) -> tuple[int, int]:
-        """Get the shape of the matrix."""
-        return self.mat.shape
+        dofs_row = [np.array([], dtype=int) for _ in self.dofs_row]
+        counter = 0
+        for group in groups_row:
+            end = counter + len(self.dofs_row[group])
+            dofs_row[group] = np.arange(counter, end)
+            counter = end
 
-    def __repr__(self) -> str:
-        return (
-            f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements "
-            f"with {len(self.active_groups[0])}x{len(self.active_groups[1])} "
-            "active groups"
-        )
+        dofs_col = [np.array([], dtype=int) for _ in self.dofs_col]
+        counter = 0
+        for group in groups_col:
+            end = counter + len(self.dofs_col[group])
+            dofs_col[group] = np.arange(counter, end)
+            counter = end
 
-    # Slicing
+        return dofs_row, dofs_col
 
-    def _correct_getitem_key(
+    def correct_validate_getitem_key(
         self, key: list | slice | tuple
     ) -> tuple[list[int], list[int]]:
         """Helper function to process the key for __getitem__ and __setitem__. See the
-        former method for permissible formats.
+        former method of `BlockLinearSystem` for permissible formats.
 
         """
         # Since the key is defined as a single argument (see __getitem__), passing
@@ -164,7 +170,9 @@ class BlockMatrixStorage:
         assert isinstance(key, tuple)
         assert len(key) == 2
 
-        def correct_key(key_: slice | int, total: int):
+        def correct_key(
+            key_: slice | int, enabled_groups: list[int], total: int
+        ) -> list[int]:
             # Convert slice or int to list of indices. Total is the maximum upper bound
             # of a slice, in case it is given on the form `1:` or similar.
             if isinstance(key_, slice):
@@ -173,25 +181,90 @@ class BlockMatrixStorage:
                 step = key_.step or 1
                 if step < 1:
                     raise NotImplementedError("Negative step is not supported.")
-                key_ = list(range(start, stop, step))
-            try:
-                # Try to iterate over the key. If not successful (which means this is an
-                # int?), convert to a list.
-                iter(key_)
-            except TypeError:
-                key_ = [key_]
-            return key_
+                result = [i for i in range(start, stop, step) if i in enabled_groups]
+            else:
+                try:
+                    # Try to iterate over the key. If not successful (which means this
+                    # is an int?), convert to a list.
+                    iter(key_)
+                    result = key_
+                except TypeError:
+                    result = [key_]
+
+            # Correct negative indices.
+            result = [x if x >= 0 else total + x for x in result]
+
+            # Validate indices in bounds.
+            for x in result:
+                if not (0 <= x < total):
+                    raise IndexError(
+                        f"Block matrix index out of bounds, expected 0 <= {x} < {total}"
+                    )
+                if not x in enabled_groups:
+                    raise IndexError(f"Taking disabled group {x}")
+            return result
 
         groups_row, groups_col = key
         # Convert the key to a list of indices.
-        groups_row = correct_key(groups_row, total=len(self.groups_to_blocks_row))
-        groups_col = correct_key(groups_col, total=len(self.groups_to_blocks_col))
+        groups_row = correct_key(
+            groups_row, enabled_groups=self.enabled_groups_row, total=len(self.dofs_row)
+        )
+        groups_col = correct_key(
+            groups_col, enabled_groups=self.enabled_groups_col, total=len(self.dofs_col)
+        )
         return groups_row, groups_col
 
-    def __getitem__(self, key: list | slice | tuple) -> BlockMatrixStorage:
+
+class BlockLinearSystem:
+    """Storage class for block linear systems with utility methods for indexing.
+
+    The indexing of a block linear systems is done in terms of groups, e.g.
+    `bmat[1, 2]` produces the sub-linear system (submatrix and rhs) that corresponds to
+    row (equation) group 1 and column (variable) group 2. Indexing is 0-based.
+
+    One group typically corresponds to a subproblem that should be treated by a single
+    preconditioner inside a block-preconditioner framework.
+
+    See `__getitem__` for all permissible indexing formats.
+
+    """
+
+    def __init__(
+        self,
+        mat: csr_matrix,
+        rhs: np.ndarray,
+        indexer: LinearSystemIndexer,
+        validate_input: bool = True,
+    ):
+        self.mat: csr_matrix = mat
+        """The matrix itself."""
+        self.rhs: np.ndarray = rhs
+        """The right-hand side vector."""
+        self.indexer: LinearSystemIndexer = indexer
+        """The indexer object that contains information about indices that correspond to
+        different groups."""
+
+        if validate_input:
+            validate_block_matrix(self)
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Get the shape of the matrix."""
+        return self.mat.shape
+
+    def __repr__(self) -> str:
+        rows = len(self.indexer.enabled_groups_row)
+        cols = len(self.indexer.enabled_groups_col)
+        return (
+            f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements "
+            f"with {rows}x{cols} enabled groups."
+        )
+
+    # Slicing
+
+    def __getitem__(self, key: list | slice | tuple) -> BlockLinearSystem:
         """Get a subset of blocks from the matrix. The block indexing is defined
         according to the groups
-
 
         The following indexing is supported:
 
@@ -213,104 +286,74 @@ class BlockMatrixStorage:
 
         Indices can be given by tuples as well as lists. The indexing is 0-based.
 
-        Only active groups can be taken. That is, under nested indexing, a group that is
-        not selected in the outer index cannot be selected in the inner index.
+        Only enabled groups can be taken. That is, such expressions are not permitted:
+        `A = bmat[1, 2]; B = A[2, 3]`. You cannot take a disabled group (2, 3) from a
+        submatrix A, which has only group (1, 2) enabled.
 
         Parameters:
             key: The key to index the matrix. See above for permissible formats.
 
         Raises:
-            ValueError: If an inactive group is selected.
+            IndexError: If a disabled or out-of-bounds group is selected.
 
         Returns:
-            A block matrix storage object containing the selected blocks.
+            A block linear system object containing the selected groups.
 
         """
-        # Process input arguments to get lists of row and column indices.
-        groups_row, groups_col = self._correct_getitem_key(key)
+        # Unifying and validating the passed key.
+        key = self.indexer.correct_validate_getitem_key(key)
+        groups_row, groups_col = key
 
-        def inner(
-            input_dofs_idx: list[np.ndarray],
-            take_groups: list[int],
-            all_groups: list[list[int]],
-        ):
-            """Expand indices from groups to matrix indices.
-
-            Parameters:
-                input_dofs_idx: The local indices for the row or column to be expanded.
-                take_groups: The groups to be taken.
-                all_groups: All groups available.
-
-            """
-            dofs_global_idx = []
-            # Initialize the local indices to None. Groups that remain active after this
-            # take operation will have their local indices set to the corresponding
-            # matrix indices.
-            dofs_local_idx = [None] * len(input_dofs_idx)
-            offset = 0
-            # Loop over the groups that are to be taken.
-            for group in take_groups:
-                # Loop over all available groups.
-                for dof_idx in all_groups[group]:
-                    # An inactive group will have a None entry in the local dofs,
-                    # instead of matrix indices. This is checked here, and an error is
-                    # raised if an inactive group is selected.
-                    if input_dofs_idx[dof_idx] is None:
-                        raise ValueError(f"Taking inactive row {group}")
-
-                    # Append the global indices for the selected group.
-                    dofs_global_idx.append(input_dofs_idx[dof_idx])
-                    # Append the local indices for the selected group.
-                    dofs_local_idx[dof_idx] = (
-                        np.arange(len(input_dofs_idx[dof_idx])) + offset
-                    )
-                    offset += len(input_dofs_idx[dof_idx])
-            if len(dofs_global_idx):
-                return np.concatenate(dofs_global_idx), dofs_local_idx
-            else:
-                return np.array([], dtype=int), dofs_local_idx
-
-        row_idx, local_row_idx = inner(
-            self.local_dofs_row, groups_row, self.groups_to_blocks_row
-        )
-        col_idx, local_col_idx = inner(
-            self.local_dofs_col, groups_col, self.groups_to_blocks_col
-        )
-
+        # Preparing the indices for slicing.
+        groups_dofs_row, groups_dofs_col = self.indexer.get_dofs_of_groups(key)
+        dofs_row_for_slicing = groups_dofs_row
+        dofs_col_for_slicing = groups_dofs_col
         rows_expanded, cols_expanded = np.meshgrid(
-            row_idx, col_idx, sparse=True, indexing="ij", copy=False
+            dofs_row_for_slicing,
+            dofs_col_for_slicing,
+            sparse=True,
+            indexing="ij",
+            copy=False,
         )
-        submat = self.mat[rows_expanded, cols_expanded]
+        # Slicing the matrix and the rhs.
+        sliced_matrix = self.mat[rows_expanded, cols_expanded]
+        rhs = self.rhs[dofs_row_for_slicing]
 
-        # Return a new block matrix storage object with the selected blocks. Compared to
-        # the current object, the new object potentially has a subset of active groups,
-        # with a corresponding subset of local indices.
-        return BlockMatrixStorage(
-            mat=submat,
-            local_dofs_row=local_row_idx,
-            local_dofs_col=local_col_idx,
-            global_dofs_row=self.global_dofs_row,
-            global_dofs_col=self.global_dofs_col,
-            groups_to_blocks_col=self.groups_to_blocks_col,
-            groups_to_blocks_row=self.groups_to_blocks_row,
-            active_groups_row=groups_row,
-            active_groups_col=groups_col,
-            group_names_col=self.group_names_col,
-            group_names_row=self.group_names_row,
+        # Creating a new index for the sliced matrix, as it was likely permuted.
+        new_dofs_row, new_dofs_col = self.indexer.make_permutation_after_slicing(key)
+
+        # Return a new block linear system object with the selected blocks. Compared to
+        # the current object, the new object potentially has a subset of enabled groups,
+        # with a corresponding subset of local indices (dofs_row and dofs_col).
+        return BlockLinearSystem(
+            mat=sliced_matrix,
+            rhs=rhs,
+            indexer=LinearSystemIndexer(
+                dofs_row=new_dofs_row,
+                dofs_col=new_dofs_col,
+                original_dofs_row=self.indexer.original_dofs_row,  # unchanged
+                original_dofs_col=self.indexer.original_dofs_col,  # unchanged
+                group_names_col=self.indexer.group_names_col,  # unchanged
+                group_names_row=self.indexer.group_names_row,  # unchanged
+                enabled_groups_row=groups_row,
+                enabled_groups_col=groups_col,
+            ),
             validate_input=False,
         )
 
     def __setitem__(
-        self, key: list | slice | tuple, value: BlockMatrixStorage | spmatrix
+        self, key: list | slice | tuple, value: BlockLinearSystem | spmatrix
     ) -> None:
-        """Set method for a BlockMatrixStorage object.
+        """Updates the submatrix corresponding to the row and column groups passed in
+        the `key` parameter with the `value`.
 
         See `__getitem__` for permissible formats of the key.
 
         Warning:
             This implementation is inefficient because at some point SciPy casts the
             assigned matrix to a dense matrix. Use it only for experimentation, and
-            avoid it in performance-critical parts of the code.
+            avoid it in performance-critical parts of the code. See methods
+            `set_zeros`, `set_diagonal` for efficiency.
 
         Parameters:
             key: The key to index the matrix. See above for permissible formats.
@@ -318,32 +361,27 @@ class BlockMatrixStorage:
                 sparse matrix.
 
         Raises:
-            ValueError: If an inactive group is selected.
+            IndexError: If a disabled or out-of-bounds group is selected.
+
         """
-        groups_i, groups_j = self._correct_getitem_key(key)
-
-        if isinstance(value, BlockMatrixStorage):
-            value = value.mat
-
-        def inner(input_dofs_idx, take_groups, all_groups):
-            dofs_idx = []
-            for group in take_groups:
-                for dof_idx in all_groups[group]:
-                    if input_dofs_idx[dof_idx] is None:
-                        raise ValueError(f"Taking inactive row {group}")
-                    dofs_idx.append(input_dofs_idx[dof_idx])
-            return np.concatenate(dofs_idx) if len(dofs_idx) else np.array([])
-
-        row_idx = inner(self.local_dofs_row, groups_i, self.groups_to_blocks_row)
-        col_idx = inner(self.local_dofs_col, groups_j, self.groups_to_blocks_col)
-        row_expanded, col_expanded = np.meshgrid(
-            row_idx, col_idx, sparse=True, indexing="ij", copy=False
+        # Preparing the indices for slicing.
+        key = self.indexer.correct_validate_getitem_key(key)
+        dofs_row_for_slicing, dofs_col_for_slicing = self.indexer.get_dofs_of_groups(
+            key
         )
-        self.mat[row_expanded, col_expanded] = value
+        rows_expanded, cols_expanded = np.meshgrid(
+            dofs_row_for_slicing,
+            dofs_col_for_slicing,
+            sparse=True,
+            indexing="ij",
+            copy=False,
+        )
+        # Updating the matrix slice.
+        self.mat[rows_expanded, cols_expanded] = value
 
-    def copy(self) -> BlockMatrixStorage:
-        """Deep-copies the underlying matrix and passes references to the indexes to
-        blocks and groups (does not copy their memory).
+    def copy(self) -> BlockLinearSystem:
+        """Deep-copies the underlying matrix and right-hand side and passes references
+        to the indexes to blocks and groups (does not copy their memory).
 
         Returns:
             A new identical block matrix storage object.
@@ -351,112 +389,62 @@ class BlockMatrixStorage:
         """
         res = self.empty_container()
         res.mat = self.mat.copy()
+        res.rhs = self.rhs.copy()
         return res
 
-    def empty_container(self) -> BlockMatrixStorage:
+    def empty_container(self) -> BlockLinearSystem:
         """Create container with the same structure as the current one, but with an
-        empty matrix.
+        empty matrix. Typically used for creating new linear systems with a similar
+        structure.
+
+        One exceptional usage - to cheaply create a `LinearSystemIndexer` object that
+        corresponds to a submatrix, without performing expensive matrix slicing.
+
         """
 
-        return BlockMatrixStorage(
+        return BlockLinearSystem(
             mat=scipy.sparse.csr_matrix(self.mat.shape),
-            local_dofs_row=self.local_dofs_row,
-            local_dofs_col=self.local_dofs_col,
-            global_dofs_row=self.global_dofs_row,
-            global_dofs_col=self.global_dofs_col,
-            groups_to_blocks_row=self.groups_to_blocks_row,
-            groups_to_blocks_col=self.groups_to_blocks_col,
-            active_groups_row=self.active_groups[0],
-            active_groups_col=self.active_groups[1],
-            group_names_col=self.group_names_col,
-            group_names_row=self.group_names_row,
+            rhs=np.zeros(self.mat.shape[0]),
+            indexer=self.indexer,
             validate_input=False,
         )
 
-    def project_rhs_to_local(self, global_rhs: np.ndarray) -> np.ndarray:
-        """Global rhs is the rhs arranged in the porepy model manner. This method
-        permutes and restricts the global rhs to make it match the current matrix
-        arrangement.
-
-        YZ: I think this class should also contain the rhs alongside the matrix.
-            It will allow us to avoid exposing the notion of "local" and "global" which
-            may be confusing.
-
-        Parameters:
-            global_rhs: The global right hand side.
-
-        Returns:
-            np.ndarray: The part of the rhs corresponding to the local dofs, as
-                specified by the active groups.
+    def permute_left_vector_to_original(self, vec: np.ndarray) -> np.ndarray:
+        """The block linear system undergoes some permutations / slicing. This method
+        permutes the left vector (right-hand side) to restore the original arrangement
+        that was used when the `BlockLinearSystem` was originally created. If some
+        information is lost due to slicing, these values are filled with zeros.
 
         """
-        row_idx = [
-            self.global_dofs_row[j]
-            for i in self.active_groups[0]
-            for j in self.groups_to_blocks_row[i]
-        ]
-        if len(row_idx) == 0:
-            return np.array([])
-        row_idx = np.concatenate(row_idx)
-        return global_rhs[row_idx]
+        return self._permute_vec_to_original(vec, side="left")
 
-    def project_rhs_to_global(self, local_rhs: np.ndarray) -> np.ndarray:
-        """Local rhs is the rhs arranged to match the current matrix. This method
-        permutes and prolongates with zeros the local rhs to restore the global
-        arrangement.
-
-        Parameters:
-            local_rhs: The local right hand side.
-
-        Returns:
-            np.ndarray: The global right hand side, with zeros in the items that are
-                not part of the active groups.
+    def permute_right_vector_to_original(self, vec: np.ndarray) -> np.ndarray:
+        """The block linear system undergoes some permutations / slicing. This method
+        permutes the right vector (solution) to restore the original arrangement that
+        was used when the `BlockLinearSystem` was originally created. If some
+        information is lost due to slicing, these values are filled with zeros.
 
         """
-        row_idx = [
-            self.global_dofs_row[j]
-            for i in self.active_groups[0]
-            for j in self.groups_to_blocks_row[i]
-        ]
-        total_size = sum(x.size for x in self.global_dofs_col)
-        result = np.zeros(total_size, dtype=local_rhs.dtype)
-        if len(row_idx) == 0:
-            return result
+        return self._permute_vec_to_original(vec, side="right")
 
-        row_idx = np.concatenate(row_idx)
-        result[row_idx] = local_rhs
-        return result
+    def _permute_vec_to_original(
+        self, vec: np.ndarray, side: Literal["left", "right"]
+    ) -> np.ndarray:
+        """See `permute_left_vector_to_original` and `permute_right_vector_to_original`
+        methods.
 
-    def project_solution_to_global(self, x: np.ndarray) -> np.ndarray:
-        """The same as `project_rhs_to_global, but in the solution space."""
-        col_idx = [
-            self.global_dofs_col[j]
-            for i in self.active_groups[1]
-            for j in self.groups_to_blocks_col[i]
-        ]
-        total_size = sum(x.size for x in self.global_dofs_col)
-        result = np.zeros(total_size)
-        if len(col_idx) == 0:
-            return result
-
-        col_idx = np.concatenate(col_idx)
-        result[col_idx] = x
-        return result
-
-    def _project_to_global(self, vec: np.ndarray, row: bool) -> np.ndarray:
-        # TODO: Replace the two above methods with calls to this. Currently not used.
-        if row:
-            idx = self.global_dofs_row
-            blocks = self.groups_to_blocks_row
+        """
+        if side == "left":
+            enabled_groups = self.indexer.enabled_groups_row
+            original_dofs = self.indexer.original_dofs_row
+        elif side == "right":
+            enabled_groups = self.indexer.enabled_groups_col
+            original_dofs = self.indexer.original_dofs_col
         else:
-            idx = self.global_dofs_col
-            blocks = self.groups_to_blocks_col
-        all_idx = np.concatenate(
-            [idx[j] for i in self.active_groups[0] for j in blocks[i]]
-        )
-        total_size = sum(x.size for x in self.global_dofs_col)
-        result = np.zeros(total_size, dtype=vec.dtype)
-        result[all_idx] = vec
+            raise ValueError(f"{side = }")
+        dofs = [original_dofs[i] for i in enabled_groups]
+        result = np.zeros(sum(x.size for x in original_dofs))
+        result[concatenate_dof_indices(dofs)] = vec
         return result
 
     # Efficient matrix construction
@@ -466,21 +454,10 @@ class BlockMatrixStorage:
     ) -> None:
         """Set the values in the given block rows and columns to zeros. Does not change
         the sparsity pattern, so this is much cheaper than doing it in the naive way."""
-        group_row_idx, group_col_idx = self._correct_getitem_key(
-            (group_row_idx, group_col_idx)
-        )
-        all_rows, all_cols = self.get_active_local_dofs(grouped=True)
-
-        groups_row, groups_col = self.active_groups
-
+        key = self.indexer.correct_validate_getitem_key((group_row_idx, group_col_idx))
+        dofs_row, dofs_col = self.indexer.get_dofs_of_groups(key)
         nonzero_idx = get_nonzero_indices(
-            A=self.mat,
-            row_indices=np.concatenate(
-                [all_rows[groups_row.index(i)] for i in group_row_idx]
-            ),
-            col_indices=np.concatenate(
-                [all_cols[groups_col.index(i)] for i in group_col_idx]
-            ),
+            A=self.mat, row_indices=dofs_row, col_indices=dofs_col
         )
         self.mat.data[nonzero_idx] = 0
 
@@ -493,235 +470,246 @@ class BlockMatrixStorage:
         """Adds the values to the main diagonal of the given groups. This method avoids
         allocating a dense matrix.
 
-        YZ: This is expected to work only with the groups on the main diagonal. If you
-            take J[3, 4] and try to set diagonal, this method should raise an error.
+        This is expected to work only with the groups on the main diagonal. If you take
+        J[3, 4] and try to set diagonal, this method should raise an error.
 
         """
-        groups, _ = self._correct_getitem_key(groups)
-        row_idx = [
-            self.local_dofs_row[block]
-            for group in groups
-            for block in self.groups_to_blocks_row[group]
-        ]
-        col_idx = [
-            self.local_dofs_col[block]
-            for group in groups
-            for block in self.groups_to_blocks_col[group]
-        ]
-
-        # Check for empty groups.
-        if len(row_idx) == 0 or len(col_idx) == 0:
-            return
-
-        row_idx = np.concatenate(row_idx)
-        col_idx = np.concatenate(col_idx)
+        key = self.indexer.correct_validate_getitem_key(groups)
+        dofs_row, dofs_col = self.indexer.get_dofs_of_groups(key)
         try:
             len(values)
         except Exception:
             # This is a scalar.
-            values = np.full(shape=row_idx.shape, fill_value=values)
-        assert row_idx.size == col_idx.size == values.size
+            values = np.full(shape=dofs_row.shape, fill_value=values)
+        assert dofs_row.size == dofs_col.size == values.size
 
         if not additive:
-            values = values - np.array(self.mat[row_idx, col_idx]).ravel()
-        tmp = coo_matrix((values, (row_idx, col_idx)), shape=self.mat.shape).tocsr()
+            values = values - csr_matrix(self.mat[dofs_row, dofs_col]).toarray().ravel()
+        tmp = coo_matrix((values, (dofs_row, dofs_col)), shape=self.mat.shape).tocsr()
         self.mat += tmp
 
     # Visualization
 
-    def get_active_local_dofs(self, grouped=False):
-        def inner(
-            local_dofs, groups_to_blocks, active_groups
-        ) -> list[list[np.ndarray]]:
-            # YZ: No idea what's going on here.
-            data = []
-            for active_group in active_groups:
-                group_i = groups_to_blocks[active_group]
-                group_data = []
-                for i in group_i:
-                    dofs = local_dofs[i]
-                    if dofs is not None:
-                        group_data.append(dofs)
-                if len(group_data) > 0:
-                    data.append(group_data)
-            return data
+    # def get_active_local_dofs(self, grouped=False):
+    #     def inner(
+    #         local_dofs, groups_to_blocks, active_groups
+    #     ) -> list[list[np.ndarray]]:
+    #         # YZ: No idea what's going on here.
+    #         data = []
+    #         for active_group in active_groups:
+    #             group_i = groups_to_blocks[active_group]
+    #             group_data = []
+    #             for i in group_i:
+    #                 dofs = local_dofs[i]
+    #                 if dofs is not None:
+    #                     group_data.append(dofs)
+    #             if len(group_data) > 0:
+    #                 data.append(group_data)
+    #         return data
 
-        row_idx = inner(
-            self.local_dofs_row, self.groups_to_blocks_row, self.active_groups[0]
-        )
-        col_idx = inner(
-            self.local_dofs_col, self.groups_to_blocks_col, self.active_groups[1]
-        )
-        if not grouped:
-            # Spells below flatten a list of lists into a single list.
-            row_idx = [y for x in row_idx for y in x]
-            col_idx = [y for x in col_idx for y in x]
-        else:
-            row_idx = [np.concatenate(x) for x in row_idx]
-            col_idx = [np.concatenate(x) for x in col_idx]
-        return row_idx, col_idx
+    #     row_idx = inner(
+    #         self.local_dofs_row, self.groups_to_blocks_row, self.active_groups[0]
+    #     )
+    #     col_idx = inner(
+    #         self.local_dofs_col, self.groups_to_blocks_col, self.active_groups[1]
+    #     )
+    #     if not grouped:
+    #         # Spells below flatten a list of lists into a single list.
+    #         row_idx = [y for x in row_idx for y in x]
+    #         col_idx = [y for x in col_idx for y in x]
+    #     else:
+    #         row_idx = [np.concatenate(x) for x in row_idx]
+    #         col_idx = [np.concatenate(x) for x in col_idx]
+    #     return row_idx, col_idx
 
-    def get_active_group_names(self):
-        def inner(group_names, active_groups):
-            if group_names is not None:
-                names = [
-                    f"{i}: {group_names[i]}" if group_names[i] != "" else str(i)
-                    for i in active_groups
-                ]
-            else:
-                names = active_groups
-            return names
+    # def get_active_group_names(self):
+    #     def inner(group_names, active_groups):
+    #         if group_names is not None:
+    #             names = [
+    #                 f"{i}: {group_names[i]}" if group_names[i] != "" else str(i)
+    #                 for i in active_groups
+    #             ]
+    #         else:
+    #             names = active_groups
+    #         return names
 
-        row_names = inner(self.group_names_row, self.active_groups[0])
-        col_names = inner(self.group_names_col, self.active_groups[1])
-        return row_names, col_names
+    #     row_names = inner(self.group_names_row, self.active_groups[0])
+    #     col_names = inner(self.group_names_col, self.active_groups[1])
+    #     return row_names, col_names
 
-    def color_spy(
-        self,
-        groups=True,
-        show=True,
-        aspect: Literal["equal", "auto"] = "equal",
-        marker=None,
-        color=True,
-        hatch=False,
-        draw_marker=True,
-        alpha=0.3,
-    ):
-        row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-        if not groups:
-            row_names = col_names = None
-        else:
-            row_names, col_names = self.get_active_group_names()
-        color_spy(
-            self.mat,
-            row_idx,
-            col_idx,
-            row_names=row_names,
-            col_names=col_names,
-            show=show,
-            aspect=aspect,
-            marker=marker,
-            alpha=alpha,
-            color=color,
-            hatch=hatch,
-            draw_marker=draw_marker,
-        )
+    # def color_spy(
+    #     self,
+    #     groups=True,
+    #     show=True,
+    #     aspect: Literal["equal", "auto"] = "equal",
+    #     marker=None,
+    #     color=True,
+    #     hatch=False,
+    #     draw_marker=True,
+    #     alpha=0.3,
+    # ):
+    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
+    #     if not groups:
+    #         row_names = col_names = None
+    #     else:
+    #         row_names, col_names = self.get_active_group_names()
+    #     color_spy(
+    #         self.mat,
+    #         row_idx,
+    #         col_idx,
+    #         row_names=row_names,
+    #         col_names=col_names,
+    #         show=show,
+    #         aspect=aspect,
+    #         marker=marker,
+    #         alpha=alpha,
+    #         color=color,
+    #         hatch=hatch,
+    #         draw_marker=draw_marker,
+    #     )
 
-    def matshow(
-        self,
-        log=True,
-        show=True,
-        threshold: float = 1e-30,
-        aspect: Literal["equal", "auto"] = "equal",
-    ):
-        plot_mat(self.mat, log=log, show=show, threshold=threshold, aspect=aspect)
+    # def matshow(
+    #     self,
+    #     log=True,
+    #     show=True,
+    #     threshold: float = 1e-30,
+    #     aspect: Literal["equal", "auto"] = "equal",
+    # ):
+    #     plot_mat(self.mat, log=log, show=show, threshold=threshold, aspect=aspect)
 
-    def matshow_blocks(self, log=True, show=True, groups=True):
-        self.matshow(log=log, show=False)
-        self.color_spy(
-            show=show, groups=groups, color=False, hatch=True, draw_marker=False
-        )
+    # def matshow_blocks(self, log=True, show=True, groups=True):
+    #     self.matshow(log=log, show=False)
+    #     self.color_spy(
+    #         show=show, groups=groups, color=False, hatch=True, draw_marker=False
+    #     )
 
-    def plot_max(
-        self,
-        groups=True,
-        annot=True,
-        mean=False,
-    ):
-        # It should be moved
-        row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-        data = []
+    # def plot_max(
+    #     self,
+    #     groups=True,
+    #     annot=True,
+    #     mean=False,
+    # ):
+    #     # It should be moved
+    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
+    #     data = []
 
-        for row in row_idx:
-            row_data = []
-            for col in col_idx:
-                ind_i, ind_j = np.meshgrid(
-                    row, col, sparse=True, indexing="ij", copy=False
-                )
-                submat = self.mat[ind_i, ind_j]
-                if submat.data.size == 0:
-                    row_data.append(np.nan)
-                else:
-                    if not mean:
-                        row_data.append(abs(submat).max())
-                    else:
-                        row_data.append(abs(submat).mean())
-            data.append(row_data)
+    #     for row in row_idx:
+    #         row_data = []
+    #         for col in col_idx:
+    #             ind_i, ind_j = np.meshgrid(
+    #                 row, col, sparse=True, indexing="ij", copy=False
+    #             )
+    #             submat = self.mat[ind_i, ind_j]
+    #             if submat.data.size == 0:
+    #                 row_data.append(np.nan)
+    #             else:
+    #                 if not mean:
+    #                     row_data.append(abs(submat).max())
+    #                 else:
+    #                     row_data.append(abs(submat).mean())
+    #         data.append(row_data)
 
-        if groups:
-            y_tick_labels, x_tick_labels = self.get_active_group_names()
-        else:
-            y_tick_labels = x_tick_labels = "auto"
+    #     if groups:
+    #         y_tick_labels, x_tick_labels = self.get_active_group_names()
+    #     else:
+    #         y_tick_labels = x_tick_labels = "auto"
 
-        ax = plt.gca()
-        sns.heatmap(
-            data=np.array(data),
-            square=False,
-            annot=annot,
-            norm=matplotlib.colors.LogNorm(),
-            fmt=".1e",
-            xticklabels=x_tick_labels,
-            yticklabels=y_tick_labels,
-            ax=ax,
-            linewidths=0.01,
-            linecolor="grey",
-            cbar=False,
-            cmap=sns.color_palette("coolwarm", as_cmap=True),
-        )
+    #     ax = plt.gca()
+    #     sns.heatmap(
+    #         data=np.array(data),
+    #         square=False,
+    #         annot=annot,
+    #         norm=matplotlib.colors.LogNorm(),
+    #         fmt=".1e",
+    #         xticklabels=x_tick_labels,
+    #         yticklabels=y_tick_labels,
+    #         ax=ax,
+    #         linewidths=0.01,
+    #         linecolor="grey",
+    #         cbar=False,
+    #         cmap=sns.color_palette("coolwarm", as_cmap=True),
+    #     )
 
-    def color_left_vector(
-        self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None
-    ):
-        y_tick_labels, x_tick_labels = self.get_active_group_names()
-        row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
-        row_names = y_tick_labels
-        alpha = 0.3
+    # def color_left_vector(
+    #     self, local_rhs: np.ndarray, groups: bool = True, log: bool = True, label=None
+    # ):
+    #     y_tick_labels, x_tick_labels = self.get_active_group_names()
+    #     row_idx, col_idx = self.get_active_local_dofs(grouped=groups)
+    #     row_names = y_tick_labels
+    #     alpha = 0.3
 
-        # this repeats the code of color_spy()
-        row_sep = [0]
-        for row in row_idx:
-            row_sep.append(row[-1] + 1)
-        row_sep = sorted(row_sep)
+    #     # this repeats the code of color_spy()
+    #     row_sep = [0]
+    #     for row in row_idx:
+    #         row_sep.append(row[-1] + 1)
+    #     row_sep = sorted(row_sep)
 
-        if row_names is None:
-            row_names = list(range(len(row_sep) - 1))
+    #     if row_names is None:
+    #         row_names = list(range(len(row_sep) - 1))
 
-        ax = plt.gca()
-        row_label_pos = []
-        for i in range(len(row_names)):
-            ystart, yend = row_sep[i : i + 2]
-            row_label_pos.append(ystart + (yend - ystart) / 2)
-            kwargs = {}
-            kwargs["facecolor"] = f"C{i}"
-            plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, kwargs=kwargs)
-        ax.xaxis.set_ticks(row_label_pos)
-        ax.set_xticklabels(row_names, rotation=45)
-        if log:
-            local_rhs = abs(local_rhs)
-            plt.yscale("log")
+    #     ax = plt.gca()
+    #     row_label_pos = []
+    #     for i in range(len(row_names)):
+    #         ystart, yend = row_sep[i : i + 2]
+    #         row_label_pos.append(ystart + (yend - ystart) / 2)
+    #         kwargs = {}
+    #         kwargs["facecolor"] = f"C{i}"
+    #         plt.axvspan(ystart - 0.5, yend - 0.5, alpha=alpha, kwargs=kwargs)
+    #     ax.xaxis.set_ticks(row_label_pos)
+    #     ax.set_xticklabels(row_names, rotation=45)
+    #     if log:
+    #         local_rhs = abs(local_rhs)
+    #         plt.yscale("log")
 
-        plt.plot(local_rhs, label=label)
+    #     plt.plot(local_rhs, label=label)
 
 
-def validate_block_matrix(bmat: BlockMatrixStorage) -> None:
+def validate_block_matrix(bmat: BlockLinearSystem) -> None:
     """Checks that the block matrix is initialized correctly.
 
     Raises:
-        ValueError: If the matrix shape is inconsistent with the indices of groups and
-            blocks.
+        ValueError: If disabled groups have nonzero size.
         ValueError: If the groups (submatrices) on the diagonal are not square.
+        ValueError: If the number of groups is different from the number of group names.
+        ValueError: If the matrix shape is inconsistent with the indexer.
     """
-    bmat = bmat.empty_container()
-    active_groups_row = bmat.active_groups[0]
-    active_groups_col = bmat.active_groups[1]
+    # Checking that the disabled groups are empty and the diagonal enabled groups are
+    # square matrices.
+    indexer = bmat.indexer
+    is_enabled_group_row = [False] * len(indexer.dofs_row)
+    for i in indexer.enabled_groups_row:
+        is_enabled_group_row[i] = True
+    is_enabled_group_col = [False] * len(indexer.dofs_col)
+    for i in indexer.enabled_groups_col:
+        is_enabled_group_col[i] = True
+
+    for i in range(len(indexer.dofs_row)):
+        if not is_enabled_group_row[i] and len(indexer.dofs_row[i]) != 0:
+            raise ValueError(f"Disabled row group {i} has nonzero size.")
+        if not is_enabled_group_col[i] and len(indexer.dofs_col[i]) != 0:
+            raise ValueError(f"Disabled column group {i} has nonzero size.")
+        if (
+            is_enabled_group_row[i]
+            and is_enabled_group_col[i]
+            and (len(indexer.dofs_row[i]) != len(indexer.dofs_col[i]))
+        ):
+            raise ValueError(f"Diagonal group ({i},{i}) is not a square matrix.")
+
+    # Making sure that the number of groups is consistent.
+    if (len(indexer.group_names_row) != len(indexer.dofs_row)) or (
+        len(indexer.group_names_col) != len(indexer.dofs_col)
+    ):
+        raise ValueError(
+            "The number of groups should be the same as the number of group names."
+        )
 
     # Making sure that the sum of indexed shapes matches the original matrix shape.
     shape_sum_row = 0
     shape_sum_col = 0
-    for group_row in active_groups_row:
-        shape_sum_row += bmat[group_row, active_groups_col[0]].shape[0]
-    for group_col in active_groups_col:
-        shape_sum_col += bmat[active_groups_row[0], group_col].shape[1]
+    for dofs_row in indexer.dofs_row:
+        shape_sum_row += len(dofs_row)
+    for dofs_col in indexer.dofs_col:
+        shape_sum_col += len(dofs_col)
     expected_shape = (shape_sum_row, shape_sum_col)
     if bmat.shape != expected_shape:
         raise ValueError(
@@ -729,17 +717,9 @@ def validate_block_matrix(bmat: BlockMatrixStorage) -> None:
             f"{expected_shape}."
         )
 
-    # Making sure that each diagonal group, e.g. [1, 1] is a square submatrix.
-    for group in set(active_groups_row).intersection(active_groups_col):
-        shape = bmat[[group]].shape
-        if shape[0] != shape[1]:
-            raise ValueError(
-                f"Group {group} must be a square submatrix, got {shape} instead."
-            )
-
 
 def get_nonzero_indices(
-    A: csr_matrix, row_indices: list[np.ndarray], col_indices: list[np.ndarray]
+    A: csr_matrix, row_indices: np.ndarray, col_indices: np.ndarray
 ) -> list[int]:
     """
     Get the indices of A.data that correspond to the specified subset of rows and
@@ -747,11 +727,11 @@ def get_nonzero_indices(
 
     Parameters:
         A: The input sparse matrix.
-        row_indices (list or array): The list of row indices to consider.
-        col_indices (list or array): The list of column indices to consider.
+        row_indices: The array of row indices to consider.
+        col_indices: The array of column indices to consider.
 
     Returns:
-    list: Indices in A.data corresponding to non-zero elements in the specified subset.
+        Indices in A.data corresponding to non-zero elements in the specified subset.
     """
     result_indices = []
     col_set = set(col_indices)  # For quick lookup
@@ -766,3 +746,12 @@ def get_nonzero_indices(
                 result_indices.append(data_idx)
 
     return result_indices
+
+
+def concatenate_dof_indices(
+    x: list[np.ndarray], dtype: DTypeLike = np.int64
+) -> np.ndarray:
+    """Helper function for `np.concatenate` that handles empty input."""
+    if len(x) == 0:
+        return np.array([], dtype=dtype)
+    return np.concatenate(x, dtype=dtype)

@@ -4,9 +4,7 @@ from typing import Sequence
 
 import numpy as np
 import porepy as pp
-from petsc4py import PETSc
 
-from pp_solvers.block_matrix import BlockMatrixStorage
 from pp_solvers.equation_variable_groups import EquationNames, AbstractGroup
 from pp_solvers.preconditioners import (
     CompositePreconditioner,
@@ -356,45 +354,6 @@ class DofManager:
         """
         return self._solver_groups[solver]
 
-    def petsc_is(
-        self,
-        current_solver: SinglePhysicsPreconditioner,
-        other_solver: list[SinglePhysicsPreconditioner],
-        bmat: BlockMatrixStorage,
-    ) -> PETSc.IS:
-        """Construct PETSc index sets for the current and other solvers.
-
-        # YZ: Besides this method and `_construct_is`, this class is PETSc-agnostic.
-        # _construct_is does not use the arrangement stored in DofManager, it is based
-        # on the rearranged block matrix.
-        # Also, these two methods are the only that require an instance of
-        # BlockMatrixStorage, others are agnostic to it.
-        # I suggest moving them somewhere.
-
-        Intended used in a Schur-complement setting, where we do a split between the
-        current (to be eliminated) group and the other groups (to be kept).
-
-        Parameters:
-            current_solver: The current solver group.
-            other_solver: A list of other solver groups.
-            bmat: The block matrix storage.
-
-        Returns:
-            A tuple containing the PETSc IS objects for the current and other solvers.
-
-        """
-        # Indices of the block ids
-        current_id = self.blocks_of_solver(current_solver)
-
-        other_id = []
-        for group in other_solver:
-            # Get the block id for the group.
-            other_id += self.blocks_of_solver(group)
-
-        current_is = self._construct_is(bmat, current_id)
-        other_is = self._construct_is(bmat, other_id)
-        return current_is, other_is
-
     def identify_contact_group(self) -> int:
         """Identify the contact group in the equation groups.
 
@@ -591,41 +550,6 @@ class DofManager:
                     blocks[i] -= num_fracs
 
         return eq_groups_corrected
-
-    def _construct_is(self, bmat: BlockMatrixStorage, groups: list[int]) -> PETSc.IS:
-        """Construct a PETSc IS (index set) from a list of groups.
-
-        Parameters:
-            bmat: The block matrix storage.
-            groups: The groups to construct the IS from.
-
-        Returns:
-            The PETSc IS object representing the groups.
-
-        """
-        # EK: Why is it necessary to create an empty container here, and not just work
-        # with information from the bmat object?
-        # YZ: No reason. Usually, I create an empty container, because slicing the bmat
-        # is expensive, but slicing the empty container is not. Here, we did not slice
-        # anything though.
-        empty_mat = bmat.empty_container()
-        dofs = [
-            empty_mat.local_dofs_row[x]
-            for i in groups
-            for x in empty_mat.groups_to_blocks_row[i]
-        ]
-        if len(dofs) > 0:
-            return PETSc.IS().createGeneral(
-                np.concatenate(
-                    dofs,
-                    dtype=np.int32,
-                    # EK: What if the size is too large for int32?
-                    # YZ: I believe this is how PETSc is compiled.
-                )
-            )
-        else:
-            # Return an empty IS if the group is empty.
-            return PETSc.IS().createGeneral(np.array([], dtype=np.int32))
 
     def _variable_block_indices(
         self,

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from pp_solvers.block_matrix import BlockMatrixStorage
+from pp_solvers.block_matrix import BlockLinearSystem, LinearSystemIndexer
 
 
 # The submatrices of the tested matrix are defined globally to generate tests.
@@ -59,9 +59,11 @@ _J22 = [
 
 
 @pytest.fixture
-def sample_matrix() -> BlockMatrixStorage:
+def sample_matrix() -> BlockLinearSystem:
     """The block matrix we use in all the tests. It contains one empty group."""
-    return BlockMatrixStorage(
+    return BlockLinearSystem(
+        # The matrix is intentionally shuffled from the start, as we expect PorePy to
+        # generate blocks not in the order we want here.
         mat=sp.block_array(
             [
                 [_J22, _J21, _J20],
@@ -71,10 +73,16 @@ def sample_matrix() -> BlockMatrixStorage:
         )
         .astype(float)
         .tocsr(),
-        global_dofs_row=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]],
-        global_dofs_col=[np.array(x) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]],
-        groups_to_blocks_row=[[0], [1], [2], []],
-        groups_to_blocks_col=[[0], [1], [2], []],
+        # The rhs is arranged for groups [2, 1, 0], same as the original matrix.
+        rhs=np.array([30, 31, 20, 21, 22, 23, 10, 11, 12]),
+        indexer=LinearSystemIndexer(
+            dofs_row=[
+                np.array(x, dtype=int) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]
+            ],
+            dofs_col=[
+                np.array(x, dtype=int) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]
+            ],
+        ),
     )
 
 
@@ -147,7 +155,7 @@ def test_bad_block_matrix_creation(params):
     groups_to_blocks_row = params["groups_to_blocks_row"]
     groups_to_blocks_col = params["groups_to_blocks_col"]
     with pytest.raises(Exception):
-        return BlockMatrixStorage(
+        return BlockLinearSystem(
             mat=sp.block_array(submatrices).astype(float).tocsr(),
             global_dofs_row=[np.array(x) for x in global_dofs_row],
             global_dofs_col=[np.array(x) for x in global_dofs_col],
@@ -189,7 +197,7 @@ def test_bad_block_matrix_creation(params):
         {"index": slice(None, None, -1), "raises": True},
     ],
 )
-def test_shape_simple_index(sample_matrix: BlockMatrixStorage, params):
+def test_shape_simple_index(sample_matrix: BlockLinearSystem, params):
     """All the possible combinations of simple indexing, e.g. J[x]."""
     index: slice | int | list[int] = params["index"]
     raises: bool = params.get("raises", False)
@@ -233,7 +241,7 @@ PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX = [
 
 @pytest.mark.parametrize("params_row", PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX)
 @pytest.mark.parametrize("params_col", PARAMS_FOR_TEST_SHAPE_TUPLE_INDEX)
-def test_shape_tuple_index(sample_matrix: BlockMatrixStorage, params_row, params_col):
+def test_shape_tuple_index(sample_matrix: BlockLinearSystem, params_row, params_col):
     """All the possible combinations of tuple indexing, e.g. J[x, y]."""
     ind_row: slice | int | list[int] = params_row["index"]
     raises_row: bool = params_row.get("raises", False)
@@ -282,7 +290,7 @@ def test_shape_tuple_index(sample_matrix: BlockMatrixStorage, params_row, params
         {"index": (1, slice(None, None, None)), "expected": [[_J10, _J11, _J12]]},
     ],
 )
-def test_slicing(sample_matrix: BlockMatrixStorage, params):
+def test_slicing(sample_matrix: BlockLinearSystem, params):
     """These test ensures that the sliced matrices exactly match the expectation."""
     index = params["index"]
     expected = params["expected"]
@@ -314,7 +322,7 @@ def test_slicing(sample_matrix: BlockMatrixStorage, params):
         },
     ],
 )
-def test_nested_slicing(sample_matrix: BlockMatrixStorage, params):
+def test_nested_slicing(sample_matrix: BlockLinearSystem, params):
     """Tests that the slice of a slice works as expected. For some cases, second
     indexing is expected to fail.
 
@@ -325,10 +333,11 @@ def test_nested_slicing(sample_matrix: BlockMatrixStorage, params):
     raises: bool = params.get("raises", False)
 
     tmp = sample_matrix[index1]
+    print(tmp)
     if not raises:
         assert tmp[index2].shape == expected
     else:
-        with pytest.raises(Exception):
+        with pytest.raises(IndexError):
             tmp[index2]
 
 
@@ -373,7 +382,7 @@ def test_nested_slicing(sample_matrix: BlockMatrixStorage, params):
         },
     ],
 )
-def test_setitem(sample_matrix: BlockMatrixStorage, params):
+def test_setitem(sample_matrix: BlockLinearSystem, params):
     """Tests that __setitem__ works as expected."""
     index = params["index"]
     modify_submatrices = params["modify_submatrices"]
@@ -402,14 +411,14 @@ def test_setitem(sample_matrix: BlockMatrixStorage, params):
     np.testing.assert_array_equal(sample_matrix[:].mat.toarray(), expected)
 
 
-def test_copy(sample_matrix: BlockMatrixStorage):
+def test_copy(sample_matrix: BlockLinearSystem):
     copied_mat = sample_matrix.copy()
     assert copied_mat.shape == sample_matrix.shape
     np.testing.assert_array_equal(sample_matrix.mat.toarray(), copied_mat.mat.toarray())
     assert sample_matrix.mat.data is not copied_mat.mat.data
 
 
-def test_empty_container(sample_matrix: BlockMatrixStorage):
+def test_empty_container(sample_matrix: BlockLinearSystem):
     empty_matrix = sample_matrix.empty_container()
     assert empty_matrix.shape == sample_matrix.shape
     assert empty_matrix.mat.nnz == 0
@@ -469,23 +478,25 @@ def test_empty_container(sample_matrix: BlockMatrixStorage):
         },
     ],
 )
-def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, params):
-    """Tests `project_rhs_to_local` and the reverse transformation from it with
-    `project_rhs_to_global`.
+def test_permute_left_vector_to_local_and_original(
+    sample_matrix: BlockLinearSystem, params
+):
+    """Tests projecting the left vector (rhs) to the permuted arrangement and the
+    reverse transformation from it with `permute_left_vector_to_original`.
 
     """
-    # The global rhs is arranged for groups [2, 1, 0], same as the original matrix.
-    rhs_global = np.array([30, 31, 20, 21, 22, 23, 10, 11, 12])
+    # The original rhs is arranged for groups [2, 1, 0], same as the original matrix.
+    # rhs original: [30, 31, 20, 21, 22, 23, 10, 11, 12]
     index = params["index"]
     expected_local = params["expected_local"]
     expected_global = params["expected_global"]
 
     sample_matrix = sample_matrix[index]
 
-    rhs_local = sample_matrix.project_rhs_to_local(rhs_global)
+    rhs_local = sample_matrix.rhs
     np.testing.assert_array_equal(rhs_local, expected_local)
 
-    rhs_back_to_global = sample_matrix.project_rhs_to_global(rhs_local)
+    rhs_back_to_global = sample_matrix.permute_left_vector_to_original(rhs_local)
     np.testing.assert_array_equal(rhs_back_to_global, expected_global)
 
 
@@ -543,10 +554,10 @@ def test_project_rhs_to_local_and_global(sample_matrix: BlockMatrixStorage, para
         },
     ],
 )
-def test_project_solution_to_global(sample_matrix: BlockMatrixStorage, params):
-    """Tests `project_solution_to_global`. Results should be different from
-    `project_rhs_to_global`, because the solution corresponds to the space defined by
-    columns of the matrix, and the rhs - to the one defined by rows (Ax = b).
+def test_permute_right_vector_to_original(sample_matrix: BlockLinearSystem, params):
+    """Tests `permute_right_vector_to_original`. Results should be different from
+    `permute_left_vector_to_original`, because the solution corresponds to the space
+    defined by columns of the matrix, and the rhs - to the one defined by rows (Ax = b).
 
     """
     index = params["index"]
@@ -556,7 +567,9 @@ def test_project_solution_to_global(sample_matrix: BlockMatrixStorage, params):
     sample_matrix = sample_matrix[index]
     solution_local = np.array(solution_local)
 
-    solution_back_to_global = sample_matrix.project_solution_to_global(solution_local)
+    solution_back_to_global = sample_matrix.permute_right_vector_to_original(
+        solution_local
+    )
     np.testing.assert_array_equal(solution_back_to_global, expected_global)
 
 
@@ -595,7 +608,7 @@ def test_project_solution_to_global(sample_matrix: BlockMatrixStorage, params):
         },
     ],
 )
-def test_set_zeros(sample_matrix: BlockMatrixStorage, params):
+def test_set_zeros(sample_matrix: BlockLinearSystem, params):
     index_row = params["index_row"]
     index_col = params["index_col"]
     modify_submatrices = params["modify_submatrices"]
@@ -668,7 +681,7 @@ def test_set_zeros(sample_matrix: BlockMatrixStorage, params):
     ],
 )
 @pytest.mark.parametrize("additive", [False, True])
-def test_set_diagonal(sample_matrix: BlockMatrixStorage, params, additive: bool):
+def test_set_diagonal(sample_matrix: BlockLinearSystem, params, additive: bool):
     expected_diagonal_change = params["expected_diagonal_change"]
     fill_groups = params["fill_groups"]
     fill_values = params["fill_values"]
