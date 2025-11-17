@@ -4,11 +4,10 @@ from typing import Literal, Optional
 
 import numpy as np
 import scipy.sparse
-from scipy.sparse import coo_matrix, csr_matrix, spmatrix
 from numpy.typing import DTypeLike
+from scipy.sparse import coo_matrix, csr_matrix, spmatrix
 
 from pp_solvers.plot_linear_system import color_spy, matshow, plot_max, plot_vector
-
 
 __all__ = ["BlockLinearSystem"]
 

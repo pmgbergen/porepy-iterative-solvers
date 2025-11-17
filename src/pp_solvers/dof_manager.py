@@ -5,12 +5,15 @@ from typing import Sequence
 import numpy as np
 import porepy as pp
 
-from pp_solvers.equation_variable_groups import EquationNames, AbstractGroup
+from pp_solvers.equation_variable_groups import (
+    AbstractGroup,
+    EquationGroup,
+    EquationNames,
+)
 from pp_solvers.preconditioners import (
     CompositePreconditioner,
     SinglePhysicsPreconditioner,
 )
-from pp_solvers.equation_variable_groups import EquationGroup
 
 
 class DofManager:

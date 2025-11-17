@@ -8,11 +8,11 @@ import numpy as np
 import porepy as pp
 
 from pp_solvers import equation_variable_groups as groups
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.equation_variable_groups import EquationNames
 from pp_solvers.fixed_stress import make_fs_analytical_slow_new
-from pp_solvers.petsc_utils import csr_to_petsc
 from pp_solvers.petsc_solvers import PcPythonPermutation
-from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.petsc_utils import csr_to_petsc
 
 if TYPE_CHECKING:
     from pp_solvers.dof_manager import DofManager

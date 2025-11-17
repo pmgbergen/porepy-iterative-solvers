@@ -34,7 +34,7 @@ def sample_linear_system() -> BlockLinearSystem:
         indexer=LinearSystemIndexer(
             dofs_row=dofs,
             dofs_col=dofs,
-        )
+        ),
     )
 
 
@@ -112,13 +112,13 @@ def test_linear_transformed_solver(
     petsc_mat.destroy()
 
 
-@pytest.mark.parametrize('groups', [[1], [1, 0]])
+@pytest.mark.parametrize("groups", [[1], [1, 0]])
 def test_construct_is(sample_linear_system: BlockLinearSystem, groups: list[int]):
     indexer = sample_linear_system.indexer
     petsc_is = pp_solvers.construct_is(indexer=indexer, groups=groups)
-    
+
     key = indexer.correct_validate_getitem_key(groups)
     np.testing.assert_equal(petsc_is.array, indexer.get_dofs_of_groups(key)[0])
-    
+
     # Manual teardown.
     petsc_is.destroy()

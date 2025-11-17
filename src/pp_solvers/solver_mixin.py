@@ -10,6 +10,7 @@ from typing import Callable
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
+from porepy.viz.solver_statistics import SolverStatistics
 
 from .block_linear_system import (
     BlockLinearSystem,
@@ -25,13 +26,12 @@ from .options_parsers import (
 )
 from .preconditioners import (
     SinglePhysicsPreconditioner,
-    th_factory,
-    thm_factory,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
+    th_factory,
+    thm_factory,
 )
-from porepy.viz.solver_statistics import SolverStatistics
 
 __all__ = [
     "IterativeSolverMixin",
