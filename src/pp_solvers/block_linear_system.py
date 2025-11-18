@@ -253,7 +253,7 @@ class BlockLinearSystem:
         rows = len(self.indexer.enabled_groups_row)
         cols = len(self.indexer.enabled_groups_col)
         return (
-            f"BlockMatrixStorage of shape {self.shape} with {self.mat.nnz} elements "
+            f"BlockLinearSystem of shape {self.shape} with {self.mat.nnz} elements "
             f"with {rows}x{cols} enabled groups."
         )
 
@@ -536,7 +536,7 @@ class BlockLinearSystem:
         Parameters:
             log: Whether to use the log scale.
             show: Whether to call `plt.show()`.
-            threshold: Does not display the values with `abs(x) < theshold`.
+            threshold: Does not display the values with `abs(x) < threshold`.
             aspect: Passed to `plt.matshow()`. "auto" can be useful if the aspect ratio
             is too high. Otherwise, "equal" is better.
 
@@ -578,6 +578,14 @@ class BlockLinearSystem:
         plot_vector(bmat=self, vec=permuted_solution, side="right", log=log)
 
     def plot_rhs(self, permuted_rhs: Optional[np.ndarray] = None, log: bool = True):
+        """Displays the right-hand side (RHS) vector and colors the background to show different groups.
+
+        Parameters:
+            permuted_rhs: The RHS vector to display, arranged in the same order as this block linear system.
+                If None, uses the system's stored RHS vector.
+            log: Whether to use the log scale for visualization.
+
+        """
         if permuted_rhs is None:
             permuted_rhs = self.rhs
         plot_vector(bmat=self, vec=permuted_rhs, side="left", log=log)
