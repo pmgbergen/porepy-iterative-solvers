@@ -578,10 +578,12 @@ class BlockLinearSystem:
         plot_vector(bmat=self, vec=permuted_solution, side="right", log=log)
 
     def plot_rhs(self, permuted_rhs: Optional[np.ndarray] = None, log: bool = True):
-        """Displays the right-hand side (RHS) vector and colors the background to show different groups.
+        """Displays the right-hand side (RHS) vector and colors the background to show
+        different groups.
 
         Parameters:
-            permuted_rhs: The RHS vector to display, arranged in the same order as this block linear system.
+            permuted_rhs: The RHS vector to display, arranged in the same order as this
+                block linear system.
                 If None, uses the system's stored RHS vector.
             log: Whether to use the log scale for visualization.
 
