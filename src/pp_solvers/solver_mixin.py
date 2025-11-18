@@ -193,7 +193,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
         # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each
-        # array corresponds to one subdomain (or interface). We concatinate them into
+        # array corresponds to one subdomain (or interface). We concatenate them into
         # a list of arrays, where each array corresponds to a single-physics subsolver.
         # That is, each array will include multiple subdomains, and potentially multiple
         # equations / variables.
@@ -203,10 +203,10 @@ class IterativeSolverMixin(pp.PorePyModel):
             concatenate_dof_indices([eq_dofs_by_blocks[i] for i in dofs_in_group])
             for dofs_in_group in equation_groups
         ]
-        var_dofs_by_blocsk = dof_manager.var_dofs_by_blocks(self)
+        var_dofs_by_blocks = dof_manager.var_dofs_by_blocks(self)
         variable_groups = dof_manager.variable_groups
         dofs_col = [
-            concatenate_dof_indices([var_dofs_by_blocsk[i] for i in dofs_in_group])
+            concatenate_dof_indices([var_dofs_by_blocks[i] for i in dofs_in_group])
             for dofs_in_group in variable_groups
         ]
 

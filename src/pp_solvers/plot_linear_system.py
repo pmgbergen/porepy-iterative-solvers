@@ -139,7 +139,7 @@ def matshow(
         mat: The matrix to display.
         log: Whether to use the log scale.
         show: Whether to call `plt.show()`.
-        threshold: Does not display the values with `abs(x) < theshold`.
+        threshold: Does not display the values with `abs(x) < threshold`.
         aspect: Passed to `plt.matshow()`. "auto" can be useful if the aspect ratio
         is too high. Otherwise, "equal" is better.
 
@@ -148,6 +148,7 @@ def matshow(
     try:
         mat = mat.toarray()
     except AttributeError:
+        # If mat does not have a toarray() method, assume it is already a dense array.
         pass
 
     mat[abs(mat) < threshold] = np.nan

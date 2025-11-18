@@ -168,7 +168,7 @@ class MultiPhysicsPreconditioner:
         elim_precond = precond_list[0]
         block_size = 1 if elim_precond.unit_block_size else self._nd
 
-        # Collecting two lists of groups. One for the current groups to be elimitated,
+        # Collecting two lists of groups. One for the current groups to be eliminated,
         # the other for the remaining groups to be kept - the Schur complement for the
         # current groups.
         elim_groups = dof_manager.blocks_of_solver(elim_precond)

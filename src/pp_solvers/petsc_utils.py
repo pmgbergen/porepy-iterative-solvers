@@ -77,7 +77,7 @@ def construct_is(indexer: LinearSystemIndexer, groups: list[int]) -> PETSc.IS:
     """Construct a PETSc IS (index set) from a list of groups.
 
     Parameters:
-        bmat: The block matrix storage.
+        indexer: The LinearSystemIndexer used to map group indices to DOFs.
         groups: The groups to construct the IS from.
 
     Returns:
