@@ -42,31 +42,30 @@ class LinearSystemIndexer:
 
         if enabled_groups_row is None:
             enabled_groups_row = list(range(len(dofs_row)))
-        if enabled_groups_col is None:
-            enabled_groups_col = list(range(len(dofs_col)))
         self.enabled_groups_row: list[int] = enabled_groups_row
         """List of row groups that are enabled. A group is enabled by default, but can
         be disabled if we slice a submatrix without this group. Also indicates the order
         of row permutations.
  
         """
+        if enabled_groups_col is None:
+            enabled_groups_col = list(range(len(dofs_col)))
         self.enabled_groups_col: list[int] = enabled_groups_col
         """List of column groups that are enabled. A group is enabled by default, but
         can be disabled if we slice a submatrix without this group. Also indicates the
         order of column permutations.
  
         """
-
         if original_dofs_row is None:
             original_dofs_row = [x.copy() for x in dofs_row]
-        if original_dofs_col is None:
-            original_dofs_col = [x.copy() for x in dofs_col]
         self.original_dofs_row: list[np.ndarray] = original_dofs_row
         """Same as `dofs_row`, but this list does not change after slicing or
         permutations. Needed for reverse transformations to the original PorePy
         arrangement.
  
         """
+        if original_dofs_col is None:
+            original_dofs_col = [x.copy() for x in dofs_col]
         self.original_dofs_col: list[np.ndarray] = original_dofs_col
         """Same as `dofs_col`, but this list does not change after slicing or
         permutations. Needed for reverse transformations to the original PorePy
@@ -76,10 +75,10 @@ class LinearSystemIndexer:
 
         if group_names_row is None:
             group_names_row = [str(i) for i in range(len(dofs_row))]
-        if group_names_col is None:
-            group_names_col = [str(i) for i in range(len(dofs_col))]
         self.group_names_row: list[str] = group_names_row
         """List of group names for the rows."""
+        if group_names_col is None:
+            group_names_col = [str(i) for i in range(len(dofs_col))]
 
         self.group_names_col: list[str] = group_names_col
         """List of group names for the columns."""
