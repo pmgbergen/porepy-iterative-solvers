@@ -2,7 +2,7 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 
-from .block_matrix import BlockMatrixStorage
+from .block_linear_system import BlockLinearSystem
 
 
 def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix:
@@ -77,8 +77,8 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
 
 
 def make_fs_analytical_slow_new(
-    model, J: BlockMatrixStorage, p_mat_group: int, p_frac_group: int, groups: list[int]
-) -> BlockMatrixStorage:
+    model, J: BlockLinearSystem, p_mat_group: int, p_frac_group: int, groups: list[int]
+) -> BlockLinearSystem:
     index = J[groups].empty_container()
     diagonals = []
     for group in groups:

@@ -8,10 +8,11 @@ import numpy as np
 import porepy as pp
 
 from pp_solvers import equation_variable_groups as groups
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.equation_variable_groups import EquationNames
 from pp_solvers.fixed_stress import make_fs_analytical_slow_new
-from pp_solvers.petsc_utils import csr_to_petsc
 from pp_solvers.petsc_solvers import PcPythonPermutation
+from pp_solvers.petsc_utils import csr_to_petsc
 
 if TYPE_CHECKING:
     from pp_solvers.dof_manager import DofManager
@@ -732,19 +733,12 @@ def thm_factory():
     ]
 
 
-def _to_cell_ordering(J, group_lists: list[list[int]]):
+def _to_cell_ordering(J: BlockLinearSystem, group_lists: list[list[int]]):
     all_groups = list(chain.from_iterable(group_lists))
-    J = J[all_groups]
 
+    indexer = J.empty_container()[all_groups].indexer
     rows = [
-        get_dofs_of_groups(J.groups_to_blocks_row, J.local_dofs_row, group)
-        for group in group_lists
+        np.concatenate([indexer.dofs_row[i] for i in groups]) for groups in group_lists
     ]
+
     return np.vstack(rows).ravel("F")
-
-
-def get_dofs_of_groups(
-    groups_to_block: list[list[int]], dofs: list[np.ndarray], groups: list[int]
-) -> np.ndarray:
-    blocks = [blk for g in groups for blk in groups_to_block[g]]
-    return np.concatenate([dofs[blk] for blk in blocks])

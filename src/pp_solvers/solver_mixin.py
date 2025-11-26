@@ -10,8 +10,13 @@ from typing import Callable
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
+from porepy.viz.solver_statistics import SolverStatistics
 
-from .block_matrix import BlockMatrixStorage
+from .block_linear_system import (
+    BlockLinearSystem,
+    LinearSystemIndexer,
+    concatenate_dof_indices,
+)
 from .dof_manager import DofManager
 from .mat_utils import csr_ones, inv_block_diag
 from .options_parsers import (
@@ -21,13 +26,12 @@ from .options_parsers import (
 )
 from .preconditioners import (
     SinglePhysicsPreconditioner,
-    th_factory,
-    thm_factory,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
+    th_factory,
+    thm_factory,
 )
-from porepy.viz.solver_statistics import SolverStatistics
 
 __all__ = [
     "IterativeSolverMixin",
@@ -40,15 +44,17 @@ essentially bearers of options for the solver.
 """
 
 
-def transform_contact_block(J, row_group: int, col_group: int, nd: int):
+def transform_contact_block(
+    J: BlockLinearSystem, row_group: int, col_group: int, nd: int
+):
     """Assemble the right linear transformation."""
     # Sorted according to groups. If not done, the matrix can be in porepy order,
     # which does not guarantee that diagonal groups are truly on diagonals.
     Qright = J.empty_container()[:]
 
-    if row_group not in J.active_groups[0]:
-        # EK: The idea here is that if the relevant row group is not active, the
-        # transformation is the identity matrix (nothing should be done).
+    if len(J.indexer.dofs_row[row_group]) == 0:
+        # If the relevant row group is empty (case without fractures), the
+        # transformation is the identity matrix, nothing should be done.
         Qright.mat = csr_ones(Qright.shape[0])
         return Qright
 
@@ -126,7 +132,8 @@ class LinearSolverStatistics(SolverStatistics):
 class IterativeSolverMixin(pp.PorePyModel):
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
-        mat, rhs = self.linear_system
+        # The rhs inside the linear system object is rearranged to match the matrix.
+        rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
@@ -147,9 +154,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
-        rhs_loc = self.bmat.project_rhs_to_local(self.rhs_reordered)
         t0 = time()
-        x_loc = solver.solve(rhs_loc)
+        x_loc = solver.solve(rhs)
         self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
@@ -162,7 +168,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Project the solution back to the global (PorePy) ordering. For clarity, no
         # contact reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
-        x = self.bmat.project_solution_to_global(x_loc)
+        x = self.bmat.permute_right_vector_to_original(x_loc)
         self.nonlinear_solver_statistics.petsc_converged_reason.append(info)
         self.nonlinear_solver_statistics.num_krylov_iters.append(
             len(solver.get_residuals())
@@ -185,26 +191,40 @@ class IterativeSolverMixin(pp.PorePyModel):
         mat = mat[dof_manager.eq_rows_permutation(self)]
         rhs = rhs[dof_manager.eq_rows_permutation(self)]
 
-        bmat = BlockMatrixStorage(
+        # Creating the indices of DoFs for the BlockLinearSystem class.
+        # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each
+        # array corresponds to one subdomain (or interface). We concatenate them into
+        # a list of arrays, where each array corresponds to a single-physics subsolver.
+        # That is, each array will include multiple subdomains, and potentially multiple
+        # equations / variables.
+        eq_dofs_by_blocks = dof_manager.eq_dofs_by_blocks(self)
+        equation_groups = dof_manager.equation_groups
+        dofs_row = [
+            concatenate_dof_indices([eq_dofs_by_blocks[i] for i in dofs_in_group])
+            for dofs_in_group in equation_groups
+        ]
+        var_dofs_by_blocks = dof_manager.var_dofs_by_blocks(self)
+        variable_groups = dof_manager.variable_groups
+        dofs_col = [
+            concatenate_dof_indices([var_dofs_by_blocks[i] for i in dofs_in_group])
+            for dofs_in_group in variable_groups
+        ]
+
+        bmat = BlockLinearSystem(
             mat=mat,
-            global_dofs_row=dof_manager.eq_dofs_by_blocks(self),
-            global_dofs_col=dof_manager.var_dofs_by_blocks(self),
-            groups_to_blocks_row=dof_manager.equation_groups,
-            groups_to_blocks_col=dof_manager.variable_groups,
-            group_names_row=dof_manager.equation_names(self),
-            group_names_col=dof_manager.variable_names(self),
+            rhs=rhs,
+            indexer=LinearSystemIndexer(
+                dofs_row=dofs_row,
+                dofs_col=dofs_col,
+                group_names_row=dof_manager.equation_names(self),
+                group_names_col=dof_manager.variable_names(self),
+            ),
         )
 
         # Store the linear system in the solver mixin *and*, by calling [:], rearrange
         # the blocks (and thereby the underlying matrix) to match the ordering defined
         # by the # `dof_manager`.
         self.bmat = bmat[:]
-        # Also store the right hand side vector, with the eq_rows_permutation (that is,
-        # the reordering of the contact equtaions) applied. Note that this does not yet
-        # have the block reordering applied (the result of the [:] operation on the
-        # block matrix above). This will be taken care of by projection methods prior to
-        # and after the actual linear solve.
-        self.rhs_reordered = rhs
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.

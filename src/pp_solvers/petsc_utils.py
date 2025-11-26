@@ -7,6 +7,8 @@ import petsc4py
 import scipy.sparse
 from petsc4py import PETSc
 
+from pp_solvers.block_linear_system import LinearSystemIndexer
+
 # This is the place where the user has a change to pass command line options to petsc.
 # Before calling init, all petsc objects are unavailable, so this is a reasonable place
 # to initialize it.
@@ -17,6 +19,7 @@ __all__ = [
     "csr_to_petsc",
     "petsc_to_csr",
     "clear_petsc_options",
+    "construct_is",
     "insert_petsc_options",
 ]
 
@@ -68,3 +71,27 @@ def clear_petsc_options() -> PETSc.Options:
     for key in options.getAll():
         options.delValue(key)
     return options
+
+
+def construct_is(indexer: LinearSystemIndexer, groups: list[int]) -> PETSc.IS:
+    """Construct a PETSc IS (index set) from a list of groups.
+
+    Parameters:
+        indexer: The LinearSystemIndexer used to map group indices to DOFs.
+        groups: The groups to construct the IS from.
+
+    Returns:
+        The PETSc IS object representing the groups.
+
+    """
+    key = indexer.correct_validate_getitem_key(groups)
+    dofs_row, dofs_col = indexer.get_dofs_of_groups(key)
+
+    # dofs_row and dofs_col should be identical. If not, something weird have happened.
+    assert np.all(dofs_row == dofs_col)
+    # Checking that casting is safe.
+    i32_min = np.iinfo(np.int32).min
+    i32_max = np.iinfo(np.int32).max
+    assert np.all((dofs_row >= i32_min) & (dofs_row <= i32_max))
+
+    return PETSc.IS().createGeneral(dofs_row.astype(np.int32, casting="unsafe"))
