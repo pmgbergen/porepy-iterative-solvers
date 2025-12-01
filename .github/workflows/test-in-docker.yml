@@ -19,8 +19,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pull Docker image
+      # Restore cached image (if present).
+      - name: Restore Docker image cache
+        id: cacheDockerImage
+        uses: actions/cache@v4
+        with:
+          path: docker-image.tar
+          key: docker-image-${{ env.DOCKER_IMAGE }}
+
+      - name: Load cached image
+        if: steps.cacheDockerImage.outputs.cache-hit == 'true'
+        run: docker load -i docker-image.tar
+
+      # This runs unconditionally, even if the image is restored from cache. If so, it
+      # compares the local image with the one on dockerhub. If a newer version is
+      # available online, it will be downloaded and used.
+      - name: Pull image (if missing or outdated)
         run: docker pull $DOCKER_IMAGE
+
+      # Save updated image back into cache. Again, this runs unconditionally for the
+      # same reason.
+      - name: Save Docker image
+        run: docker save $DOCKER_IMAGE -o docker-image.tar
 
       - name: Run tests inside container
         run: |
