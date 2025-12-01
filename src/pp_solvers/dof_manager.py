@@ -202,7 +202,7 @@ class DofManager:
         # contact group, but this is not yet available at this point. Refactoring may be
         # a good idea.
         contact_group = self.identify_contact_group()
-        if contact_group == -1:
+        if contact_group is None:
             self._equation_groups = equation_groups_by_number
         else:
             self._equation_groups = self._correct_contact_equations_groups(
@@ -290,7 +290,7 @@ class DofManager:
             offset += local_offset
 
         contact_group = self.identify_contact_group()
-        if contact_group == -1:
+        if contact_group == None:
             # If there is no contact group, return the original equation dofs.
             return eq_dofs
         # Short cut if no contact mechanics, hence no reordering.
@@ -357,38 +357,33 @@ class DofManager:
         """
         return self._solver_groups[solver]
 
-    def identify_contact_group(self) -> int:
+    def identify_contact_group(self) -> int | None:
         """Identify the contact group in the equation groups.
 
         It is assumed that there is a single contact group, that is, that the contact
         blocks are not split into several groups.
 
-        Parameters:
-            model: The PorePy model.
-
         Returns:
             The index of the contact group in the equation groups. If no contact group
-            is found, returns -1.
+            is found, returns None.
 
         """
         # Identify the contact group in the equation groups
-        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [-1])
-        # YZ: I'm afraid treating "-1" as absence of the group can shoot us in a foot at
-        # some point, because of how numpy treats it as a trailing index.
+        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [None])
         return ind[0]
 
-    def identify_energy_balance_group(self) -> list[int]:
-        """Identify the energy balance group in the equation groups.
+    def identify_energy_balance_groups(self) -> list[int]:
+        """Identify the energy balance groups in the equation groups.
 
         Returns:
             The indices of the energy balance group in the equation groups.
 
         """
-        # YZ: Why [-1] and not []?
-        return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [-1])
+        return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [])
 
-    def identify_u_intf_group(self, model):
-        """Identify the interface displacement group in the equation groups.
+    def identify_u_intf_group(self, model) -> int | None:
+        """Identify the interface displacement group in the equation groups. It is
+        assumed that there is a single group of interface displacements.
 
         Parameters:
             model: The PorePy model.
@@ -396,10 +391,10 @@ class DofManager:
         Returns:
             The index of the interface displacement group in the equation groups. If no
             interface displacement group is found, or the group does not have non-empty
-            variable, the value -1 is returned.
+            variable, None is returned.
 
-            Note the inconsistency with `identify_contact_group`, which returns 0 if the
-            model has a contact group, but no equations are defined for it. This
+            Note the inconsistency with `identify_contact_group`, which returns a value
+            if the model has a contact group, but no equations are defined for it. This
             reflects an asymmetry in PorePy's treatment of equations and variables:
             Equations defined on empty domains are still equations, while variables on
             empty domains have the name `empty_md_variable` and is thereby not
@@ -407,8 +402,8 @@ class DofManager:
 
         """
         if not hasattr(model, "interface_displacement_variable"):
-            # If the model does not have an interface displacement variable, return -1.
-            return -1
+            # The model does not have an interface displacement variable.
+            return None
 
         # Identify the interface group in the equation groups.
         i = 0
@@ -432,7 +427,7 @@ class DofManager:
                         return i
                     else:
                         i += 1
-        return -1
+        return None
 
     def eq_rows_permutation(self, model: pp.PorePyModel):
         """Get a permutation vector for the full linear system of equations.
@@ -466,7 +461,7 @@ class DofManager:
         contact_group = self.identify_contact_group()
 
         # If there is no contact group, return the original equation groups.
-        if contact_group == -1:
+        if contact_group is None:
             return np.arange(model.equation_system.num_dofs())
         # If contact is formally present, but no equations are defined for it,
         # return the original permutation.

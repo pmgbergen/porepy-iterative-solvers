@@ -245,21 +245,20 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         ksp_factory = PetscKSPScheme(preconditioner=precond)
         contact_transform, thermal_transform = None, None
-        if contact_ind > -1:
+        if contact_ind is not None and u_intf_ind is not None:
             # If there is a contact group, we need to use a linear solver that takes
             # care of potential singularities in the contact block.
-
             contact_transform = [
                 lambda bmat: transform_contact_block(
                     bmat, contact_ind, u_intf_ind, self.nd
                 )
             ]
-        if any(
-            [name.startswith("energy") for name in dof_manager.equation_names(self)]
-        ):
-            row = dof_manager.identify_energy_balance_group()
+        energy_balance_groups = dof_manager.identify_energy_balance_groups()
+        if len(energy_balance_groups) > 0:
             thermal_transform = [
-                lambda bmat: scale_energy_transform(bmat, row_groups=row, model=self)
+                lambda bmat: scale_energy_transform(
+                    bmat, row_groups=energy_balance_groups, model=self
+                )
             ]
 
         if contact_transform is not None or thermal_transform is not None:
