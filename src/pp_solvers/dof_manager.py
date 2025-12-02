@@ -369,7 +369,9 @@ class DofManager:
 
         """
         # Identify the contact group in the equation groups
-        ind = self._name_to_group_indices.get(EquationNames.CONTACT_NORMAL.value, [None])
+        ind = self._name_to_group_indices.get(
+            EquationNames.CONTACT_NORMAL.value, [None]
+        )
         return ind[0]
 
     def identify_energy_balance_groups(self) -> list[int]:
