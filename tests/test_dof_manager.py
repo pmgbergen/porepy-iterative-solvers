@@ -328,7 +328,7 @@ def test_identify_contact_group(dof_manager: DofManager, expected_composition: d
     try:
         expected = list(expected_composition.keys()).index("contact")
     except ValueError:
-        expected = -1
+        expected = None
     assert dof_manager.identify_contact_group() == expected
 
 
@@ -342,9 +342,9 @@ def test_identify_u_intf_group(
         try:
             expected = list(expected_composition.keys()).index("intf_force_balance")
         except ValueError:
-            expected = -1
+            expected = None
     else:
-        expected = -1
+        expected = None
 
     assert dof_manager.identify_u_intf_group(model) == expected
 
@@ -356,10 +356,7 @@ def test_identify_energy_balance_group(
     expected = list(
         i for i, key in enumerate(expected_composition) if "energy_balance" in key
     )
-    if len(expected) == 0:
-        expected = [-1]
-
-    assert dof_manager.identify_energy_balance_group() == expected
+    assert dof_manager.identify_energy_balance_groups() == expected
 
 
 def test_eq_rows_permutation(dof_manager: DofManager, model: pp.PorePyModel):
@@ -375,7 +372,7 @@ def test_eq_rows_permutation(dof_manager: DofManager, model: pp.PorePyModel):
 
     # Checking if there is contact mechanics in the model.
     contact_group = dof_manager.identify_contact_group()
-    if contact_group != -1:
+    if contact_group is not None:
         # Construct the expected permutation vector: The contact equations should be
         # permuted so that the normal and tangential equations are grouped together for
         # each fracture cell. Other equations should be unperturbed.

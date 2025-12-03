@@ -105,7 +105,10 @@ def dof_manager(
 def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockLinearSystem:
     bmat = model.bmat
     contact = dof_manager.identify_contact_group()
-    if contact != -1:
+
+    # Given the current discretization, the contact group is singular. We simply fill
+    # the diagonal to avoid numerical issues. This does not represent realistic physics.
+    if contact is not None:
         bmat.set_diagonal([contact], 1)
     return bmat
 
