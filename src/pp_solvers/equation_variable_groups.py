@@ -28,6 +28,9 @@ class EquationNames(Enum):
     CONTACT_NORMAL = "normal_fracture_deformation_equation"
     CONTACT_TANGENTIAL = "tangential_fracture_deformation_equation"
 
+    WELL_FLUX = "well_flux_equation"
+    WELL_ENTHALPY_FLUX = "well_enthalpy_flux_equation"
+
 
 @dataclass
 class EquationGroupItem:
@@ -239,20 +242,34 @@ class InterfaceDarcyFluxGroup(AbstractGroup):
                         EquationNames.INTERFACE_DARCY_FLUX.value, interfaces
                     )
                 ]
-            )
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(EquationNames.WELL_FLUX.value, interfaces),
+                ]
+            ),
         ]
 
     def variable_groups(
         self, model: pp.PorePyModel
     ) -> list[list[pp.ad.MixedDimensionalVariable]]:
         interfaces = model.mdg.interfaces()
-        return [[model.interface_darcy_flux(interfaces)]]
+        return [
+            [model.interface_darcy_flux(interfaces)],
+            [model.well_flux(interfaces)],
+        ]
 
     def equation_names(self, model) -> list[str]:
-        return [EquationNames.INTERFACE_DARCY_FLUX.value]
+        return [
+            EquationNames.INTERFACE_DARCY_FLUX.value,
+            EquationNames.WELL_FLUX.value,
+        ]
 
     def variable_names(self, model) -> list[str]:
-        return [model.interface_darcy_flux_variable]
+        return [
+            model.interface_darcy_flux_variable,
+            model.well_flux_variable,
+        ]
 
 
 class InterfaceEnthalpyFluxGroup(AbstractGroup):
@@ -288,6 +305,8 @@ class InterfaceEnthalpyFluxGroup(AbstractGroup):
 
 
 class InterfaceFourierFluxGroup(AbstractGroup):
+    # YZ: Not used anywhere.
+
     def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
         interfaces = model.mdg.interfaces()
         return [
@@ -344,6 +363,18 @@ class InterfaceMassEnergyFluxGroup(AbstractGroup):
                     )
                 ]
             ),
+            EquationGroup(
+                [
+                    EquationGroupItem(EquationNames.WELL_FLUX.value, interfaces),
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem(
+                        EquationNames.WELL_ENTHALPY_FLUX.value, interfaces
+                    ),
+                ]
+            ),
         ]
 
     def variable_groups(
@@ -354,6 +385,8 @@ class InterfaceMassEnergyFluxGroup(AbstractGroup):
             [model.interface_enthalpy_flux(interfaces)],
             [model.interface_fourier_flux(interfaces)],
             [model.interface_darcy_flux(interfaces)],
+            [model.well_flux(interfaces)],
+            [model.well_enthalpy_flux(interfaces)],
         ]
 
     def equation_names(self, model) -> list[str]:
@@ -361,6 +394,8 @@ class InterfaceMassEnergyFluxGroup(AbstractGroup):
             EquationNames.INTERFACE_ENTHALPY_FLUX.value,
             EquationNames.INTERFACE_FOURIER_FLUX.value,
             EquationNames.INTERFACE_DARCY_FLUX.value,
+            EquationNames.WELL_FLUX.value,
+            EquationNames.WELL_ENTHALPY_FLUX.value,
         ]
 
     def variable_names(self, model) -> list[str]:
@@ -368,6 +403,8 @@ class InterfaceMassEnergyFluxGroup(AbstractGroup):
             model.interface_enthalpy_flux_variable,
             model.interface_fourier_flux_variable,
             model.interface_darcy_flux_variable,
+            model.well_flux_variable,
+            model.well_enthalpy_flux_variable,
         ]
 
 

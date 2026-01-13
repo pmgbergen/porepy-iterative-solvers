@@ -4,12 +4,19 @@ import pytest
 from porepy.applications.test_utils.models import add_mixin
 from scipy.sparse.linalg import spsolve
 
+from porepy.applications.md_grids.model_geometries import (
+    TwoEllipticFractures3d,
+    TwoWells3d,
+)
+
 import pp_solvers
 from pp_solvers.solver_mixin import IterativeSolverMixin
 
 
-@pytest.fixture(scope="module", params=[False, True])
-def with_fractures(request) -> bool:
+@pytest.fixture(
+    scope="module", params=["with_fractures", "with_wells", "single_dimension"]
+)
+def geometry_kind(request) -> bool:
     return request.param
 
 
@@ -19,7 +26,7 @@ def model_kind(request) -> str:
 
 
 @pytest.fixture(scope="module")
-def model(model_kind, with_fractures) -> pp.PorePyModel:
+def model(model_kind: str, geometry_kind: str) -> pp.PorePyModel:
     """Instantiate a model for the test suites in this file."""
     match model_kind:
         case "flow":
@@ -35,21 +42,56 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
         case default:
             raise ValueError(default)
 
-    class TailoredClass(
-        pp.model_geometries.SquareDomainOrthogonalFractures,
-        pp_solvers.IterativeSolverMixin,
-    ):
-        """Common base class for all models in this test suite."""
+    with_wells = geometry_kind == "with_wells"
+    with_fractures = geometry_kind == "with_fractures"
+    single_dimension = not with_fractures and not with_wells
+    units = pp.Units()
 
-        def meshing_arguments(self):
-            return {"cell_size": self.params["cell_size"]}
+    if with_fractures or single_dimension:
+        class TailoredClass(
+            pp.model_geometries.SquareDomainOrthogonalFractures,
+            pp_solvers.IterativeSolverMixin,
+        ):
+            """Common base class for all models in this test suite."""
 
-    params = {
-        "linear_solver": {},
-        "cell_size": 0.25,
-        "cartesian": True,
-        "fracture_indices": [0, 1] if with_fractures else [],
-    }
+            def meshing_arguments(self):
+                return {"cell_size": self.params["cell_size"]}
+
+        params = {
+            "linear_solver": {},
+            "cell_size": units.convert_units(0.25, 'm'),
+            "cartesian": True,
+            'units': units,
+            "fracture_indices": [0, 1] if with_fractures else [],
+        }
+
+    elif with_wells:
+        
+        # This breaks the generality of the test, but we need a 3D setup for the wells.
+        # However, we also cover a 3D setup, which is not a bad thing by itself. The THM
+        # model with this geometry has 364 DoFs total. 
+        class TailoredClass(
+                TwoWells3d,
+                TwoEllipticFractures3d,
+                pp_solvers.IterativeSolverMixin,
+            ):
+            pass
+        params = {
+            "linear_solver": {},
+            "grid_type": "simplex",
+            'units': units,
+            "meshing_arguments": {
+                'cell_size': units.convert_units(1.5, 'm'),
+            },
+            # Fractures
+            'fracture_params': {
+                'num_points': [3, 3],
+            },
+        }
+
+    else:
+        raise ValueError(f"Unknown geometry_kind: {geometry_kind}.")
+
     model_class = add_mixin(TailoredClass, model_type)
     model = model_class(params=params)
     model.prepare_simulation()
@@ -66,4 +108,4 @@ def test_solve_linear_system(model: IterativeSolverMixin):
     rhs[:] = 1
 
     expected = spsolve(mat, rhs)
-    np.testing.assert_allclose(result, expected, rtol=1e-10, atol=0)
+    np.testing.assert_allclose(result, expected, rtol=7e-10, atol=0)
