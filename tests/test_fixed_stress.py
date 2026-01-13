@@ -66,9 +66,9 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
     )
 
     # YZ: Is there a better way than hard-coding these numbers?
-    num_groups = 12
-    p_mat_group = 6
-    p_frac_group = 7
+    num_groups = 14
+    p_mat_group = 8
+    p_frac_group = 9
 
     all_groups = list(range(num_groups))
     result = make_fs_analytical_slow_new(

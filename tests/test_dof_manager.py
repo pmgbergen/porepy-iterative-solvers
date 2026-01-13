@@ -98,7 +98,8 @@ def expected_composition(
     # Constructing relevant sets of domains.
     all_subdomains = model.mdg.subdomains()
     fractures = model.mdg.subdomains(dim=model.nd - 1)
-    all_interfaces = model.mdg.interfaces()
+    all_interfaces_codim_1 = model.mdg.interfaces(codim=1)
+    all_interfaces_codim_2 = model.mdg.interfaces(codim=2)
     intersections = [
         domain
         for x in range(0, model.nd - 1)
@@ -110,7 +111,8 @@ def expected_composition(
     # And counting the number of cells in each.
     all_subdomains = np.array([x.num_cells for x in all_subdomains])
     fractures = np.array([x.num_cells for x in fractures])
-    all_interfaces = np.array([x.num_cells for x in all_interfaces])
+    all_interfaces_codim_1 = np.array([x.num_cells for x in all_interfaces_codim_1])
+    all_interfaces_codim_2 = np.array([x.num_cells for x in all_interfaces_codim_2])
     intersections = np.array([x.num_cells for x in intersections])
     interfaces_ambient_frac = np.array([x.num_cells for x in interfaces_ambient_frac])
     porous_media_subdomains = np.array([x.num_cells for x in porous_media_subdomains])
@@ -122,7 +124,8 @@ def expected_composition(
     match model_kind:
         case "flow":
             return {
-                "intf_fluid_flux": all_interfaces,
+                "intf_fluid_flux": all_interfaces_codim_1,
+                "well_flux_equation": all_interfaces_codim_2,
                 "mass_balance_everywhere": all_subdomains,
             }
         case "mechanics":
@@ -133,9 +136,11 @@ def expected_composition(
             }
         case "TH":
             return {
-                "intf_fluid_flux": all_interfaces,
-                "intf_heat_advection": all_interfaces,
-                "intf_heat_diffusion": all_interfaces,
+                "intf_fluid_flux": all_interfaces_codim_1,
+                "intf_heat_advection": all_interfaces_codim_1,
+                "intf_heat_diffusion": all_interfaces_codim_1,
+                "well_flux_equation": all_interfaces_codim_2,
+                "well_enthalpy_flux_equation": all_interfaces_codim_2,
                 # Mass balance ambient, fractures, lower (separately).
                 "mass_balance_ambient": porous_media_subdomains,
                 "mass_balance_fractures": fractures,
@@ -148,7 +153,8 @@ def expected_composition(
         case "HM":
             return {
                 "contact": fractures * nd,
-                "intf_fluid_flux": all_interfaces,
+                "intf_fluid_flux": all_interfaces_codim_1,
+                "well_flux_equation": all_interfaces_codim_2,
                 "momentum_balance": porous_media_subdomains * nd,
                 "intf_force_balance": interfaces_ambient_frac * nd,
                 # Mass balance ambient, fractures, lower (separately).
@@ -159,9 +165,13 @@ def expected_composition(
         case "THM":
             return {
                 "contact": fractures * nd,
-                "intf_fluid_flux": all_interfaces,
-                "intf_heat_advection": all_interfaces,
-                "intf_heat_diffusion": all_interfaces,
+                # Interfaces.
+                "intf_fluid_flux": all_interfaces_codim_1,
+                "intf_heat_advection": all_interfaces_codim_1,
+                "intf_heat_diffusion": all_interfaces_codim_1,
+                "well_flux_equation": all_interfaces_codim_2,
+                "well_enthalpy_flux_equation": all_interfaces_codim_2,
+                # Elasticity and force balance.
                 "momentum_balance": porous_media_subdomains * nd,
                 "intf_force_balance": interfaces_ambient_frac * nd,
                 # Mass balance ambient, fractures, lower (separately).
@@ -251,7 +261,10 @@ def test_blocks_of_solver(
     match model_kind:
         case "flow":
             expected = [
-                ["intf_fluid_flux"],
+                [
+                    "intf_fluid_flux",
+                    "well_flux_equation",
+                ],
                 ["mass_balance_everywhere"],
             ]
         case "mechanics":
@@ -268,6 +281,8 @@ def test_blocks_of_solver(
                     "intf_fluid_flux",
                     "intf_heat_advection",
                     "intf_heat_diffusion",
+                    "well_flux_equation",
+                    "well_enthalpy_flux_equation",
                 ],
                 [
                     "mass_balance_ambient",
@@ -281,7 +296,10 @@ def test_blocks_of_solver(
         case "HM":
             expected = [
                 ["contact"],
-                ["intf_fluid_flux"],
+                [
+                    "intf_fluid_flux",
+                    "well_flux_equation",
+                ],
                 [
                     "momentum_balance",
                     "intf_force_balance",
@@ -299,6 +317,8 @@ def test_blocks_of_solver(
                     "intf_fluid_flux",
                     "intf_heat_advection",
                     "intf_heat_diffusion",
+                    "well_flux_equation",
+                    "well_enthalpy_flux_equation",
                 ],
                 [
                     "momentum_balance",
