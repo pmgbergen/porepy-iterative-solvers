@@ -26,7 +26,9 @@ jobs:
         run: |
           docker run --rm $DOCKER_IMAGE \
             bash -c "
-              cd pp_solvers &&
+              cd ~/porepy &&
+              git pull &&
+              cd ~/pp_solvers &&
               git fetch origin $TEST_BRANCH &&
               git checkout $TEST_BRANCH &&
               git pull origin $TEST_BRANCH &&
