@@ -48,6 +48,7 @@ def model(model_kind: str, geometry_kind: str) -> pp.PorePyModel:
     units = pp.Units()
 
     if with_fractures or single_dimension:
+
         class TailoredClass(
             pp.model_geometries.SquareDomainOrthogonalFractures,
             pp_solvers.IterativeSolverMixin,
@@ -59,33 +60,33 @@ def model(model_kind: str, geometry_kind: str) -> pp.PorePyModel:
 
         params = {
             "linear_solver": {},
-            "cell_size": units.convert_units(0.25, 'm'),
+            "cell_size": units.convert_units(0.25, "m"),
             "cartesian": True,
-            'units': units,
+            "units": units,
             "fracture_indices": [0, 1] if with_fractures else [],
         }
 
     elif with_wells:
-        
         # This breaks the generality of the test, but we need a 3D setup for the wells.
         # However, we also cover a 3D setup, which is not a bad thing by itself. The THM
-        # model with this geometry has 364 DoFs total. 
+        # model with this geometry has 364 DoFs total.
         class TailoredClass(
-                TwoWells3d,
-                TwoEllipticFractures3d,
-                pp_solvers.IterativeSolverMixin,
-            ):
+            TwoWells3d,
+            TwoEllipticFractures3d,
+            pp_solvers.IterativeSolverMixin,
+        ):
             pass
+
         params = {
             "linear_solver": {},
             "grid_type": "simplex",
-            'units': units,
+            "units": units,
             "meshing_arguments": {
-                'cell_size': units.convert_units(1.5, 'm'),
+                "cell_size": units.convert_units(1.5, "m"),
             },
             # Fractures
-            'fracture_params': {
-                'num_points': [3, 3],
+            "fracture_params": {
+                "num_points": [3, 3],
             },
         }
 
