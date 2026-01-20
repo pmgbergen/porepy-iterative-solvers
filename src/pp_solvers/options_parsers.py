@@ -84,11 +84,22 @@ class MultiPhysicsPreconditioner:
                 pc.setFromOptions()
                 pc.setUp()
                 for i, sub_solver in enumerate(single_physics_precond.solvers):
+                    # Implementation note: This is something of a break with how petsc
+                    # options are set in the rest of the package: Instead of defining
+                    # the option through PETSc.Options(), we use the Python API
+                    # directly. This may be possible to avoid, but turned out to solve
+                    # an issue with setting up CompositePC, so it will have to do for
+                    # now.
+                    # Set the matrix for the sub-preconditioner. This seems to be
+                    # necessary for composite preconditioners.
                     if isinstance(sub_solver, list):
                         pc.addCompositePCType("fieldsplit")
                         sub_pc = pc.getCompositePC(i)
                         sub_pc.setOperators(*pc.getOperators())
-                        loc_options = self.configure(
+                        # Inconsistency with method names: multiphysics "configure"
+                        # calls petsc setFromOptions, while single physics does not.
+                        # That's why we don't call setFromOptions here for fieldsplit.
+                        tagged_options = self.configure(
                             bmat,
                             sub_pc,
                             user_options,
@@ -105,31 +116,27 @@ class MultiPhysicsPreconditioner:
                         pc.addCompositePCType(loc_options["pc_type"])
                         sub_pc = pc.getCompositePC(i)
                         sub_pc.setOperators(*pc.getOperators())
-                    # Implementation note: This is something of a break with how petsc
-                    # options are set in the rest of the package: Instead of defining
-                    # the option through PETSc.Options(), we use the Python API
-                    # directly. This may be possible to avoid, but turned out to solve
-                    # an issue with setting up CompositePC, so it will have to do for
-                    # now.
-                    # Set the matrix for the sub-preconditioner. This seems to be
-                    # necessary for composite preconditioners.
-                    if loc_options.get("pc_type") == "python":
-                        # EK cannot wrap his head around what this would mean, so we
-                        # rule it out for now.
-                        assert not has_complement
-                        python_pc = sub_solver.python_preconditioner(bmat, dof_manager)
-                        python_pc.petsc_pc.setOptionsPrefix(f"{prefix}python_")
-                        sub_pc.setType("python")
-                        sub_pc.setPythonContext(python_pc)
+                        tagged_loc_options = {
+                            f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
+                        }
 
-                    tagged_loc_options = {
-                        f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
-                    }
+                        insert_petsc_options(tagged_loc_options)
+                        sub_pc.setFromOptions()
 
-                    insert_petsc_options(tagged_loc_options)
-                    sub_pc.setFromOptions()
-                    sub_pc.setUp()
-                    tagged_options |= tagged_loc_options
+                        if loc_options.get("pc_type") == "python":
+                            # EK cannot wrap his head around what this would mean, so we
+                            # rule it out for now.
+                            assert not has_complement
+                            python_pc = sub_solver.python_preconditioner(
+                                bmat, dof_manager
+                            )
+                            python_pc.petsc_pc.setOptionsPrefix(
+                                f"{prefix}sub_{i}_python_"
+                            )
+                            sub_pc.setPythonContext(python_pc)
+
+                        sub_pc.setUp()
+                        tagged_options |= tagged_loc_options
 
             # Get the tag for this group, and prepend it to the options.
 
