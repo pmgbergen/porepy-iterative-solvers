@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import count
 from typing import Sequence
 
 import numpy as np
@@ -80,7 +81,11 @@ class DofManager:
                 # assumption of the below parsing. Dealing with anything else would
                 # require a more structured approach to the parsing, but EK has neither
                 # the imagination nor the test cases needed to do so now.
-                assert isinstance(slv, CompositePreconditioner)
+                if not isinstance(slv, CompositePreconditioner):
+                    raise NotImplementedError(
+                        "Multiple groups within a non-composite preconditioner not"
+                        "supported."
+                    )
 
                 # These are the "results" of this conditional branch, used below.
                 groups_loc = []
@@ -280,9 +285,23 @@ class DofManager:
         reordered so that the normal and tangential equations for each fracture cell
         form a digonal block.
         """
+        skip_list = {
+            "local_component_mass_constraint_CO2",
+            "isofugacity_constraint_H2O_G_L",
+            "isofugacity_constraint_CO2_G_L",
+            "semismooth_complementary_condition_L",
+            "semismooth_complementary_condition_G",
+            "local_fluid_enthalpy_constraint",
+            "local_phase_mass_constraint_G",
+        }
         eq_dofs: list[np.ndarray] = []
         offset = 0
-        for data in model.equation_system._equation_image_space_composition.values():
+        for (
+            eq_name,
+            data,
+        ) in model.equation_system._equation_image_space_composition.items():
+            if eq_name in skip_list:
+                continue
             local_offset = 0
             for dofs in data.values():
                 eq_dofs.append(dofs + offset)
@@ -338,9 +357,25 @@ class DofManager:
                 indices) of the variable.
 
         """
+        skip_list = {
+            "temperature",
+            "s_G",
+            "y_G",
+            "x_H2O_L",
+            "x_CO2_L",
+            "x_H2O_G",
+            "x_CO2_G",
+        }
+
+        proj = model.equation_system._Schur_complement[3].T.tocsc()
+
         var_dofs: list[np.ndarray] = []
         for var in model.equation_system.variables:
-            var_dofs.append(model.equation_system.dofs_of([var]))
+            if var.name in skip_list:
+                continue
+            var_dofs.append(
+                proj.indices[proj.indptr[model.equation_system.dofs_of([var])]]
+            )
         return var_dofs
 
     def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> list[int]:
@@ -577,8 +612,21 @@ class DofManager:
 
         """
         # Create a 0-based index for each variable.
+        skip_list = {
+            "temperature",
+            "s_G",
+            "y_G",
+            "x_H2O_L",
+            "x_CO2_L",
+            "x_H2O_G",
+            "x_CO2_G",
+        }
+
+        counter = count(0)
         variable_to_idx = {
-            var: i for i, var in enumerate(model.equation_system.variables)
+            var: next(counter)
+            for var in model.equation_system.variables
+            if var.name not in skip_list
         }
         indices = []
         for md_var_group in md_variables_groups:
@@ -614,12 +662,25 @@ class DofManager:
 
         """
         # Assign a unique index to each equation-domain pair.
+
+        skip_list = {
+            "local_component_mass_constraint_CO2",
+            "isofugacity_constraint_H2O_G_L",
+            "isofugacity_constraint_CO2_G_L",
+            "semismooth_complementary_condition_L",
+            "semismooth_complementary_condition_G",
+            "local_fluid_enthalpy_constraint",
+            "local_phase_mass_constraint_G",
+        }
+
         equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
         idx: int = 0
         for (
             eq_name,
             domains,
         ) in model.equation_system._equation_image_space_composition.items():
+            if eq_name in skip_list:
+                continue
             for domain in domains:
                 equation_to_idx[(eq_name, domain)] = idx
                 idx += 1

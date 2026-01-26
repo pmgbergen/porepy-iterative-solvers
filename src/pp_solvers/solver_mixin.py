@@ -174,7 +174,12 @@ class IterativeSolverMixin(pp.PorePyModel):
             len(solver.get_residuals())
         )
 
-        return np.atleast_1d(x)
+        x = np.atleast_1d(x)
+        # this is not a responsibility of the iterative linear solver!
+        if self._apply_schur_complement_reduction():
+            x = self.equation_system.expand_schur_complement_solution(x)
+        return x
+        
 
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
@@ -188,8 +193,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Apply the `contact_permutation`. With this, the equations for tangential and
         # normal fracture deformation are ordered cellwise (not with tangential and
         # normal separately, as is the case in the PorePy ordering).
-        mat = mat[dof_manager.eq_rows_permutation(self)]
-        rhs = rhs[dof_manager.eq_rows_permutation(self)]
+        # mat = mat[dof_manager.eq_rows_permutation(self)]
+        # rhs = rhs[dof_manager.eq_rows_permutation(self)]
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
         # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each
@@ -219,6 +224,7 @@ class IterativeSolverMixin(pp.PorePyModel):
                 group_names_row=dof_manager.equation_names(self),
                 group_names_col=dof_manager.variable_names(self),
             ),
+            validate_input=True
         )
 
         # Store the linear system in the solver mixin *and*, by calling [:], rearrange

@@ -95,7 +95,10 @@ class MassBalanceGroup(AbstractGroup):
         subdomains = model.mdg.subdomains()
         return [
             EquationGroup(
-                [EquationGroupItem(EquationNames.MASS_BALANCE.value, subdomains)]
+                [
+                    EquationGroupItem(EquationNames.MASS_BALANCE.value, subdomains),
+                    EquationGroupItem("production_pressure_constraint", subdomains),
+                ],
             )
         ]
 
@@ -110,6 +113,120 @@ class MassBalanceGroup(AbstractGroup):
 
     def variable_names(self, model) -> list[str]:
         return [model.pressure_variable]
+
+
+class ComponentMassBalanceCO2Group(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
+        subdomains = model.mdg.subdomains()
+        return [
+            EquationGroup(
+                [EquationGroupItem("component_mass_balance_equation_CO2", subdomains)]
+            )
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        subdomains = model.mdg.subdomains()
+        return [[model.fluid.components[1].fraction(subdomains)]]
+
+    def equation_names(self, model) -> list[str]:
+        return ["component_mass_balance_equation_CO2"]
+
+    def variable_names(self, model) -> list[str]:
+        return ["z_CO2"]
+
+
+class EnthalpyGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
+        subdomains = model.mdg.subdomains()
+        return [
+            EquationGroup([EquationGroupItem("energy_balance_equation", subdomains)])
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        subdomains = model.mdg.subdomains()
+        return [[model.enthalpy(subdomains)]]
+
+    def equation_names(self, model) -> list[str]:
+        return ["energy_balance_equation"]
+
+    def variable_names(self, model) -> list[str]:
+        return ["enthalpy"]
+
+
+class MassAndEnthalpyGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
+        subdomains = model.mdg.subdomains()
+        return [
+            EquationGroup(
+                [
+                    EquationGroupItem("mass_balance_equation", subdomains),
+                    EquationGroupItem("production_pressure_constraint", subdomains),
+                ]
+            ),
+            EquationGroup(
+                [
+                    EquationGroupItem("energy_balance_equation", subdomains),
+                    EquationGroupItem("injection_temperature_constraint", subdomains),
+                ]
+            ),
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        subdomains = model.mdg.subdomains()
+        return [
+            [model.pressure(subdomains)],
+            [model.enthalpy(subdomains)],
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return [
+            "mass_balance_equation",
+            "energy_balance_equation",
+        ]
+
+    def variable_names(self, model) -> list[str]:
+        return [
+            "pressure",
+            "enthalpy",
+        ]
+
+
+class EnthalpyAndComponentGroup(AbstractGroup):
+    def equation_groups(self, model: pp.PorePyModel) -> list[EquationGroup]:
+        subdomains = model.mdg.subdomains()
+
+        return [
+            EquationGroup(
+                [
+                    EquationGroupItem("energy_balance_equation", subdomains),
+                    EquationGroupItem("injection_temperature_constraint", subdomains),
+                ]
+            ),
+            EquationGroup(
+                [EquationGroupItem("component_mass_balance_equation_CO2", subdomains)]
+            ),
+        ]
+
+    def variable_groups(
+        self, model: pp.PorePyModel
+    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+        subdomains = model.mdg.subdomains()
+        return [
+            [model.enthalpy(subdomains)],
+            [model.fluid.components[1].fraction(subdomains)],
+        ]
+
+    def equation_names(self, model) -> list[str]:
+        return ["energy_balance_equation", "component_mass_balance_equation_CO2"]
+
+    def variable_names(self, model) -> list[str]:
+        return ["enthalpy", "z_CO2"]
 
 
 class MassBalanceDimSplitGroup(AbstractGroup):

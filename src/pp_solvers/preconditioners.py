@@ -476,6 +476,24 @@ class ContactPreconditioner(SinglePhysicsPreconditioner):
         return local_opts
 
 
+class CustomPC(SinglePhysicsPreconditioner):
+    def __init__(self, groups, tag: str, options: dict):
+        self._group = groups
+        self._tag: str = tag
+        self._options = options
+
+    @property
+    def key(self) -> str:
+        return self._tag
+
+    @property
+    def tag(self) -> str:
+        return self._tag
+
+    def _default_options(self, model, dof_manager) -> dict:
+        return self._options
+
+
 class BlockILU(SinglePhysicsPreconditioner):
     def __init__(self, groups):
         self._group = groups
@@ -503,9 +521,12 @@ class BlockILU(SinglePhysicsPreconditioner):
         indices = []
         for g in self._group:
             # Get the indices for the group.
-            indices.append(
-                dof_manager._name_to_group_indices[g.equation_names(None)[0]]
-            )
+            equation_names = g.equation_names(None)
+            if len(equation_names) > 1:
+                raise NotImplementedError(
+                    "Code below assumes there is only one equation in the group"
+                )
+            indices.append(dof_manager._name_to_group_indices[equation_names[0]])
 
         # Need to get hold of the groups here.
         return PcPythonPermutation(
@@ -636,6 +657,52 @@ def th_factory():
             ),
         ]
     )
+    return [
+        InterfaceMassEnergyFluxPreconditioner(),
+        cpr,
+    ]
+
+
+class AMG(SinglePhysicsPreconditioner):
+    def __init__(self, group):
+        self._group = group
+
+    @property
+    def key(self) -> str:
+        return "amgaaaa"
+
+    @property
+    def tag(self) -> str:
+        return "amgaaaa"
+
+    def _default_options(self, model, dof_manager) -> dict:
+        local_opts = {
+            "pc_type": "hypre",
+            "pc_hypre_type": "boomeramg",
+            "pc_hypre_boomeramg_strong_threshold": 0.7,
+        }
+        return local_opts
+
+
+def cfle_factory():
+    cpr_1 = [
+        AMG(group=groups.MassBalanceGroup()),
+        IdentityPreconditioner(group=groups.EnthalpyAndComponentGroup()),
+    ]
+    cpr_2 = CustomPC(
+        groups=[
+            groups.MassBalanceGroup(),
+            groups.EnthalpyAndComponentGroup(),
+        ],
+        tag="cpr-ilu",
+        options={
+            "pc_type": "hypre",
+            "pc_hypre_type": "ilu",
+            'pc_hypre_ilu_level': 0,
+            'pc_hypre_ilu_maxiter': 1,
+        },
+    )
+    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
     return [
         InterfaceMassEnergyFluxPreconditioner(),
         cpr,

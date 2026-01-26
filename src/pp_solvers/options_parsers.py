@@ -115,7 +115,12 @@ class MultiPhysicsPreconditioner:
                         )
                         pc.addCompositePCType(loc_options["pc_type"])
                         sub_pc = pc.getCompositePC(i)
+
+                        # For some reason, we need to manually pass the matrix to the
+                        # sub-preconditioners of the composite preconditioner. We pass
+                        # the same matrix. 
                         sub_pc.setOperators(*pc.getOperators())
+
                         tagged_loc_options = {
                             f"{prefix}sub_{i}_{k}": v for k, v in loc_options.items()
                         }
