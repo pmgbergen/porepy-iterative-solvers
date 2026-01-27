@@ -182,7 +182,7 @@ class LinearSystemIndexer:
                 try:
                     # Try to iterate over the key. If not successful (which means this
                     # is an int?), convert to a list.
-                    iter(key_)
+                    iter(key_)  # type: ignore
                     result = key_
                 except TypeError:
                     result = [key_]

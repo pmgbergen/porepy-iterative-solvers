@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from time import time
 from typing import Callable
+from warnings import warn
 
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
+
+from pp_solvers.solver_selection.selector import SolverSelector
 
 from .block_linear_system import (
     BlockLinearSystem,
@@ -130,15 +132,68 @@ class LinearSolverStatistics(SolverStatistics):
 
 
 class IterativeSolverMixin(pp.PorePyModel):
+    def _determine_solver_options(self) -> dict:
+        # The options are either provided by a used manually, or determined by
+        # machine learning in the solver selector.
+
+        solver_selector: SolverSelector | None = self.params["linear_solver"].get(
+            "solver_selector", None
+        )
+        solver_options: dict = self.params["linear_solver"].get("options", {})
+        if solver_selector is None:
+            # No solver selection. Taking manually provided options.
+            return solver_options
+
+        # Warn if both the solver selector and the options are present.
+        if len(solver_options) > 0:
+            warn(
+                'Parameters "options" and "solver_selector" are mutually exclusive. '
+                "Solver selection may override manually provided parameters."
+            )
+
+        characteristics = np.array([])
+
+        solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
+            characteristics=characteristics, active_solver_idx=-1
+        )
+
+        return solver_options | solver_selection_opts
+
     def solve_linear_system(self) -> None:
+        solver_selector: SolverSelector | None = self.params["linear_solver"].get(
+            "solver_selector", None
+        )
+        solver_options = self._determine_solver_options()
+
+        try:
+            solution = self._solve_linear_system(solver_options=solver_options)
+        except RuntimeError as e:
+            success = False
+            raise e
+        else:
+            success = True
+        finally:
+            if solver_selector is not None:
+                # The way of accessing these values should be changed when they find a
+                # better accommodation.
+                solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
+                construct_time = (
+                    self.nonlinear_solver_statistics.linsolve_construction_time
+                )
+                solver_selector.provide_performance_feedback(
+                    solve_time=solve_time,
+                    construct_time=construct_time,
+                    success=success,
+                )
+        return solution
+
+    def _solve_linear_system(self, solver_options: dict) -> None:
         # Check for NaN or Inf in the RHS.
         # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
-        # By default, print the residual information to screen (ksp_monitor=None).
-        solver_options = self.params["linear_solver"].get("options", {})
         ksp_factory = self._solver_components.ksp_factory
 
         t0 = time()
@@ -148,7 +203,6 @@ class IterativeSolverMixin(pp.PorePyModel):
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
             ) from e
-
         self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
 
         # Project the right hand side to the local block matrix ordering, as was done
@@ -159,12 +213,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
-        if info <= 0:
-            raise RuntimeError(
-                f"Solver did not converge. Reason: {info}. "
-                "Check the solver options and the problem setup."
-            )
-
         # Project the solution back to the global (PorePy) ordering. For clarity, no
         # contact reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
@@ -174,12 +222,17 @@ class IterativeSolverMixin(pp.PorePyModel):
             len(solver.get_residuals())
         )
 
+        if info <= 0:
+            raise RuntimeError(
+                f"Solver did not converge. Reason: {info}. "
+                "Check the solver options and the problem setup."
+            )
+
         x = np.atleast_1d(x)
         # this is not a responsibility of the iterative linear solver!
         if self._apply_schur_complement_reduction():
             x = self.equation_system.expand_schur_complement_solution(x)
         return x
-        
 
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
