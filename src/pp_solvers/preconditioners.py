@@ -8,7 +8,7 @@ import numpy as np
 import porepy as pp
 
 from pp_solvers import equation_variable_groups as groups
-from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.block_linear_system import LinearSystemIndexer
 from pp_solvers.equation_variable_groups import EquationNames
 from pp_solvers.fixed_stress import make_fs_analytical_slow_new
 from pp_solvers.petsc_solvers import PcPythonPermutation
@@ -530,7 +530,7 @@ class BlockILU(SinglePhysicsPreconditioner):
 
         # Need to get hold of the groups here.
         return PcPythonPermutation(
-            _to_cell_ordering(bmat, indices), block_size=len(self._group)
+            _to_cell_ordering(bmat.indexer, indices), block_size=len(self._group)
         )
 
 
@@ -686,13 +686,13 @@ class AMG(SinglePhysicsPreconditioner):
 
 def cfle_factory():
     cpr_1 = [
-        AMG(group=groups.MassBalanceGroup()),
         IdentityPreconditioner(group=groups.EnthalpyAndComponentGroup()),
+        AMG(group=groups.MassBalanceGroup()),
     ]
     cpr_2 = CustomPC(
         groups=[
-            groups.MassBalanceGroup(),
             groups.EnthalpyAndComponentGroup(),
+            groups.MassBalanceGroup(),
         ],
         tag="cpr-ilu",
         options={
@@ -800,10 +800,10 @@ def thm_factory():
     ]
 
 
-def _to_cell_ordering(J: BlockLinearSystem, group_lists: list[list[int]]):
+def _to_cell_ordering(indexer: LinearSystemIndexer, group_lists: list[list[int]]):
     all_groups = list(chain.from_iterable(group_lists))
 
-    indexer = J.empty_container()[all_groups].indexer
+    indexer = indexer[all_groups]
     rows = [
         np.concatenate([indexer.dofs_row[i] for i in groups]) for groups in group_lists
     ]

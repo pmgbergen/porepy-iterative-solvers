@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from time import time
 from typing import Callable
 from warnings import warn
+from itertools import count
 
 import numpy as np
 import porepy as pp
@@ -44,6 +45,15 @@ Note that these consider PETSc configurations, and have no responsibility for
 taking care of equations etc. (CURRENT IMPLEMENTATION IS NOT RIGHT). This means they are
 essentially bearers of options for the solver.
 """
+
+FAILURE_COUNTER = count(0)
+
+
+def save_with_pickle(object, name: str):
+    import pickle
+
+    with open(f"{name}.pkl", "wb") as f:
+        pickle.dump(object, f)
 
 
 def transform_contact_block(
@@ -151,7 +161,7 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "Solver selection may override manually provided parameters."
             )
 
-        characteristics = np.array([])
+        characteristics = np.array([self.ad_time_step.value(self.equation_system)])
 
         solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
             characteristics=characteristics, active_solver_idx=-1
@@ -176,9 +186,9 @@ class IterativeSolverMixin(pp.PorePyModel):
             if solver_selector is not None:
                 # The way of accessing these values should be changed when they find a
                 # better accommodation.
-                solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
+                solve_time = self.nonlinear_solver_statistics.linsolve_solve_time[-1]
                 construct_time = (
-                    self.nonlinear_solver_statistics.linsolve_construction_time
+                    self.nonlinear_solver_statistics.linsolve_construction_time[-1]
                 )
                 solver_selector.provide_performance_feedback(
                     solve_time=solve_time,
@@ -201,7 +211,8 @@ class IterativeSolverMixin(pp.PorePyModel):
             solver = ksp_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
             raise RuntimeError(
-                "Failed to create solver with the provided preconditioner."
+                "Failed to create solver with the provided preconditioner",
+                solver_options,
             ) from e
         self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
 
@@ -223,6 +234,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         )
 
         if info <= 0:
+            save_with_pickle(self.bmat, f"failed_matrix_{next(FAILURE_COUNTER)}")
+            print("Saving failed matrix")
             raise RuntimeError(
                 f"Solver did not converge. Reason: {info}. "
                 "Check the solver options and the problem setup."
@@ -255,29 +268,16 @@ class IterativeSolverMixin(pp.PorePyModel):
         # a list of arrays, where each array corresponds to a single-physics subsolver.
         # That is, each array will include multiple subdomains, and potentially multiple
         # equations / variables.
-        eq_dofs_by_blocks = dof_manager.eq_dofs_by_blocks(self)
-        equation_groups = dof_manager.equation_groups
-        dofs_row = [
-            concatenate_dof_indices([eq_dofs_by_blocks[i] for i in dofs_in_group])
-            for dofs_in_group in equation_groups
-        ]
-        var_dofs_by_blocks = dof_manager.var_dofs_by_blocks(self)
-        variable_groups = dof_manager.variable_groups
-        dofs_col = [
-            concatenate_dof_indices([var_dofs_by_blocks[i] for i in dofs_in_group])
-            for dofs_in_group in variable_groups
-        ]
 
         bmat = BlockLinearSystem(
             mat=mat,
             rhs=rhs,
             indexer=LinearSystemIndexer(
-                dofs_row=dofs_row,
-                dofs_col=dofs_col,
+                dofs_row=dof_manager.eq_dofs(self),
+                dofs_col=dof_manager.var_dofs(self),
                 group_names_row=dof_manager.equation_names(self),
                 group_names_col=dof_manager.variable_names(self),
             ),
-            validate_input=True
         )
 
         # Store the linear system in the solver mixin *and*, by calling [:], rearrange
@@ -294,15 +294,16 @@ class IterativeSolverMixin(pp.PorePyModel):
         if precond_factory is None:
             precond_factory = default_preconditioner_factory(self)
 
-        precond_list: list[SinglePhysicsPreconditioner] = precond_factory()
+        precond_list = precond_factory()
 
-        dof_manager = DofManager(self, precond_list)
-        precond = MultiPhysicsPreconditioner(precond_list, dof_manager, self)
+        dof_manager = DofManager(precond_list.groups)
+        ksp_factory = precond_list
 
         contact_ind = dof_manager.identify_contact_group()
-        u_intf_ind = dof_manager.identify_u_intf_group(self)
+        u_intf_ind = dof_manager.identify_u_intf_group(
+            self
+        )  # this isn't a responsibility of DofManager
 
-        ksp_factory = PetscKSPScheme(preconditioner=precond)
         contact_transform, thermal_transform = None, None
         if contact_ind is not None and u_intf_ind is not None:
             # If there is a contact group, we need to use a linear solver that takes
@@ -312,7 +313,9 @@ class IterativeSolverMixin(pp.PorePyModel):
                     bmat, contact_ind, u_intf_ind, self.nd
                 )
             ]
-        energy_balance_groups = dof_manager.identify_energy_balance_groups()
+        energy_balance_groups = (
+            dof_manager.identify_energy_balance_groups()
+        )  # this isn't a responsibility of DofManager
         if len(energy_balance_groups) > 0:
             thermal_transform = [
                 lambda bmat: scale_energy_transform(
@@ -333,7 +336,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         solver_components = LinearSolverComponents(
             dof_manager=dof_manager,
-            preconditioner=precond,
+            preconditioner=None,
             ksp_factory=solver_factory,
         )
         self._solver_components = solver_components

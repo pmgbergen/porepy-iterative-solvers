@@ -6,7 +6,7 @@ import porepy as pp
 import scipy.sparse as sps
 from petsc4py import PETSc
 
-from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.petsc_solvers import LinearSolverWithTransformations, PetscKrylovSolver
 from pp_solvers.petsc_utils import (
@@ -118,7 +118,7 @@ class MultiPhysicsPreconditioner:
 
                         # For some reason, we need to manually pass the matrix to the
                         # sub-preconditioners of the composite preconditioner. We pass
-                        # the same matrix. 
+                        # the same matrix.
                         sub_pc.setOperators(*pc.getOperators())
 
                         tagged_loc_options = {
@@ -363,3 +363,158 @@ class LinearTransformedScheme:
             )
 
         return solver
+
+
+def _assemble_pc_fieldsplit(
+    ksp: PETSc.KSP,
+    pc: PETSc.PC,
+    additional_data: dict,
+    indexer: LinearSystemIndexer,
+    prefix: str,
+):
+    # calls: pc.setUp, ksp.setUp
+    prefix_config = additional_data[prefix]
+    elim_groups = prefix_config["elim_groups"]
+    keep_groups = prefix_config["keep_groups"]
+    elim_tag = prefix_config["elim_tag"]
+    keep_tag = prefix_config["keep_tag"]
+
+    is_elim = construct_is(indexer, elim_groups)
+    is_keep = construct_is(indexer, keep_groups)
+
+    assert pc.type == "fieldsplit"
+
+    pc.setFieldSplitIS((elim_tag, is_elim))
+    pc.setFieldSplitIS((keep_tag, is_keep))
+
+    try:
+        pc.setUp()
+        ksp.setUp()
+    except:
+        print(f"failed on {prefix = }")
+        raise
+
+    sub_ksp_list = pc.getFieldSplitSubKSP()
+    if len(sub_ksp_list) != 2:
+        raise NotImplementedError
+    ksp_elim, ksp_keep = sub_ksp_list
+
+    pc_keep = ksp_keep.getPC()
+    assemble_petsc_ksp_pc(
+        ksp=ksp_keep,
+        pc=pc_keep,
+        additional_data=additional_data,
+        indexer=indexer[keep_groups],
+        prefix=f"{prefix}fieldsplit_{keep_tag}_",
+    )
+
+    pc_elim = ksp_elim.getPC()
+    assemble_petsc_ksp_pc(
+        ksp=ksp_elim,
+        pc=pc_elim,
+        additional_data=additional_data,
+        indexer=indexer[elim_groups],
+        prefix=f"{prefix}fieldsplit_{elim_tag}_",
+    )
+
+
+def _assemble_pc_composite(
+    ksp: PETSc.KSP,
+    pc: PETSc.PC,
+    additional_data: dict,
+    indexer: LinearSystemIndexer,
+    prefix: str,
+):
+    assert pc.type == "composite"
+    num_stages = additional_data[prefix]["num_stages"]
+
+    for i in range(num_stages):
+        # explaining this
+        pc_type = additional_data.get(f"{prefix}sub_{i}_", {}).get("pc_type", "none")
+        pc.addCompositePCType(pc_type)
+        sub_pc = pc.getCompositePC(i)
+        sub_pc.setOperators(*pc.getOperators())
+        assemble_petsc_ksp_pc(
+            ksp=ksp,
+            pc=sub_pc,
+            additional_data=additional_data,
+            indexer=indexer,
+            prefix=f"{prefix}sub_{i}_",
+        )
+
+    pc.setUp()
+    ksp.setUp()
+
+
+def _assemble_pc_python(
+    ksp: PETSc.KSP,
+    pc: PETSc.PC,
+    additional_data: dict,
+    indexer: LinearSystemIndexer,
+    prefix: str,
+):
+    python_context = additional_data[prefix]["python_context"]
+    python_context.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+    pc.setPythonContext(python_context)
+    pc.setUp()
+    ksp.setUp()
+
+
+def assemble_petsc_ksp_pc(
+    ksp: PETSc.KSP,
+    pc: PETSc.PC,
+    additional_data: dict,
+    indexer: LinearSystemIndexer,
+    prefix: str = "",
+):
+    if len(prefix) > 126:
+        # PETSc has a limit on the prefix length, which seems to be 127
+        # characters. If the prefix is too long, we raise a warning.
+        msg = "The prefix for the PETSc preconditioner is too long. "
+        msg += "Check the configuration of the preconditioner."
+        warn(msg)
+
+    ksp.setFromOptions()
+    pc.setFromOptions()
+
+    pc_type: str
+    try:
+        pc_type = additional_data[prefix]["pc_type"]
+    except KeyError:
+        pc_type = "other"
+
+    # Sanity check.
+    if pc_type != "other":
+        assert pc.type == pc_type
+
+    if pc_type == "fieldsplit":
+        _assemble_pc_fieldsplit(
+            ksp=ksp,
+            pc=pc,
+            additional_data=additional_data,
+            indexer=indexer,
+            prefix=prefix,
+        )
+    elif pc_type == "composite":
+        _assemble_pc_composite(
+            ksp=ksp,
+            pc=pc,
+            additional_data=additional_data,
+            indexer=indexer,
+            prefix=prefix,
+        )
+    elif pc_type == "python":
+        _assemble_pc_python(
+            ksp=ksp,
+            pc=pc,
+            additional_data=additional_data,
+            indexer=indexer,
+            prefix=prefix,
+        )
+    else:
+        try:
+            ksp.setUp()
+            pc.setUp()
+        except:
+            print(f"Failed on {prefix = }")
+            raise

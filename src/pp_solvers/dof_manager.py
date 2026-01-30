@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 from itertools import count
-from typing import Sequence
 
 import numpy as np
 import porepy as pp
 
 from pp_solvers.equation_variable_groups import (
-    AbstractGroup,
-    EquationGroup,
-    EquationNames,
+    EquationOnDomains,
+    EquationVariableGroup,
 )
-from pp_solvers.preconditioners import (
-    CompositePreconditioner,
-    SinglePhysicsPreconditioner,
-)
+
+from pp_solvers.block_linear_system import concatenate_dof_indices
 
 
 class DofManager:
@@ -26,11 +22,7 @@ class DofManager:
     now we have no reason to do so.
     """
 
-    def __init__(
-        self,
-        model: pp.PorePyModel,
-        solvers: list[SinglePhysicsPreconditioner],
-    ):
+    def __init__(self, groups: list[EquationVariableGroup]):
         """Construct groups of equations, variables and solvers from the orderings and
         solvers.
 
@@ -48,193 +40,10 @@ class DofManager:
            solver, and to construct the appropriate preconditioner for each solver.
 
         """
-        self._orderings = [precond.group() for precond in solvers]
+        self._groups: list[EquationVariableGroup] = groups
 
-        # The construction consists of two main steps: First, iterate over the orderings
-        # and gather the equation and variable groups defined by them. This may involve
-        # uniquifying the groups (relevant if the preconditioner is a PETSc Composite,
-        # which may contain several overlapping groups). In this process, we also
-        # construct the map from solvers to block indices. Second, the groups of
-        # variables and equations are expanded from a lists of domains (PorePy
-        # subdomains and interfaces) into individual variables and equations. For the
-        # equations, we also do some reordering needed to merge the contact equations in
-        # the normal and tangential directions into a single block, and thereby reveal
-        # the underlying block diagonal structure of this equation.
-
-        # Data structures for variables, equations and the solver map.
-        var_groups = []
-        equations_by_name = []
-        solver_indices = {}
-        # Counter of block indices, used to assign block indices to the solver map.
-        counter = 0
-
-        # Iterate over the orderings, gather the equation an variable groups define
-        # there. It is assumed that the orderings define non-intersecting sets of
-        # equations and variables that together span the system of equations to be
-        # solved. However, an ordering can return a list, corresponding to a multistage
-        # preconditioner (a Composite preconditioner in PETSc terminology). This list
-        # may contain multiple intersecting groups, that needs to be parsed into a
-        # single, non-intersecting set of equations and variables.
-        for group, slv in zip(self._orderings, solvers):
-            if isinstance(group, list):
-                # First, make sure this is a composite preconditioner; this is a tacit
-                # assumption of the below parsing. Dealing with anything else would
-                # require a more structured approach to the parsing, but EK has neither
-                # the imagination nor the test cases needed to do so now.
-                if not isinstance(slv, CompositePreconditioner):
-                    raise NotImplementedError(
-                        "Multiple groups within a non-composite preconditioner not"
-                        "supported."
-                    )
-
-                # These are the "results" of this conditional branch, used below.
-                groups_loc = []
-                vars_loc = []
-
-                for sub_solver in slv.solvers:
-                    # If the sub-solver is a list, it is by itself a fieldsplit
-                    # preconditioner. Treat every sub-solver within the fieldsplit as a
-                    # separate solver, and add it to the solver indices.
-
-                    # If it's not a list, making it a list to generalize the code below.
-                    if isinstance(sub_solver, SinglePhysicsPreconditioner):
-                        sub_solver = [sub_solver]
-                    assert isinstance(sub_solver, list)
-
-                    # This is the inner counter to distinguish subsolver indices within
-                    # a compositional solver.
-                    composite_counter = 0
-
-                    # These lists must be identical for each subsolver of a composite
-                    # preconditioner. We check it and then store the results in the
-                    # global lists of results "groups_loc" and "vars_loc".
-                    groups_loc_composite = []
-                    vars_loc_composite = []
-
-                    for ss in sub_solver:
-                        # There could be deeper recursion levels here, which we may
-                        # need to deal with by some recursive approach, but we
-                        # ignore that possibility for now.
-                        assert isinstance(ss, SinglePhysicsPreconditioner)
-
-                        ss_groups = ss.group()
-                        # It can be either a group or a list of groups.
-                        if isinstance(ss_groups, AbstractGroup):
-                            ss_groups = [ss_groups]
-                        solver_indices[ss] = []
-
-                        for ss_group in ss_groups:
-                            ss_vars = ss_group.variable_groups(model)
-                            groups_loc_composite.extend(ss_group.equation_groups(model))
-                            vars_loc_composite.extend(ss_vars)
-
-                            solver_indices[ss].extend(
-                                list(
-                                    range(
-                                        counter + composite_counter,
-                                        len(ss_vars) + counter + composite_counter,
-                                    )
-                                )
-                            )
-                            composite_counter += len(ss_vars)
-
-                    # Make sure they are the same for each composite subsolver. This
-                    # check is performed starting from the second subsolver.
-                    if len(groups_loc) != 0:
-                        # It is easy to compare equation groups.
-                        assert groups_loc == groups_loc_composite
-
-                        # And more involved to compare variable groups. MDVariables have
-                        # different ids, so are technically different objects. We ensure
-                        # that the names and domains are the same.
-                        for var_loc, var_loc_composite in zip(
-                            vars_loc, vars_loc_composite
-                        ):
-                            for md_var_expected, md_var in zip(
-                                var_loc, var_loc_composite
-                            ):
-                                assert md_var.domains == md_var_expected.domains
-                                assert md_var.name == md_var_expected.name
-                    else:
-                        # This is the first subsolver, just assign them.
-                        groups_loc = groups_loc_composite
-                        vars_loc = vars_loc_composite
-
-            else:
-                # This is not a compositional preconditioner group.
-                groups_loc = group.equation_groups(model)
-                vars_loc = group.variable_groups(model)
-
-            # Append the groups to the main lists, and update the solver indices.
-            equations_by_name += groups_loc
-            var_groups += vars_loc
-            # Also take note that the solver slv is associated with all indices in the
-            # local groups. A composite preconditioner will by this be associated with
-            # the entire set of indices *in addition to* the mapping of individual
-            # solvers (see the convoluted for-loop above). This double registration is
-            # needed for the selection of blocks to work as intended. For pure
-            # (non-composite) block preconditioners, we simply map the preconditioner to
-            # the registred indices.
-            solver_indices[slv] = list(range(counter, counter + len(groups_loc)))
-            counter += len(groups_loc)
-
-        # Done with the first step. The mapping from solvers to block indices can now be
-        # stored.
-        self._solver_groups = solver_indices
-
-        # Construct the mapping from equation names to the group indices. This must be
-        # done before identifying the contact group.
-        name_to_group_index_map = {}
-        item: EquationGroup
-        for i, item in enumerate(equations_by_name):
-            for eq_item in item.items:
-                name = eq_item.name
-                if name not in name_to_group_index_map:
-                    name_to_group_index_map[name] = []
-                name_to_group_index_map[name].append(i)
-        self._name_to_group_indices = name_to_group_index_map
-
-        # Next, expand the groups by calling on relevant helper methods.
-        var_groups_by_number = self._variable_block_indices(model, var_groups)
-        self._variable_groups = var_groups_by_number
-
-        equation_groups_by_number = self._equation_block_indices(
-            model, equations_by_name
-        )
-
-        # Permute the contact equations if present. NOTE: It would have been preferrable
-        # to use the name_to_group_indices map, constructed just below, to identify the
-        # contact group, but this is not yet available at this point. Refactoring may be
-        # a good idea.
-        contact_group = self.identify_contact_group()
-        if contact_group is None:
-            self._equation_groups = equation_groups_by_number
-        else:
-            self._equation_groups = self._correct_contact_equations_groups(
-                model, equation_groups_by_number, contact_group
-            )
-
-    @property
-    def variable_groups(self) -> list[list[int]]:
-        """Get the variable groups.
-
-        Returns:
-            A list of lists, where each inner list contains MixedDimensionalVariable
-            objects representing the variable groups. TODO: Fix return type.
-
-        """
-        return self._variable_groups
-
-    @property
-    def equation_groups(self) -> list[list[int]]:
-        """Get the equation groups.
-
-        Returns:
-            A list of lists, where each inner list contains integers representing
-            the equation groups.
-
-        """
-        return self._equation_groups
+    def indices_of_groups(self, groups: list[EquationVariableGroup]):
+        return [self._groups.index(x) for x in groups]
 
     def equation_names(self, model: pp.PorePyModel) -> list[str]:
         """Get the names of equations in the model.
@@ -246,16 +55,7 @@ class DofManager:
             A list of strings containing the names of equations in the model.
 
         """
-        names = []
-        for group in self._orderings:
-            if isinstance(group, list):
-                # If the group is a list, we assume it contains multiple groups.
-                # TODO: Unification needed here.
-                for g in group:
-                    names += g.equation_names(model)
-            else:
-                names += group.equation_names(model)
-        return names
+        return [g.equation_name(model) for g in self._groups]
 
     def variable_names(self, model: pp.PorePyModel) -> list[str]:
         """Get the names of variables in the model.
@@ -268,18 +68,34 @@ class DofManager:
 
         """
 
-        names = []
-        for group in self._orderings:
-            if isinstance(group, list):
-                # If the group is a list, we assume it contains multiple groups.
-                # TODO: Unification needed here.
-                for g in group:
-                    names += g.variable_names(model)
-            else:
-                names += group.variable_names(model)
-        return names
+        return [g.variable_name(model) for g in self._groups]
 
-    def eq_dofs_by_blocks(self, model) -> list[np.ndarray]:
+    def eq_dofs(self, model: pp.PorePyModel) -> list[np.ndarray]:
+        equation_groups = [g.equation_group(model) for g in self._groups]
+
+        indices_of_dofs = self._equation_block_indices(model, equation_groups)
+        dofs_in_porepy_order = self._eq_dofs_by_blocks(model)
+        dofs_row = [
+            concatenate_dof_indices([dofs_in_porepy_order[i] for i in dofs_in_group])
+            for dofs_in_group in indices_of_dofs
+        ]
+        return dofs_row
+
+    def var_dofs(self, model: pp.PorePyModel) -> list[np.ndarray]:
+        variable_groups = [g.variable_group(model) for g in self._groups]
+
+        variable_indices = self._variable_block_indices(
+            model=model, md_variables_groups=variable_groups
+        )
+        var_dofs_by_blocks = self._var_dofs_by_blocks(model)
+
+        dofs_col = [
+            concatenate_dof_indices([var_dofs_by_blocks[i] for i in dofs_in_group])
+            for dofs_in_group in variable_indices
+        ]
+        return dofs_col
+
+    def _eq_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Get the equation dofs for the model, in the form of a list of numbers,
         one per equation-domain pair. If the contact group is present, it will be
         reordered so that the normal and tangential equations for each fracture cell
@@ -335,7 +151,7 @@ class DofManager:
             if i not in all_contact_blocks:
                 eq_dofs_corrected.append(x)
             elif i in normal_blocks:
-                eq_dofs_corrected.append(None)
+                eq_dofs_corrected.append(None)  # TODO: YZ - Why?
 
         offset = eq_dofs[normal_blocks[0]][0]
         for nb in normal_blocks:
@@ -347,7 +163,7 @@ class DofManager:
 
         return eq_dofs_corrected
 
-    def var_dofs_by_blocks(self, model) -> list[np.ndarray]:
+    def _var_dofs_by_blocks(self, model) -> list[np.ndarray]:
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
         (how they are arranged in the model).
 
@@ -378,20 +194,6 @@ class DofManager:
             )
         return var_dofs
 
-    def blocks_of_solver(self, solver: SinglePhysicsPreconditioner) -> list[int]:
-        """Get the block indices associated with a solver.
-
-        # YZ: the consistent name would be groups_of_solvers
-
-        Parameters:
-            solver: A SinglePhysicsPreconditioner object.
-
-        Returns:
-            The block indices associated with the solver.
-
-        """
-        return self._solver_groups[solver]
-
     def identify_contact_group(self) -> int | None:
         """Identify the contact group in the equation groups.
 
@@ -403,11 +205,12 @@ class DofManager:
             is found, returns None.
 
         """
-        # Identify the contact group in the equation groups
-        ind = self._name_to_group_indices.get(
-            EquationNames.CONTACT_NORMAL.value, [None]
-        )
-        return ind[0]
+        return None
+        # # Identify the contact group in the equation groups
+        # ind = self._name_to_group_indices.get(
+        #     EquationNames.CONTACT_NORMAL.value, [None]
+        # )
+        # return ind[0]
 
     def identify_energy_balance_groups(self) -> list[int]:
         """Identify the energy balance groups in the equation groups.
@@ -416,7 +219,8 @@ class DofManager:
             The indices of the energy balance group in the equation groups.
 
         """
-        return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [])
+        return []
+        # return self._name_to_group_indices.get(EquationNames.ENERGY_BALANCE.value, [])
 
     def identify_u_intf_group(self, model) -> int | None:
         """Identify the interface displacement group in the equation groups. It is
@@ -438,33 +242,34 @@ class DofManager:
             identifiable as a specific variable.
 
         """
-        if not hasattr(model, "interface_displacement_variable"):
-            # The model does not have an interface displacement variable.
-            return None
-
-        # Identify the interface group in the equation groups.
-        i = 0
-
-        # Note to self: Here we need to loop over the _orderings, since we need to match
-        # the ordering of the preconditioner to porepy information. See also the other
-        # identify methods.
-        for group in self._orderings:
-            if isinstance(group, list):
-                for sub_group in group:
-                    if len(sub_group.variable_groups(model)) == 0:
-                        continue
-                    for var in sub_group.variable_groups(model):
-                        if var[0].name == model.interface_displacement_variable:
-                            return i
-            else:
-                for var in group.variable_groups(model):
-                    # Loop over all the variables of the group (variables treated with
-                    # this block solver). See if this is the one.
-                    if var[0].name == model.interface_displacement_variable:
-                        return i
-                    else:
-                        i += 1
         return None
+        # if not hasattr(model, "interface_displacement_variable"):
+        #     # The model does not have an interface displacement variable.
+        #     return None
+
+        # # Identify the interface group in the equation groups.
+        # i = 0
+
+        # # Note to self: Here we need to loop over the _orderings, since we need to match
+        # # the ordering of the preconditioner to porepy information. See also the other
+        # # identify methods.
+        # for group in self._orderings:
+        #     if isinstance(group, list):
+        #         for sub_group in group:
+        #             if len(sub_group.variable_groups(model)) == 0:
+        #                 continue
+        #             for var in sub_group.variable_groups(model):
+        #                 if var[0].name == model.interface_displacement_variable:
+        #                     return i
+        #     else:
+        #         for var in group.variable_groups(model):
+        #             # Loop over all the variables of the group (variables treated with
+        #             # this block solver). See if this is the one.
+        #             if var[0].name == model.interface_displacement_variable:
+        #                 return i
+        #             else:
+        #                 i += 1
+        # return None
 
     def eq_rows_permutation(self, model: pp.PorePyModel):
         """Get a permutation vector for the full linear system of equations.
@@ -508,7 +313,7 @@ class DofManager:
         # Get the (fine-scale, not block(!)) dofs of the contact mechanics equations.
         dofs_contact = np.concatenate(
             [
-                self.eq_dofs_by_blocks(model)[i]
+                self._eq_dofs_by_blocks(model)[i]
                 for i in self.equation_groups[contact_group]
             ]
         )
@@ -589,9 +394,7 @@ class DofManager:
     def _variable_block_indices(
         self,
         model: pp.PorePyModel,
-        md_variables_groups: Sequence[
-            Sequence[pp.ad.MixedDimensionalVariable | pp.ad.Variable]
-        ],
+        md_variables_groups: list[pp.ad.MixedDimensionalVariable | pp.ad.Variable],
     ) -> list[list[int]]:
         """Used to assemble the index that will later help accessing the submatrix
         corresponding to a group of variables, which may include one or more variable.
@@ -629,21 +432,18 @@ class DofManager:
             if var.name not in skip_list
         }
         indices = []
-        for md_var_group in md_variables_groups:
-            group_idx = []
-            for md_var in md_var_group:
-                # If we ever get a variable in here, we need to handle it directly, and
-                # not call sub_vars.
-                assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
-                group_idx.extend([variable_to_idx.pop(var) for var in md_var.sub_vars])
-            indices.append(group_idx)
+        for md_var in md_variables_groups:
+            # If we ever get a variable in here, we need to handle it directly, and
+            # not call sub_vars.
+            assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
+            indices.append([variable_to_idx.pop(var) for var in md_var.sub_vars])
         assert len(variable_to_idx) == 0, "Some variables are not used."
         return indices
 
     def _equation_block_indices(
         self,
         model: pp.PorePyModel,
-        equations_group_order: Sequence[Sequence[tuple[str, pp.GridLikeSequence]]],
+        equations_group_order: list[EquationOnDomains],
     ) -> list[list[int]]:
         """Used to assemble the index that will later help accessing the submatrix
         corresponding to a group of equation, which may include one or more equation.
@@ -652,7 +452,7 @@ class DofManager:
             model: The PorePy model. The model should have the EquationSystem defined.
             equations_group_order: The order of the groups of equations. Each group is a
                 sequence of tuples. Each tuple contains the name of the equation and the
-                domain where it is applied.
+                domain where it is applied. (TODO)
 
         Returns:
             List of lists of integers. Each inner list contains the indices of the
@@ -688,16 +488,17 @@ class DofManager:
         indices: list[list[int]] = []
         # The outer loop define different groups of equations (to become blocks in the
         # block matrix).
-        for group in equations_group_order:
-            group_idx = []
+        for equation_on_domains in equations_group_order:
+            eq_name = equation_on_domains.name
+            domains = equation_on_domains.domains
             # Items in the group will contain a single equation defined on one or more
             # domains (subdomains or interfaces). Loop over equations an over all their
             # domains to add the indices to the group.
-            for eq_name, domains_of_eq in group:
-                for domain in domains_of_eq:
-                    if (eq_name, domain) in equation_to_idx:
-                        group_idx.append(equation_to_idx.pop((eq_name, domain)))
-            indices.append(group_idx)
+            indices_group: list[int] = []
+            for domain in domains:
+                if (eq_name, domain) in equation_to_idx:
+                    indices_group.append(equation_to_idx.pop((eq_name, domain)))
+            indices.append(indices_group)
 
         # TODO EK: Added this assert just to verify that my understanding of the
         # function is correct. Delete it later.
