@@ -18,12 +18,14 @@ from porepy.applications.test_utils.models import add_mixin
 import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
+from pp_solvers.equation_variable_groups import ContactMechanicsGroup
 from pp_solvers.options_parsers import (
     LinearTransformedScheme,
-    MultiPhysicsPreconditioner,
     PetscKSPScheme,
+    assemble_petsc_ksp_pc,
 )
-from pp_solvers.preconditioners import SinglePhysicsPreconditioner
+from pp_solvers.petsc_utils import insert_petsc_options
+from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -78,7 +80,7 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
 
 
 @pytest.fixture(scope="module")
-def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
+def pc_factory(model_kind: str) -> list:
     match model_kind:
         case "flow":
             return pp_solvers.mass_balance_factory()
@@ -96,15 +98,18 @@ def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
 
 @pytest.fixture(scope="module")
 def dof_manager(
-    model: pp.PorePyModel, solvers: list[SinglePhysicsPreconditioner]
+    model: pp.PorePyModel, pc_factory: PetscKspPcConfiguration
 ) -> DofManager:
-    return DofManager(model, solvers)
+    return DofManager(model=model, groups=pc_factory.groups)
 
 
 @pytest.fixture
 def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockLinearSystem:
     bmat = model.bmat
-    contact = dof_manager.identify_contact_group()
+    try:
+        contact = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
+    except ValueError:
+        contact = None
 
     # Given the current discretization, the contact group is singular. We simply fill
     # the diagonal to avoid numerical issues. This does not represent realistic physics.
@@ -114,16 +119,16 @@ def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockLinearSyste
 
 
 @pytest.fixture
-def pc(jacobian: BlockLinearSystem) -> PETSc.PC:
+def ksp(jacobian: BlockLinearSystem) -> PETSc.KSP:
     petsc_mat = pp_solvers.csr_to_petsc(jacobian.mat)
-    pc = PETSc.PC().create()
-    pc.setOperators(petsc_mat, petsc_mat)
+    ksp = PETSc.KSP().create()
+    ksp.setOperators(petsc_mat, petsc_mat)
     pp_solvers.petsc_utils.clear_petsc_options()
 
-    yield pc
+    yield ksp
 
     # Teardown.
-    pc.destroy()
+    ksp.destroy()
     petsc_mat.destroy()
 
 
@@ -131,28 +136,27 @@ def pc(jacobian: BlockLinearSystem) -> PETSc.PC:
 def petsc_stdout(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
     jacobian: BlockLinearSystem,
-    pc: PETSc.PC,
-    model: pp.PorePyModel,
+    ksp: PETSc.KSP,
     dof_manager: DofManager,
-    solvers: list[SinglePhysicsPreconditioner],
+    pc_factory: PetscKspPcConfiguration,
 ) -> str:
     pp_solvers.petsc_utils.clear_petsc_options()
-    preconditioner_scheme = MultiPhysicsPreconditioner(
-        components=solvers, dof_manager=dof_manager, model=model
+
+    petsc_options = pc_factory.petsc_options(user_options={}, prefix="")
+    insert_petsc_options(petsc_options)
+    petsc_assembly_config = pc_factory.petsc_assembly_config(
+        user_options={}, prefix="", dof_manager=dof_manager
     )
 
-    # user_options = {
-    #     "fieldsplit_contact_cpl_fieldsplit_intf_mass_energy_flx_pc_type": "sor",
-    # }
-
-    preconditioner_scheme.configure(
-        bmat=jacobian,
-        pc=pc,
-        user_options=None,
-        precond_list=solvers,
+    assemble_petsc_ksp_pc(
+        ksp=ksp,
+        pc=ksp.getPC(),
+        assembly_config=petsc_assembly_config,
+        indexer=jacobian.indexer,
+        prefix="",
     )
 
-    pc.view()
+    ksp.getPC().view()
     out, err = capfd.readouterr()
     return out
 
@@ -188,9 +192,11 @@ Preconditioner for the Schur complement formed from Sp, an assembled approximati
 """,
         r"""PC Object: .* 1 MPI process
 type: ilu
-PC has not been set up so information may be incomplete
 out-of-place factorization
-0 levels of fill""",
+0 levels of fill
+tolerance for zero pivot 2.22045e-14
+matrix ordering: natural
+factor fill ratio given 1., needed 1.""",
     ]
     fixed_stress = [
         r"""PC Object: .* 1 MPI process
@@ -279,10 +285,10 @@ def test_petsc_options(petsc_stdout: str, patterns_to_compare):
 def test_pass_user_options(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
     jacobian: BlockLinearSystem,
-    pc: PETSc.PC,
+    ksp: PETSc.KSP,
     model: pp.PorePyModel,
     dof_manager: DofManager,
-    solvers: list[SinglePhysicsPreconditioner],
+    pc_factory: PetscKspPcConfiguration,
     model_kind: str,
 ) -> str:
     if model_kind == "mechanics":
@@ -296,17 +302,19 @@ def test_pass_user_options(
         }
     }
 
-    preconditioner_scheme = MultiPhysicsPreconditioner(
-        components=solvers, dof_manager=dof_manager, model=model
+    petsc_options = pc_factory.petsc_options(user_options=user_options, prefix="")
+    insert_petsc_options(petsc_options)
+    petsc_assembly_config = pc_factory.petsc_assembly_config(
+        user_options=user_options, prefix="", dof_manager=dof_manager
     )
-    preconditioner_scheme.configure(
-        bmat=jacobian,
-        pc=pc,
-        user_options=user_options,
-        precond_list=solvers,
+    assemble_petsc_ksp_pc(
+        ksp=ksp,
+        pc=ksp.getPC(),
+        assembly_config=petsc_assembly_config,
+        indexer=jacobian.indexer,
     )
 
-    pc.view()
+    ksp.getPC().view()
     petsc_stdout, _ = capfd.readouterr()
 
     pattern = "PC Object: .* 1 MPI process\ntype: jacobi"
@@ -318,23 +326,14 @@ def test_pass_user_options(
 def test_petsc_ksp_scheme(
     capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
     jacobian: BlockLinearSystem,
-    model: pp.PorePyModel,
     dof_manager: DofManager,
-    solvers: list[SinglePhysicsPreconditioner],
+    pc_factory: PetscKspPcConfiguration,
     patterns_to_compare: list[str],
 ):
-    preconditioner_scheme = MultiPhysicsPreconditioner(
-        components=solvers, dof_manager=dof_manager, model=model
-    )
+    ksp_scheme = PetscKSPScheme(petsc_ksp_pc_configuration=pc_factory, dof_manager=dof_manager)
 
-    user_options = {"ksp_type": "bcgs"}
-
-    ksp_scheme = PetscKSPScheme(
-        preconditioner=preconditioner_scheme, petsc_options=user_options
-    )
-
-    user_options_2 = {"ksp_rtol": 5e-5}
-    solver = ksp_scheme.make_solver(mat_orig=jacobian, options=user_options_2)
+    user_options = {'gmres': {"ksp_type": "bcgs", "ksp_rtol": 5e-5}}
+    solver = ksp_scheme.make_solver(mat_orig=jacobian, options=user_options)
 
     solver.ksp.view()
     petsc_stdout, _ = capfd.readouterr()

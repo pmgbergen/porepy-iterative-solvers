@@ -133,7 +133,8 @@ def test_model(model_class):
     )
 
     linear_iterations = iterative_model.nonlinear_solver_statistics.num_krylov_iters
-    assert np.allclose(
+    np.testing.assert_equal(
         linear_iterations,
         expected_linear_iterations[model_class],
-    ), "Number of linear iterations does not match expected value."
+        err_msg="Number of linear iterations does not match expected value.",
+    )

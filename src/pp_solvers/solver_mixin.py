@@ -13,22 +13,22 @@ import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
-from pp_solvers.solver_selection.selector import SolverSelector
+from pp_solvers.equation_variable_groups import (
+    ContactMechanicsGroup,
+    EnergyBalanceTemperatureGroup,
+    InterfaceForceBalanceGroup,
+)
 
 from .block_linear_system import (
     BlockLinearSystem,
     LinearSystemIndexer,
     concatenate_dof_indices,
 )
-from .dof_manager import DofManager
-from .mat_utils import csr_ones, inv_block_diag
-from .options_parsers import (
-    LinearTransformedScheme,
-    MultiPhysicsPreconditioner,
-    PetscKSPScheme,
-)
-from .preconditioners import (
-    SinglePhysicsPreconditioner,
+from pp_solvers.dof_manager import DofManager
+from pp_solvers.mat_utils import csr_ones, inv_block_diag
+from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
+from pp_solvers.preconditioners import (
+    PetscKspPcConfiguration,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
@@ -115,13 +115,6 @@ def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
 
 
 @dataclass
-class LinearSolverComponents:
-    dof_manager: DofManager
-    preconditioner: MultiPhysicsPreconditioner
-    ksp_factory: PetscKSPScheme
-
-
-@dataclass
 class LinearSolverStatistics(SolverStatistics):
     """A dataclass to store statistics about the linear solver.
 
@@ -204,7 +197,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
-        ksp_factory = self._solver_components.ksp_factory
+        solver_options = self.params["linear_solver"].get("options", {})
+        ksp_factory = self._solver_factory
 
         t0 = time()
         try:
@@ -250,7 +244,7 @@ class IterativeSolverMixin(pp.PorePyModel):
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
 
-        dof_manager = self._solver_components.dof_manager
+        dof_manager = self._solver_factory.dof_manager
         # Get the linear system from the equation system.
 
         # TODO: Replace this with a different type of plugin
@@ -273,10 +267,10 @@ class IterativeSolverMixin(pp.PorePyModel):
             mat=mat,
             rhs=rhs,
             indexer=LinearSystemIndexer(
-                dofs_row=dof_manager.eq_dofs(self),
-                dofs_col=dof_manager.var_dofs(self),
-                group_names_row=dof_manager.equation_names(self),
-                group_names_col=dof_manager.variable_names(self),
+                dofs_row=dof_manager.eq_dofs(),
+                dofs_col=dof_manager.var_dofs(),
+                group_names_row=dof_manager.equation_names(),
+                group_names_col=dof_manager.variable_names(),
             ),
         )
 
@@ -288,22 +282,29 @@ class IterativeSolverMixin(pp.PorePyModel):
     def _initialize_linear_solver(self):
         # Set up preconditioner.
 
-        precond_factory: Callable[[], list[SinglePhysicsPreconditioner]]
+        precond_factory: Callable[[], PetscKspPcConfiguration]
         linear_solver_params = self.params.get("linear_solver", {})
         precond_factory = linear_solver_params.get("preconditioner_factory", None)
         if precond_factory is None:
             precond_factory = default_preconditioner_factory(self)
 
-        precond_list = precond_factory()
+        petsc_ksp_pc_configuration: PetscKspPcConfiguration = precond_factory()
 
-        dof_manager = DofManager(precond_list.groups)
-        ksp_factory = precond_list
+        dof_manager = DofManager(model=self, groups=petsc_ksp_pc_configuration.groups)
 
-        contact_ind = dof_manager.identify_contact_group()
-        u_intf_ind = dof_manager.identify_u_intf_group(
-            self
-        )  # this isn't a responsibility of DofManager
+        try:
+            contact_ind, u_intf_ind = dof_manager.indices_of_groups(
+                [ContactMechanicsGroup(), InterfaceForceBalanceGroup()]
+            )
+        except ValueError:
+            contact_ind, u_intf_ind = None, None
 
+        # TODO: Logic below should not be hard-coded in SolverMixin. precond_factory()
+        # should return some object that determines pre-processing before solving.
+        ksp_factory = PetscKSPScheme(
+            petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
+            dof_manager=dof_manager,
+        )
         contact_transform, thermal_transform = None, None
         if contact_ind is not None and u_intf_ind is not None:
             # If there is a contact group, we need to use a linear solver that takes
@@ -313,9 +314,12 @@ class IterativeSolverMixin(pp.PorePyModel):
                     bmat, contact_ind, u_intf_ind, self.nd
                 )
             ]
-        energy_balance_groups = (
-            dof_manager.identify_energy_balance_groups()
-        )  # this isn't a responsibility of DofManager
+        try:
+            energy_balance_groups = dof_manager.indices_of_groups(
+                [EnergyBalanceTemperatureGroup()]
+            )
+        except ValueError:
+            energy_balance_groups = []
         if len(energy_balance_groups) > 0:
             thermal_transform = [
                 lambda bmat: scale_energy_transform(
@@ -334,12 +338,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             # A standard KSP solver will do.
             solver_factory = ksp_factory
 
-        solver_components = LinearSolverComponents(
-            dof_manager=dof_manager,
-            preconditioner=None,
-            ksp_factory=solver_factory,
-        )
-        self._solver_components = solver_components
+        self._solver_factory = solver_factory
 
     def set_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields
@@ -357,7 +356,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
 def default_preconditioner_factory(
     model: pp.PorePyModel,
-) -> Callable[[], list[SinglePhysicsPreconditioner]]:
+) -> Callable[[], PetscKspPcConfiguration]:
     if isinstance(model, pp.SinglePhaseFlow):
         return mass_balance_factory
     if isinstance(model, pp.MomentumBalance):

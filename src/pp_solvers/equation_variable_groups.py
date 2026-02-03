@@ -161,17 +161,16 @@ class MechanicsGroup(EquationVariableGroup):
             domains=model.mdg.subdomains(dim=model.nd),
         )
 
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         subdomains = model.mdg.subdomains(dim=model.nd)
-        return model.interface_displacement(subdomains)
+        return model.displacement(subdomains)
 
-    def equation_names(self, model) -> list[str]:
+    def equation_name(self, model: pp.PorePyModel) -> str:
         return EquationNames.MECHANICS.value
 
-    def variable_names(self, model) -> list[str]:
+    def variable_name(self, model: pp.PorePyModel) -> str:
         return model.displacement_variable
+
 
 class ContactMechanicsGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
@@ -180,117 +179,166 @@ class ContactMechanicsGroup(EquationVariableGroup):
             domains=model.mdg.subdomains(dim=model.nd - 1),
         )
 
-    def variable_groups(
-        self, model: pp.PorePyModel
-    ) -> list[list[pp.ad.MixedDimensionalVariable]]:
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
         return model.contact_traction(subdomains)
 
-    def equation_names(self, model) -> list[str]:
+    def equation_name(self, model) -> str:
         return EquationNames.CONTACT.value
 
-    def variable_names(self, model) -> list[str]:
+    def variable_name(self, model) -> str:
         return model.contact_traction_variable
 
 
-# MARK: Should not be here
+class MassBalancePressureMatrixGroup(EquationVariableGroup):
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        return EquationOnDomains(
+            name=EquationNames.MASS_BALANCE.value,
+            domains=model.mdg.subdomains(dim=model.nd),
+        )
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        return model.pressure(model.mdg.subdomains(dim=model.nd))
+
+    def equation_name(self, model: pp.PorePyModel) -> str:
+        return EquationNames.MASS_BALANCE.value + " (matrix)"
+
+    def variable_name(self, model: pp.PorePyModel) -> str:
+        return model.pressure_variable + " (matrix)"
+
+
+class MassBalancePressureFracturesGroup(EquationVariableGroup):
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        return EquationOnDomains(
+            name=EquationNames.MASS_BALANCE.value,
+            domains=model.mdg.subdomains(dim=model.nd - 1),
+        )
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        return model.pressure(model.mdg.subdomains(dim=model.nd - 1))
+
+    def equation_name(self, model: pp.PorePyModel) -> str:
+        return EquationNames.MASS_BALANCE.value + " (fractures)"
+
+    def variable_name(self, model: pp.PorePyModel) -> str:
+        return model.pressure_variable + " (fractures)"
+
+
+class MassBalancePressureIntersectionsGroup(EquationVariableGroup):
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        intersections = [
+            sd
+            for dim in reversed(range(0, model.nd - 1))
+            for sd in model.mdg.subdomains(dim=dim)
+        ]
+        return EquationOnDomains(
+            name=EquationNames.MASS_BALANCE.value,
+            domains=intersections,
+        )
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        intersections = [
+            sd
+            for dim in reversed(range(0, model.nd - 1))
+            for sd in model.mdg.subdomains(dim=dim)
+        ]
+        return model.pressure(intersections)
+
+    def equation_name(self, model: pp.PorePyModel) -> str:
+        return EquationNames.MASS_BALANCE.value + " (intersections)"
+
+    def variable_name(self, model: pp.PorePyModel) -> str:
+        return model.pressure_variable + " (intersections)"
 
 
 class MassBalancePressureGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        production_wells, no_production_wells = model._filter_wells(
-            model.mdg.subdomains(), "production"
-        )
         return EquationOnDomains(
-            name=EquationNames.MASS_BALANCE, domains=no_production_wells
+            name=EquationNames.MASS_BALANCE.value, domains=model.mdg.subdomains()
         )
 
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        production_wells, no_production_wells = model._filter_wells(
-            model.mdg.subdomains(), "production"
-        )
-        return model.pressure(no_production_wells)
+        return model.pressure(model.mdg.subdomains())
 
     def equation_name(self, model: pp.PorePyModel) -> str:
-        return "mass_balance"
+        return EquationNames.MASS_BALANCE.value
 
     def variable_name(self, model: pp.PorePyModel) -> str:
-        return "pressure"
+        return model.pressure_variable
 
 
-class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+class EnergyBalanceTemperatureGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        name = EquationNames.ENERGY_BALANCE
-        injection_wells, no_injection_wells = model._filter_wells(
-            model.mdg.subdomains(), "injection"
+        return EquationOnDomains(
+            name=EquationNames.ENERGY_BALANCE.value, domains=model.mdg.subdomains()
         )
-        return EquationOnDomains(name=name, domains=no_injection_wells)
 
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        injection_wells, no_injection_wells = model._filter_wells(
-            model.mdg.subdomains(), "injection"
-        )
-        return model.enthalpy(no_injection_wells)
+        return model.temperature(model.mdg.subdomains())
 
     def equation_name(self, model: pp.PorePyModel) -> str:
-        return "energy_balance"
+        return EquationNames.ENERGY_BALANCE.value
 
     def variable_name(self, model: pp.PorePyModel) -> str:
-        return "entalpy"
+        return model.temperature_variable
 
 
-class ProductionPressureConstraintGroup(EquationVariableGroup):
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        name = "production_pressure_constraint"
-        production_wells, no_production_wells = model._filter_wells(
-            model.mdg.subdomains(), "production"
-        )
-        return EquationOnDomains(name=name, domains=production_wells)
+# class EnergyBalanceTemperatureMatrixGroup(EquationVariableGroup):
+#     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+#         return EquationOnDomains(
+#             name=EquationNames.ENERGY_BALANCE.value,
+#             domains=model.mdg.subdomains(dim=model.nd),
+#         )
 
-    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        production_wells, no_production_wells = model._filter_wells(
-            model.mdg.subdomains(), "production"
-        )
-        return model.pressure(production_wells)
+#     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+#         return model.temperature(model.mdg.subdomains(dim=model.nd))
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return "production_pressure_constraint"
+#     def equation_name(self, model: pp.PorePyModel) -> str:
+#         return EquationNames.ENERGY_BALANCE.value + " (matrix)"
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return "pressure_constraint"
+#     def variable_name(self, model: pp.PorePyModel) -> str:
+#         return model.temperature_variable + " (matrix)"
 
 
-class InjectionTemperatureConstraintGroup(EquationVariableGroup):
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        name = "injection_temperature_constraint"
-        injection_wells, no_injection_wells = model._filter_wells(
-            model.mdg.subdomains(), "injection"
-        )
-        return EquationOnDomains(name=name, domains=injection_wells)
+# class EnergyBalanceTemperatureFracturesGroup(EquationVariableGroup):
+#     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+#         return EquationOnDomains(
+#             name=EquationNames.ENERGY_BALANCE.value,
+#             domains=model.mdg.subdomains(dim=model.nd - 1),
+#         )
 
-    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        injection_wells, no_injection_wells = model._filter_wells(
-            model.mdg.subdomains(), "injection"
-        )
-        return model.enthalpy(injection_wells)
+#     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+#         return model.temperature(model.mdg.subdomains(dim=model.nd - 1))
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return "injection_temperature_constraint"
+#     def equation_name(self, model: pp.PorePyModel) -> str:
+#         return EquationNames.ENERGY_BALANCE.value + " (fractures)"
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return "enthalpy_constraint"
+#     def variable_name(self, model: pp.PorePyModel) -> str:
+#         return model.temperature_variable + " (fractures)"
 
 
-class ComponentMassBalanceCO2Group(EquationVariableGroup):
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        name = "component_mass_balance_equation_CO2"
-        return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+# class EnergyBalanceTemperatureIntersectionsGroup(EquationVariableGroup):
+#     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+#         intersections = [
+#             sd
+#             for dim in reversed(range(0, model.nd - 2))
+#             for sd in model.mdg.subdomains(dim)
+#         ]
+#         return EquationOnDomains(
+#             name=EquationNames.ENERGY_BALANCE.value,
+#             domains=intersections,
+#         )
 
-    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        return model.fluid.components[1].fraction(model.mdg.subdomains())
+#     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+#         intersections = [
+#             sd
+#             for dim in reversed(range(0, model.nd - 2))
+#             for sd in model.mdg.subdomains(dim)
+#         ]
+#         return model.temperature(intersections)
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return "component_mass_balance_equation_CO2"
+#     def equation_name(self, model: pp.PorePyModel) -> str:
+#         return EquationNames.ENERGY_BALANCE.value + " (intersections)"
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return "z_CO2"
+#     def variable_name(self, model: pp.PorePyModel) -> str:
+#         return model.temperature_variable + " (intersections)"

@@ -55,7 +55,11 @@ model_params_2d = {
     "units": pp.Units(m=1e-4),
     "linear_solver": {
         "preconditioner_factory": pp_solvers.mass_balance_factory,
-        "options": {"ksp_monitor": None},
+        "options": {
+            "gmres": {
+                "ksp_monitor": None,
+            }
+        },
     },
 }
 model_2d = FullModel(model_params_2d)

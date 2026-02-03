@@ -18,7 +18,6 @@ from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.preconditioners import SinglePhysicsPreconditioner
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -66,7 +65,7 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
 
 
 @pytest.fixture(scope="module")
-def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
+def solvers(model_kind: str) -> list:
     match model_kind:
         case "flow":
             return pp_solvers.mass_balance_factory()
@@ -84,7 +83,7 @@ def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
 
 @pytest.fixture(scope="module")
 def dof_manager(
-    model: pp.PorePyModel, solvers: list[SinglePhysicsPreconditioner]
+    model: pp.PorePyModel, solvers: list
 ) -> DofManager:
     return DofManager(model, solvers)
 
@@ -253,7 +252,7 @@ def test_eq_var_dofs_by_blocks(
 
 def test_blocks_of_solver(
     dof_manager: DofManager,
-    solvers: list[SinglePhysicsPreconditioner],
+    solvers: list,
     model_kind: str,
     expected_composition: dict,
 ):
