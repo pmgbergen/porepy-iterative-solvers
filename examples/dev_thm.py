@@ -55,9 +55,8 @@ model_params_2d = {
     "linear_solver": {
         "preconditioner_factory": pp_solvers.thm_factory,
         "options": {
-            "ksp_monitor": None,
-            'identity': {
-                'pc_type': 'jacobi'
+            "gmres": {
+                "ksp_monitor": None,
             }
         },
     },

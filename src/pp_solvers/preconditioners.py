@@ -1,41 +1,40 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from itertools import chain
-from typing import TYPE_CHECKING, Callable
 
-import numpy as np
-import porepy as pp
-
-from pp_solvers import equation_variable_groups as groups
-from pp_solvers.block_linear_system import BlockLinearSystem
-from pp_solvers.equation_variable_groups import EquationNames
+from pp_solvers.dof_manager import DofManager
 from pp_solvers.fixed_stress import make_fs_analytical_slow_new
 from pp_solvers.petsc_solvers import PcPythonPermutation
+from pp_solvers.equation_variable_groups import (
+    ContactMechanicsGroup,
+    EnergyBalanceTemperatureGroup,
+    # EnergyBalanceTemperatureFracturesGroup,
+    # EnergyBalanceTemperatureIntersectionsGroup,
+    # EnergyBalanceTemperatureMatrixGroup,
+    EquationVariableGroup,
+    InterfaceDarcyFluxGroup,
+    InterfaceEnthalpyFluxGroup,
+    InterfaceForceBalanceGroup,
+    InterfaceFourierFluxGroup,
+    MassBalancePressureFracturesGroup,
+    MassBalancePressureGroup,
+    MassBalancePressureIntersectionsGroup,
+    MassBalancePressureMatrixGroup,
+    MechanicsGroup,
+    WellEnthalpyFluxGroup,
+    WellFluxGroup,
+)
 from pp_solvers.petsc_utils import csr_to_petsc
 
-if TYPE_CHECKING:
-    from pp_solvers.dof_manager import DofManager
-
-
 __all__ = [
-    # Add all preconditioners here.
-    "SinglePhysicsPreconditioner",
-    "InterfaceDarcyFluxPreconditioner",
-    "InterfaceEnthalpyFluxPreconditioner",
-    "InterfaceFourierFluxPreconditioner",
-    "InterfaceMassEnergyFluxPreconditioner",
-    "MassBalancePreconditioner",
-    "MassBalanceDimSplitPreconditioner",
-    "MassBalanceDimSplitCPRPreconditioner",
-    "EnergyBalancePreconditioner",
-    "EnergyBalanceDimSplitPreconditioner",
-    "MechanicsPreconditioner",
-    "FixedStressPreconditioner",
-    "ContactPreconditioner",
-    "BlockILU",
-    "IdentityPreconditioner",
+    # Add all preconditioners and linear solvers here.
+    "PetscKspPcConfiguration",
+    "ILU",
+    "AMG",
+    "Identity",
     "CompositePreconditioner",
+    "GMRES",
+    "DiagonalInvertor",
     # Add all the factory functions here.
     "mass_balance_factory",
     "momentum_balance_factory",
@@ -45,692 +44,569 @@ __all__ = [
 ]
 
 
-class SinglePhysicsPreconditioner(ABC):
-    """
-    Abstract class for defining a preconditioner.
-    """
+def append_prefix_to_options(prefix: str, options: dict):
+    return {f"{prefix}{key}": value for key, value in options.items()}
 
-    def group(self):
-        """
-        Return the group for the preconditioner.
-        """
-        return self._group
 
-    @property
+class PetscInvertor(ABC):
     @abstractmethod
-    def key(self) -> str:
-        """
-        Return the key for the preconditioner.
-        """
+    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
         pass
 
-    @property
-    @abstractmethod
-    def tag(self) -> str:
-        """
-        Return the tag for the preconditioner.
-        """
-        pass
-
-    @property
-    def complement_tag(self) -> str:
-        """
-        Return the tag for the complement of the preconditioner.
-        """
-        return self.tag + "_cpl"
-
-    @property
-    def ksp_keep_use_pmat(self) -> bool:
-        """
-        Return whether to keep the preconditioner matrix.
-        """
-        return False
-
-    @property
-    def unit_block_size(self) -> bool:
-        """
-        Return the number of dimensions for the preconditioner.
-        """
-        return True
-
-    def near_null_space(self, model: pp.PorePyModel) -> np.ndarray | None:
-        """
-        Return the near null space for the preconditioner.
-        """
-        return None
-
-    @abstractmethod
-    def _default_options(self, model: pp.PorePyModel, dof_manager) -> dict:
-        """
-        Return the default options for the preconditioner.
-        """
-        pass
-
-    def inverter(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: DofManager,
-        groups: list[groups.AbstractGroup],
-    ) -> Callable:
-        """
-        Return the inverter for the preconditioner.
-        """
-        return None
-
-    def _default_fieldsplit_options(self, model: pp.PorePyModel, dof_manager) -> dict:
-        """Options for field splits. Provide a separate method for this, since it
-        involves some boilerplate options.
-        """
-        opts = {
-            "pc_type": "fieldsplit",
-            "pc_fieldsplit_type": "schur",
-            "pc_fieldsplit_schur_factorization_type": "upper",
-            "pc_fieldsplit_schur_precondition": "selfp",
-            f"fieldsplit_{self.tag}_ksp_type": "preonly",
-            f"fieldsplit_{self.complement_tag}_ksp_type": "preonly",
-        }
-        return opts
-
-    def configure(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: pp.DofManager,
-        opts: dict | None = None,
-        has_complement: bool = False,
-    ) -> dict:
-        default_opts = self._default_options(model, dof_manager)
-        user_opts = opts.get(self.key, {})
-
-        local_opts = default_opts | user_opts
-
-        if has_complement:
-            fieldsplit_opts = self._default_fieldsplit_options(model, dof_manager)
-
-            # The local options need to be prefixed with the relevant fieldsplit tag.
-            local_fieldsplit_opts = {
-                f"fieldsplit_{self.tag}_{k}": v for k, v in local_opts.items()
-            }
-            return fieldsplit_opts | local_fieldsplit_opts
-        else:
-            return local_opts
-
-
-class InterfaceDarcyFluxPreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self):
-        self._group = groups.InterfaceDarcyFluxGroup()
-
-    @property
-    def key(self) -> str:
-        return "interface_darcy_flux"
-
-    @property
-    def tag(self) -> str:
-        return "intf_darcy_flx"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        opts = {"pc_type": "ilu"}
-        return opts
-
-    def configure(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: DofManager,
-        opts: dict | None = None,
-        has_complement: bool = False,
-    ) -> dict:
-        if not has_complement:
-            raise ValueError(
-                "The interface darcy flux preconditioner requires a complement."
-            )
-        return super().configure(model, dof_manager, opts, has_complement)
-
-
-class InterfaceEnthalpyFluxPreconditioner(SinglePhysicsPreconditioner):
-    # YZ: Not used anywhere
-
-    def __init__(self):
-        self._group = groups.InterfaceEnthalpyFluxGroup()
-
-    @property
-    def key(self) -> str:
-        return "interface_energy_flux"
-
-    @property
-    def tag(self) -> str:
-        return "intf_energy_flx"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        opts = {"pc_type": "ilu"}
-        return opts
-
-    def configure(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: DofManager,
-        opts: dict | None = None,
-        has_complement: bool = False,
-    ) -> dict:
-        if not has_complement:
-            raise ValueError(
-                "The interface energy flux preconditioner requires a complement."
-            )
-        return super().configure(model, dof_manager, opts, has_complement)
-
-
-class InterfaceFourierFluxPreconditioner(SinglePhysicsPreconditioner):
-    # YZ: Not used anywhere
-
-    def __init__(self):
-        self._group = groups.InterfaceFourierFluxGroup()
-
-    @property
-    def key(self) -> str:
-        return "interface_energy_flux"
-
-    @property
-    def tag(self) -> str:
-        return "intf_energy_flx"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        opts = {"pc_type": "ilu"}
-        return opts
-
-    def configure(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: DofManager,
-        opts: dict | None = None,
-        has_complement: bool = False,
-    ) -> dict:
-        if not has_complement:
-            raise ValueError(
-                "The interface energy flux preconditioner requires a complement."
-            )
-        return super().configure(model, dof_manager, opts, has_complement)
-
-
-class InterfaceMassEnergyFluxPreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self):
-        self._group = groups.InterfaceMassEnergyFluxGroup()
-
-    @property
-    def key(self) -> str:
-        return "interface_mass_energy_flux"
-
-    @property
-    def tag(self) -> str:
-        return "intf_mass_energy_flx"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        opts = {"pc_type": "ilu"}
-        return opts
-
-    def configure(
-        self,
-        model: pp.PorePyModel,
-        dof_manager: DofManager,
-        opts: dict | None = None,
-        has_complement: bool = False,
-    ) -> dict:
-        if not has_complement:
-            raise ValueError(
-                "The interface mass energy flux preconditioner requires a complement."
-            )
-        return super().configure(model, dof_manager, opts, has_complement)
-
-
-class MassBalancePreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self):
-        self._group = groups.MassBalanceGroup()
-
-    @property
-    def key(self) -> str:
-        return "mass_balance"
-
-    @property
-    def tag(self) -> str:
-        return "mass_bal"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "pc_type": "hypre",
-            "pc_hypre_type": "boomeramg",
-            "pc_hypre_boomeramg_strong_threshold": 0.7,
-        }
-        return local_opts
-
-
-class MassBalanceDimSplitPreconditioner(MassBalancePreconditioner):
-    def __init__(self):
-        self._group = groups.MassBalanceDimSplitGroup()
-
-
-class MassBalanceDimSplitCPRPreconditioner(MassBalanceDimSplitPreconditioner):
-    # Special version of the mass balance preconditioner for use in CPR.
-    # The key ingredient is that the filedsplit option is set to be additive.
-    def _default_fieldsplit_options(self, model, dof_manager):
-        inherited_opts = super()._default_fieldsplit_options(model, dof_manager)
-
-        # The following options are not needed for the CPR preconditioner, and will
-        # cause issues if they are present.
-        keys_to_delete = [
-            "pc_fieldsplit_type",
-            "pc_fieldsplit_schur_factorization_type",
-            "pc_fieldsplit_schur_precondition",
-        ]
-        for key in keys_to_delete:
-            inherited_opts.pop(key, None)
-
-        local_opts = {
-            "pc_fieldsplit_type": "additive",
-        }
-        return inherited_opts | local_opts
-
-
-class EnergyBalancePreconditioner(SinglePhysicsPreconditioner):
-    # YZ: Not used anywhere
-    def __init__(self):
-        self._group = groups.MassBalanceGroup()
-
-    @property
-    def key(self) -> str:
-        return "energy_balance"
-
-    @property
-    def tag(self) -> str:
-        return "energy_bal"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "pc_type": "hypre",
-            "pc_hypre_type": "boomeramg",
-            "pc_hypre_boomeramg_strong_threshold": 0.7,
-        }
-        return local_opts
-
-
-class EnergyBalanceDimSplitPreconditioner(EnergyBalancePreconditioner):
-    # YZ: Not used anywhere
-    def __init__(self):
-        self._group = groups.EnergyBalanceDimSplitGroup()
-
-
-class MechanicsPreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self):
-        self._group = groups.MechanicsGroup()
-
-    @property
-    def key(self) -> str:
-        return "mechanics"
-
-    @property
-    def tag(self) -> str:
-        return "mech"
-
-    @property
-    def unit_block_size(self) -> bool:
-        return False
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "ksp_type": "preonly",
-            "pc_type": "hypre",
-            "pc_hypre_type": "boomeramg",
-            "pc_hypre_boomeramg_strong_threshold": 0.7,
-        }
-        return local_opts
-
-    # def near_null_space(self, model):
-    #     return hm_solver.build_mechanics_near_null_space(model)
-
-
-class FixedStressPreconditioner(MechanicsPreconditioner):
-    def _flow_groups(self, model, dof_manager):
-        # Get all groups associated with the flow equations. This will at least include
-        # the pressure matrix group, and possibly also the fracture and intersection
-        # groups.
-
-        equation_names = dof_manager.equation_names(model)
-        target_ind = [
-            i
-            for i, x in enumerate(equation_names)
-            if x == EquationNames.MASS_BALANCE.value
-        ]
-        return target_ind
-
-    def inverter(
-        self, model: pp.PorePyModel, dof_manager: DofManager, groups: list[int]
-    ) -> Callable:
-        """Get the inverter for the fixed stress preconditioner.
-
-        This class relies on two hard-coded assumptions:
-            1. The physics to be stabilized is the mass balance equation. If we ever
-               need fixed stress for, say, thermal diffusion, a different approach is
-               needed to identify the relevant groups.
-            2. The mass balance group is split into first, the matrix group, second, the
-                fracture group, and third, the intersection group.
-        """
-
-        flow_group = self._flow_groups(model, dof_manager)
-        if len(flow_group) == 0:
-            raise ValueError(
-                "Mass balance group not found in the model. "
-                "This is required for the fixed-stress preconditioner."
-            )
-        elif len(flow_group) == 1:
-            # This is a fixed-dimensional problem.
-            raise NotImplementedError(
-                "Have not yet implemented the fixed stress preconditioner "
-                "for fixed-dimensional problems."
-            )
-        else:
-            # This is a mixed-dimensional problem, use the md scheme
-            return lambda bmat: csr_to_petsc(
-                make_fs_analytical_slow_new(
-                    model,
-                    bmat,
-                    p_mat_group=flow_group[0],
-                    p_frac_group=flow_group[1],
-                    groups=groups,
-                ).mat,
-                bsize=1,
-            )
-
-
-class ContactPreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self):
-        self._group = groups.ContactGroup()
-
-    @property
-    def key(self) -> str:
-        return "contact"
-
-    @property
-    def tag(self) -> str:
-        return "contact"
-
-    @property
-    def unit_block_size(self) -> bool:
-        return False
-
-    def group(self):
-        return groups.ContactGroup()
-
-    def _default_fieldsplit_options(self, model, dof_manager) -> dict:
-        opts = super()._default_fieldsplit_options(model, dof_manager)
-        # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
-        # which represents the non-assembled Schur complement matrix after eliminating
-        # contact. It tells it to use the block-diagonal approximation when the Schur
-        # complement needs to be assembled. Otherwise, "selfp" will use the diagonal
-        # approximation, and we will diverge.
-        # This option applies not to the full "fieldsplit" context, but the context of
-        # the complement, thus using "cpl" prefix.
-        key = f"fieldsplit_{self.tag}_cpl_mat_schur_complement_ainv_type"
-        opts.update({key: "blockdiag"})
-        return opts
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "pc_type": "pbjacobi",
-        }
-        return local_opts
-
-
-class BlockILU(SinglePhysicsPreconditioner):
-    def __init__(self, groups):
-        self._group = groups
-
-    @property
-    def key(self) -> str:
-        return "cpr"
-
-    @property
-    def tag(self) -> str:
-        return "cpr"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            # "ksp_type": "preonly",
-            "python_pc_type": "ilu",
-            "pc_type": "python",
-            # "pc_cprilu_levels": 2,
-            # "pc_cprilu_fill": 0.1,
-            # "pc_cprilu_zeropivot": 1e-12,
-        }
-        return local_opts
-
-    def python_preconditioner(self, bmat, dof_manager: DofManager):
-        indices = []
-        for g in self._group:
-            # Get the indices for the group.
-            indices.append(
-                dof_manager._name_to_group_indices[g.equation_names(None)[0]]
-            )
-
-        # Need to get hold of the groups here.
-        return PcPythonPermutation(
-            _to_cell_ordering(bmat, indices), block_size=len(self._group)
+    def petsc_assembly_config(self, prefix: str, dof_manager: DofManager) -> dict:
+        return {}
+
+
+class DiagonalInvertor(PetscInvertor):
+    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+        return append_prefix_to_options(
+            prefix=prefix,
+            options={
+                "pc_fieldsplit_schur_precondition": "selfp",
+            },
         )
 
 
-class IdentityPreconditioner(SinglePhysicsPreconditioner):
-    def __init__(self, group):
-        self._group = group
+class BlockDiagonalInvertor(PetscInvertor):
+    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+        # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
+        # which represents the non-assembled Schur complement matrix. It tells it to use
+        # the block-diagonal approximation when the Schur complement needs to be
+        # assembled. This option applies not to the full "fieldsplit" context, but the
+        # context of the complement, thus using the complement prefix.
+        return append_prefix_to_options(
+            prefix=prefix,
+            options={
+                "pc_fieldsplit_schur_precondition": "selfp",
+                f"fieldsplit_{complement_tag}_mat_schur_complement_ainv_type": "blockdiag",
+            },
+        )
 
-    @property
-    def key(self) -> str:
-        return "identity"
 
-    @property
-    def tag(self) -> str:
-        return "identity"
+class FixedStressInvertor(PetscInvertor):
+    def petsc_options(
+        self,
+        prefix: str,
+        tag: str,
+        complement_tag: str,
+    ) -> dict:
+        return append_prefix_to_options(
+            prefix=prefix,
+            options={
+                "pc_fieldsplit_schur_precondition": "user",
+            },
+        )
 
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "pc_type": "none",
+    def petsc_assembly_config(self, prefix: str, dof_manager: DofManager) -> dict:
+        flow_mat_group, flow_frac_group = dof_manager.indices_of_groups(
+            [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+        )
+        try:
+            dof_manager.indices_of_groups([MassBalancePressureGroup()])
+        except ValueError:
+            pass  # It's ok, this group is not present.
+        else:
+            raise ValueError(
+                "Fixed-stress preconditioner requires mass balance equation "
+                "with groups splitted by dimensions. Use "
+                "`MassBalancePressureMatrixGroup` etc."
+            )
+
+        return {
+            prefix: {
+                "invertor": lambda bmat: csr_to_petsc(
+                    make_fs_analytical_slow_new(
+                        dof_manager.model,
+                        bmat,
+                        p_mat_group=flow_mat_group,
+                        p_frac_group=flow_frac_group,
+                        groups=bmat.enabled_groups_row,
+                    ).mat,
+                    bsize=1,
+                )
+            }
         }
-        return local_opts
 
 
-class CompositePreconditioner(SinglePhysicsPreconditioner):
-    """A class for a composite (e.g., multi-stage) preconditioner for a block."""
+class PetscKspPcConfiguration(ABC):
+    def __init__(self, groups: list[EquationVariableGroup], key: str) -> None:
+        # keys - for the access of user options, must be unique
+        # should have semantic meaning, like "mechanics_subsolver"
+        self.groups: list[EquationVariableGroup] = groups
+        self.key: str = key
 
-    def __init__(self, solvers: list[list[SinglePhysicsPreconditioner]]):
-        self.solvers = solvers
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(groups={self.groups})"
 
-        def get_groups_of_subsolver(subsolver) -> list[groups.AbstractGroup]:
-            if isinstance(subsolver, SinglePhysicsPreconditioner):
-                # YZ: I would suggest to keep only lists of solvers for consistensy.
-                group = subsolver.group()
-            elif isinstance(subsolver, list):
-                # If the solver is a list, we assume it contains multiple groups.
-                group = [slv.group() for slv in subsolver]
-            else:
-                raise TypeError(
-                    "The solver must be a SinglePhysicsPreconditioner"
-                    " or a list of them."
-                )
-            if not isinstance(group, list):
-                group = [group]
-            return group
+    @abstractmethod
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        pass
 
-        def are_groups_equal(
-            a: list[groups.AbstractGroup], b: list[groups.AbstractGroup]
-        ):
-            # There is no better way to compare without a model. Anyway, they are kind
-            # of singletones (in a sense that they don't have per-instance states).
-            if len(a) != len(b):
-                return False
-            for x, y in zip(a, b):
-                if x.__class__ != y.__class__:
-                    return False
-            return True
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return {}
 
-        # Components of a composite preconditioner must approximately invert exactly the
-        # same matrix, hence the groups must be the same. We check it here.
-        groups_expected = get_groups_of_subsolver(self.solvers[0])
-        for solver in self.solvers[1:]:
-            assert are_groups_equal(groups_expected, get_groups_of_subsolver(solver))
 
-        self._group = groups_expected
+class ILU(PetscKspPcConfiguration):
+    def __init__(self, groups: list[EquationVariableGroup], key: str = "ilu") -> None:
+        super().__init__(groups=groups, key=key)
 
-    @property
-    def key(self) -> str:
-        keys = []
-        for slv in self.solvers:
-            if isinstance(slv, SinglePhysicsPreconditioner):
-                keys.append(slv.key)
-            elif isinstance(slv, list):
-                keys += [x.key for x in slv]
-            else:
-                raise TypeError(
-                    "The solver must be a SinglePhysicsPreconditioner"
-                    " or a list of them."
-                )
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        default_options = {"pc_type": "ilu"}
+        return append_prefix_to_options(
+            prefix=prefix, options=default_options | user_options.get(self.key, {})
+        )
 
-        return "composite_" + "_".join([key for key in keys])
 
-    @property
-    def tag(self) -> str:
-        return "comp"  # + "_".join([g.tag for g in self._groups])
+class AMG(PetscKspPcConfiguration):
+    def __init__(self, groups: list[EquationVariableGroup], key: str = "amg") -> None:
+        super().__init__(groups=groups, key=key)
 
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "ksp_type": "preonly",
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        # This is where the default can be model-dependent. E.g. if 2d, strong_th=0.3
+        # and 0.7 if 3d.
+        default_options = {"pc_type": "hypre", "pc_hypre_type": "boomeramg"}
+        return append_prefix_to_options(
+            prefix=prefix, options=default_options | user_options.get(self.key, {})
+        )
+
+
+class Identity(PetscKspPcConfiguration):
+    def __init__(
+        self, groups: list[EquationVariableGroup], key: str = "identity"
+    ) -> None:
+        super().__init__(groups=groups, key=key)
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        default_options = {"pc_type": "none"}
+        return append_prefix_to_options(
+            prefix=prefix, options=default_options | user_options.get(self.key, {})
+        )
+
+
+class GMRES(PetscKspPcConfiguration):
+    def __init__(
+        self, preconditioner: PetscKspPcConfiguration, key: str = "gmres"
+    ) -> None:
+        self.preconditioner: PetscKspPcConfiguration = preconditioner
+        super().__init__(groups=self.preconditioner.groups, key=key)
+
+    def __repr__(self) -> str:
+        return f"GMRES(preconditioner={self.preconditioner})"
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        default_options = {
+            "ksp_type": "gmres",
+            "ksp_pc_side": "right",
+            "ksp_rtol": 1e-12,
+            "ksp_max_it": 300,
+            "ksp_gmres_restart": 100,
+            "ksp_gmres_cgs_refinement_type": "refine_ifneeded",
+            "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
+        }
+        pc_options = self.preconditioner.petsc_options(
+            user_options=user_options, prefix=prefix
+        )
+        return append_prefix_to_options(
+            prefix=prefix,
+            options=pc_options | default_options | user_options.get(self.key, {}),
+        )
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return self.preconditioner.petsc_assembly_config(
+            user_options=user_options, prefix=prefix, dof_manager=dof_manager
+        )
+
+
+class CompositePreconditioner(PetscKspPcConfiguration):
+    def __init__(
+        self, subsolvers: list[PetscKspPcConfiguration], key: str = "composite"
+    ) -> None:
+        assert len(subsolvers) >= 1
+        groups_of_subsolvers = [subsolver.groups for subsolver in subsolvers]
+        for groups in groups_of_subsolvers[1:]:
+            assert groups == groups_of_subsolvers[0]
+        super().__init__(groups_of_subsolvers[0], key=key)
+        self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
+
+    def __repr__(self) -> str:
+        return f"CompositePreconditioner(subsolvers={self.subsolvers})"
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        result: dict = {
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
-            # "pc_composite_pcs": ",".join(["none"] * len(self.solvers)),
         }
-        return local_opts
+        for i, subsolver in enumerate(self.subsolvers):
+            result |= subsolver.petsc_options(
+                user_options=user_options, prefix=f"sub_{i}_"
+            )
+        return append_prefix_to_options(
+            prefix=prefix, options=result | user_options.get(self.key, {})
+        )
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        config = {
+            prefix: {
+                "pc_type": "composite",
+                "num_stages": len(self.subsolvers),
+            },
+        }
+        for i, subsolver in enumerate(self.subsolvers):
+            subsolver_prefix = f"{prefix}sub_{i}_"
+            config |= subsolver.petsc_assembly_config(
+                user_options=user_options,
+                prefix=subsolver_prefix,
+                dof_manager=dof_manager,
+            )
+        return config
+
+
+class FieldSplit(PetscKspPcConfiguration):
+    def __init__(
+        self,
+        subsolver: PetscKspPcConfiguration,
+        complement: PetscKspPcConfiguration,
+        approximate_invertor: PetscInvertor,
+        petsc_tag: str = "elim",
+        petsc_complement_tag: str = "keep",
+        key: str = "fieldsplit",
+    ) -> None:
+        # petsc_tag - internal, for petsc prefix. Must be short, not necessarily unique.
+        self.subsolver: PetscKspPcConfiguration = subsolver
+        self.complement: PetscKspPcConfiguration = complement
+        self.approximate_invertor: PetscInvertor = approximate_invertor
+        self.petsc_tag: str = petsc_tag
+        self.petsc_complement_tag: str = petsc_complement_tag
+        super().__init__(groups=self.subsolver.groups + self.complement.groups, key=key)
+
+        # assert set(self.subsolver.groups).intersection(self.complement.groups) == 0
+
+    def __repr__(self) -> str:
+        return (
+            f"FieldSplit(subsolver={self.subsolver}, complement={self.complement}, "
+            f"approximate_invertor={self.approximate_invertor})"
+        )
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        options = (
+            {
+                "pc_type": "fieldsplit",
+                "pc_fieldsplit_type": "schur",
+                "pc_fieldsplit_schur_factorization_type": "upper",
+                # default values for the children.
+                f"fieldsplit_{self.petsc_tag}_ksp_type": "preonly",
+                f"fieldsplit_{self.petsc_complement_tag}_ksp_type": "preonly",
+            }
+            | self.subsolver.petsc_options(
+                user_options=user_options, prefix=f"fieldsplit_{self.petsc_tag}_"
+            )
+            | self.complement.petsc_options(
+                user_options=user_options,
+                prefix=f"fieldsplit_{self.petsc_complement_tag}_",
+            )
+            | self.approximate_invertor.petsc_options(
+                prefix="",
+                tag=self.petsc_tag,
+                complement_tag=self.petsc_complement_tag,
+            )
+        )
+        return append_prefix_to_options(
+            prefix=prefix, options=options | user_options.get(self.key, {})
+        )
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return (
+            {
+                prefix: {
+                    "pc_type": "fieldsplit",
+                    "elim_tag": self.petsc_tag,
+                    "keep_tag": self.petsc_complement_tag,
+                    "elim_groups": dof_manager.indices_of_groups(
+                        groups=self.subsolver.groups
+                    ),
+                    "keep_groups": dof_manager.indices_of_groups(
+                        groups=self.complement.groups
+                    ),
+                }
+            }
+            | self.subsolver.petsc_assembly_config(
+                user_options=user_options,
+                prefix=f"{prefix}fieldsplit_{self.petsc_tag}_",
+                dof_manager=dof_manager,
+            )
+            | self.complement.petsc_assembly_config(
+                user_options=user_options,
+                prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",
+                dof_manager=dof_manager,
+            )
+            | self.approximate_invertor.petsc_assembly_config(
+                prefix=f"{prefix}fieldsplit_",
+                dof_manager=dof_manager,
+            )
+        )
+
+
+class PythonWrapper(PetscKspPcConfiguration):
+    def __init__(
+        self,
+        python_context: PcPythonPermutation,
+        inner_subsolver: PetscKspPcConfiguration,
+        key: str = "python_wrapper",
+    ) -> None:
+        super().__init__(groups=inner_subsolver.groups, key=key)
+        self.python_context: PcPythonPermutation = python_context
+        self.inner_subsolver: PetscKspPcConfiguration = inner_subsolver
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        options = {"pc_type": "python"} | self.inner_subsolver.petsc_options(
+            user_options=user_options, prefix=f"python_"
+        )
+        return append_prefix_to_options(
+            prefix=prefix, options=options | user_options.get(self.key, {})
+        )
+        # what if user options change pc_type? We assume it is prohibited. Somewhere it
+        # should be checked.
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return {
+            prefix: {
+                "pc_type": "python",
+                "python_context": self.python_context,
+            }
+        }
+
+
+class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
+    def __init__(
+        self, groups: list[EquationVariableGroup], key: str = "block_diagonal"
+    ) -> None:
+        super().__init__(groups=groups, key=key)
+
+    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+        default_options = {"pc_type": "pbjacobi"}
+        return append_prefix_to_options(
+            prefix=prefix, options=default_options | user_options.get(self.key, {})
+        )
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return {prefix: {"matrix_block_size": dof_manager.model.nd}}
+
+
+def nested_schur_complements(subsolvers: list[dict]) -> FieldSplit:
+    if len(subsolvers) != 2:
+        # recursion
+        return FieldSplit(
+            subsolver=subsolvers[0]["subsolver"],
+            approximate_invertor=subsolvers[0]["approximate_invertor"],
+            complement=nested_schur_complements(subsolvers=subsolvers[1:]),
+        )
+    # end of recursion
+    return FieldSplit(
+        subsolver=subsolvers[0]["subsolver"],
+        approximate_invertor=subsolvers[0]["approximate_invertor"],
+        complement=subsolvers[1]["subsolver"],
+    )
 
 
 def mass_balance_factory():
-    return [InterfaceDarcyFluxPreconditioner(), MassBalancePreconditioner()]
+    interface_groups: list[EquationVariableGroup] = [
+        InterfaceDarcyFluxGroup(),
+        WellFluxGroup(),
+    ]
+    mass_balance_groups: list[EquationVariableGroup] = [MassBalancePressureGroup()]
+
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=ILU(groups=interface_groups, key="interface_flow"),
+            complement=AMG(groups=mass_balance_groups, key="mass_balance_amg"),
+            approximate_invertor=DiagonalInvertor(),
+        )
+    )
 
 
 def momentum_balance_factory():
-    return [ContactPreconditioner(), MechanicsPreconditioner()]
+    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    mechanics_groups: list[EquationVariableGroup] = [
+        InterfaceForceBalanceGroup(),
+        MechanicsGroup(),
+    ]
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
+            complement=AMG(groups=mechanics_groups, key="mechanics_amg"),
+            approximate_invertor=BlockDiagonalInvertor(),
+        )
+    )
 
 
 def hm_factory():
-    return [
-        ContactPreconditioner(),
-        InterfaceDarcyFluxPreconditioner(),
-        FixedStressPreconditioner(),
-        MassBalanceDimSplitPreconditioner(),
+    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    interface_flux_groups: list[EquationVariableGroup] = [
+        InterfaceDarcyFluxGroup(),
+        WellFluxGroup(),
     ]
+    mechanics_groups: list[EquationVariableGroup] = [
+        InterfaceForceBalanceGroup(),
+        MechanicsGroup(),
+    ]
+    mass_balance_groups: list[EquationVariableGroup] = [
+        MassBalancePressureMatrixGroup(),
+        MassBalancePressureFracturesGroup(),
+        MassBalancePressureIntersectionsGroup(),
+    ]
+
+    return GMRES(
+        preconditioner=nested_schur_complements(
+            [
+                {
+                    "subsolver": BlockDiagonalPreconditioner(
+                        groups=contact_groups, key="contact"
+                    ),
+                    "approximate_invertor": BlockDiagonalInvertor(),
+                },
+                {
+                    "subsolver": ILU(
+                        groups=interface_flux_groups, key="interface_flow"
+                    ),
+                    "approximate_invertor": DiagonalInvertor(),
+                },
+                {
+                    "subsolver": AMG(groups=mechanics_groups, key="mechanics_amg"),
+                    "approximate_invertor": FixedStressInvertor(),
+                },
+                {
+                    "subsolver": AMG(
+                        groups=mass_balance_groups, key="mass_balance_amg"
+                    ),
+                },
+            ]
+        )
+    )
 
 
 def th_factory():
-    cpr = CompositePreconditioner(
-        solvers=[
-            [
-                MassBalanceDimSplitCPRPreconditioner(),
-                IdentityPreconditioner(groups.EnergyBalanceDimSplitGroup()),
-            ],
-            BlockILU(
-                [
-                    groups.MassBalanceDimSplitGroup(),
-                    groups.EnergyBalanceDimSplitGroup(),
+    interface_groups: list[EquationVariableGroup] = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mass_balance_groups: list[EquationVariableGroup] = [
+        MassBalancePressureMatrixGroup(),
+        MassBalancePressureFracturesGroup(),
+        MassBalancePressureIntersectionsGroup(),
+    ]
+    energy_balance_groups: list[EquationVariableGroup] = [
+        EnergyBalanceTemperatureGroup(),
+        # EnergyBalanceTemperatureMatrixGroup(),
+        # EnergyBalanceTemperatureFracturesGroup(),
+        # EnergyBalanceTemperatureIntersectionsGroup(),
+    ]
+
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=ILU(groups=interface_groups, key="interface_flow"),
+            approximate_invertor=DiagonalInvertor(),
+            complement=CompositePreconditioner(
+                subsolvers=[
+                    FieldSplit(
+                        subsolver=Identity(
+                            groups=energy_balance_groups, key="cpr0_energy"
+                        ),
+                        complement=AMG(groups=mass_balance_groups, key="cpr0_mass"),
+                        approximate_invertor=DiagonalInvertor(),
+                    ),
+                    ILU(groups=energy_balance_groups + mass_balance_groups, key="cpr1"),
                 ]
             ),
-        ]
+        )
     )
-    return [
-        InterfaceMassEnergyFluxPreconditioner(),
-        cpr,
-    ]
 
 
 def thm_factory():
-    # Stage 1 of CPR is a
-    cpr_1 = [
-        MassBalanceDimSplitCPRPreconditioner(),
-        IdentityPreconditioner(groups.EnergyBalanceDimSplitGroup()),
+    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    interface_groups: list[EquationVariableGroup] = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mechanics_groups: list[EquationVariableGroup] = [
+        InterfaceForceBalanceGroup(),
+        MechanicsGroup(),
+    ]
+    mass_balance_groups: list[EquationVariableGroup] = [
+        MassBalancePressureMatrixGroup(),
+        MassBalancePressureFracturesGroup(),
+        MassBalancePressureIntersectionsGroup(),
+    ]
+    energy_balance_groups: list[EquationVariableGroup] = [
+        EnergyBalanceTemperatureGroup(),
+        # EnergyBalanceTemperatureMatrixGroup(),
+        # EnergyBalanceTemperatureFracturesGroup(),
+        # EnergyBalanceTemperatureIntersectionsGroup(),
     ]
 
-    # Stage 2 is a BlockILU preconditioner, which will also include a permutation to a
-    # cell-wise ordering of the unknowns.
-    cpr_2 = BlockILU(
-        [groups.MassBalanceDimSplitGroup(), groups.EnergyBalanceDimSplitGroup()]
+    return GMRES(
+        preconditioner=nested_schur_complements(
+            [
+                {
+                    "subsolver": BlockDiagonalPreconditioner(
+                        groups=contact_groups, key="contact"
+                    ),
+                    "approximate_invertor": BlockDiagonalInvertor(),
+                },
+                {
+                    "subsolver": ILU(groups=interface_groups, key="interface_flow"),
+                    "approximate_invertor": DiagonalInvertor(),
+                },
+                {
+                    "subsolver": AMG(groups=mechanics_groups, key="mechanics_amg"),
+                    "approximate_invertor": FixedStressInvertor(),
+                },
+                {
+                    "subsolver": CompositePreconditioner(
+                        subsolvers=[
+                            FieldSplit(
+                                subsolver=Identity(
+                                    groups=energy_balance_groups, key="cpr0_energy"
+                                ),
+                                complement=AMG(
+                                    groups=mass_balance_groups, key="cpr0_mass"
+                                ),
+                                approximate_invertor=DiagonalInvertor(),
+                            ),
+                            ILU(
+                                groups=energy_balance_groups + mass_balance_groups,
+                                key="cpr1",
+                            ),
+                        ]
+                    )
+                },
+            ]
+        )
     )
 
-    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
 
-    # YZ: I'm not happy with the list here due to its ambiguity:
-    # - here, it denotes the order of schur complement eliminations
-    # - in CPR, its arguments mean the stages of a composite solver
-    # - in `cpr_1`, it is again the schur complements
-    # It may or may not be a problem when it comes to parsing. Did we pass a list of two
-    # subsolvers to the CPR, or was it a single subsolver, which is a Fieldsplit?
+# MARK: Should not be here
 
-    # YZ: One more thing I'm not happy about is that a subsolver (eg
-    # ContactPreconditioner) determines both (i) what to do with the eliminated group
-    # and (ii) how to approximate the inverse for the kept group. The
-    # FixedStressPreconditioner sets the mechanics be solved with AMG and applies fixed
-    # stress. Not sure though, if it can cause any troubles, or I'm just not used to it.
-
-    # YZ to EK: Did you have something in particular against hierarchical structure that
-    # I had before? So that it would have the following structure:
-    #
-    # thm_scheme = FieldSplit(
-    #     groups=ContactGroup(),
-    #     subsolver=BlockDiagonal(),
-    #     approximate_schur=BlockDiagonal(),
-    #     complement=FieldSplit(
-    #         groups=IntfMassAndEnergy(),
-    #         subsolver=ILU(),
-    #         approximate_schur=Diagonal(),
-    #         complement=FieldSplit(
-    #             groups=MomentumBalance() + IntfForce(),
-    #             subsolver=MechanicsAMG(),
-    #             approximate_schur=FixedStress(),
-    #             complement=CompositePreconditioner(
-    #                 # groups deducted from components
-    #                 subsolvers=[
-    #                     FieldSplit(
-    #                         type='additive',
-    #                         groups=EnergyBalance()
-    #                         subsolver=Jacobi(),
-    #                         approximate_schur=Empty(),
-    #                         complement=AtomicPreconditioner(
-    #                             groups=MassBalance(),
-    #                             subsolver=MassBalanceAMG(),
-    #                         )
-    #                     ),
-    #                     AtomicPreconditioner(
-    #                         groups=EnergyBalance() + MassBalance(),
-    #                         subsolver=BlockILU()
-    #                     )
-    #                 ]
-    #             )
-    #         )
-    #     )
-    # )
-    # def contact_preconditioner():
-    #     return dict(
-    #         groups=ContactGroup(),
-    #         subsolver=BlockDiagonal(),
-    #         approximate_schur=BlockDiagonal(),
-    #     )
-    # thm_solver = nested_schur_complements(
-    #     contact_preconditioner(),
-    #     interface_mass_and_energy_preconditioner(),
-    #     momentum_fixed_stress_preconditioner(),
-    #     cpr()
-    # )
-
-    return [
-        ContactPreconditioner(),
-        InterfaceMassEnergyFluxPreconditioner(),
-        # InterfaceDarcyFluxPreconditioner(),
-        # InterfaceEnthalpyFluxPreconditioner(),
-        # InterfaceFourierFluxPreconditioner(),
-        FixedStressPreconditioner(),
-        cpr,
-        # MassBalanceDimSplitPreconditioner(),
-        # EnergyBalanceDimSplitPreconditioner(),
-    ]
+import numpy as np
+from itertools import chain
+from pp_solvers.block_linear_system import BlockLinearSystem
 
 
 def _to_cell_ordering(J: BlockLinearSystem, group_lists: list[list[int]]):

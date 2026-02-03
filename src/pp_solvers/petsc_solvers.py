@@ -26,11 +26,7 @@ class PetscKrylovSolver:
         self.ksp = ksp
         petsc_mat = ksp.getOperators()[0]
 
-        # EK: Why left here?
-        # YZ: Two options: to store them here or to create them every time at solve,
-        # allocating memory every time. I realize it's a premature optimization, but it
-        # does not take more lines than do the latter.
-        self.petsc_x = petsc_mat.createVecLeft()
+        self.petsc_x = petsc_mat.createVecRight()
         self.petsc_b = petsc_mat.createVecLeft()
         # self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()

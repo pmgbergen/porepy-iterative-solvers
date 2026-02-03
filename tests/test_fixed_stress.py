@@ -5,7 +5,6 @@ from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.preconditioners import SinglePhysicsPreconditioner
 
 from pp_solvers.fixed_stress import (
     make_fs_analytical_slow_new,

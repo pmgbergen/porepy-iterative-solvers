@@ -83,6 +83,29 @@ class LinearSystemIndexer:
         self.group_names_col: list[str] = group_names_col
         """List of group names for the columns."""
 
+    def __getitem__(self, key: list | slice | tuple) -> LinearSystemIndexer:
+        """TODO"""
+        # Unifying and validating the passed key.
+        key = self.correct_validate_getitem_key(key)
+        groups_row, groups_col = key
+
+        # Creating a new index for the sliced matrix, as it was likely permuted.
+        new_dofs_row, new_dofs_col = self._make_permutation_after_slicing(key)
+
+        # Return a new indexer object with the selected blocks. Compared to
+        # the current inexer, the new object potentially has a subset of enabled groups,
+        # with a corresponding subset of local indices (dofs_row and dofs_col).
+        return LinearSystemIndexer(
+            dofs_row=new_dofs_row,
+            dofs_col=new_dofs_col,
+            original_dofs_row=self.original_dofs_row,  # unchanged
+            original_dofs_col=self.original_dofs_col,  # unchanged
+            group_names_col=self.group_names_col,  # unchanged
+            group_names_row=self.group_names_row,  # unchanged
+            enabled_groups_row=groups_row,
+            enabled_groups_col=groups_col,
+        )
+
     def get_dofs_of_groups(
         self, key: tuple[list[int], list[int]]
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -110,7 +133,7 @@ class LinearSystemIndexer:
 
         return concatenate_dof_indices(dofs_row), concatenate_dof_indices(dofs_col)
 
-    def make_permutation_after_slicing(
+    def _make_permutation_after_slicing(
         self, key: tuple[list[int], list[int]]
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Indices produced by `get_dofs_of_groups` can be used to slice a submatrix A.
@@ -182,7 +205,7 @@ class LinearSystemIndexer:
                 try:
                     # Try to iterate over the key. If not successful (which means this
                     # is an int?), convert to a list.
-                    iter(key_)
+                    iter(key_)  # type: ignore
                     result = key_
                 except TypeError:
                     result = [key_]
@@ -298,7 +321,6 @@ class BlockLinearSystem:
         """
         # Unifying and validating the passed key.
         key = self.indexer.correct_validate_getitem_key(key)
-        groups_row, groups_col = key
 
         # Preparing the indices for slicing.
         groups_dofs_row, groups_dofs_col = self.indexer.get_dofs_of_groups(key)
@@ -315,25 +337,13 @@ class BlockLinearSystem:
         sliced_matrix = self.mat[rows_expanded, cols_expanded]
         rhs = self.rhs[dofs_row_for_slicing]
 
-        # Creating a new index for the sliced matrix, as it was likely permuted.
-        new_dofs_row, new_dofs_col = self.indexer.make_permutation_after_slicing(key)
-
         # Return a new block linear system object with the selected blocks. Compared to
         # the current object, the new object potentially has a subset of enabled groups,
         # with a corresponding subset of local indices (dofs_row and dofs_col).
         return BlockLinearSystem(
             mat=sliced_matrix,
             rhs=rhs,
-            indexer=LinearSystemIndexer(
-                dofs_row=new_dofs_row,
-                dofs_col=new_dofs_col,
-                original_dofs_row=self.indexer.original_dofs_row,  # unchanged
-                original_dofs_col=self.indexer.original_dofs_col,  # unchanged
-                group_names_col=self.indexer.group_names_col,  # unchanged
-                group_names_row=self.indexer.group_names_row,  # unchanged
-                enabled_groups_row=groups_row,
-                enabled_groups_col=groups_col,
-            ),
+            indexer=self.indexer[key],
             validate_input=False,
         )
 
