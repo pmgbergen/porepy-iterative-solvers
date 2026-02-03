@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from itertools import chain
 
+import numpy as np
+
+from pp_solvers.block_linear_system import LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.fixed_stress import make_fs_analytical_slow_new
-from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
-    # EnergyBalanceTemperatureFracturesGroup,
-    # EnergyBalanceTemperatureIntersectionsGroup,
-    # EnergyBalanceTemperatureMatrixGroup,
     EquationVariableGroup,
     InterfaceDarcyFluxGroup,
     InterfaceEnthalpyFluxGroup,
@@ -24,14 +23,12 @@ from pp_solvers.equation_variable_groups import (
     WellEnthalpyFluxGroup,
     WellFluxGroup,
 )
+from pp_solvers.fixed_stress import make_fs_analytical_slow_new
+from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.petsc_utils import csr_to_petsc
 
 __all__ = [
-    # Add all preconditioners and linear solvers here.
-    "PetscKspPcConfiguration",
-    "ILU",
-    "AMG",
-    "Identity",
+    # Add all preconditioners here.
     "CompositePreconditioner",
     "GMRES",
     "DiagonalInvertor",
@@ -536,52 +533,6 @@ def th_factory():
     )
 
 
-class AMG(SinglePhysicsPreconditioner):
-    def __init__(self, group):
-        self._group = group
-
-    @property
-    def key(self) -> str:
-        return "amgaaaa"
-
-    @property
-    def tag(self) -> str:
-        return "amgaaaa"
-
-    def _default_options(self, model, dof_manager) -> dict:
-        local_opts = {
-            "pc_type": "hypre",
-            "pc_hypre_type": "boomeramg",
-            "pc_hypre_boomeramg_strong_threshold": 0.7,
-        }
-        return local_opts
-
-
-def cfle_factory():
-    cpr_1 = [
-        IdentityPreconditioner(group=groups.EnthalpyAndComponentGroup()),
-        AMG(group=groups.MassBalanceGroup()),
-    ]
-    cpr_2 = CustomPC(
-        groups=[
-            groups.EnthalpyAndComponentGroup(),
-            groups.MassBalanceGroup(),
-        ],
-        tag="cpr-ilu",
-        options={
-            "pc_type": "hypre",
-            "pc_hypre_type": "ilu",
-            'pc_hypre_ilu_level': 0,
-            'pc_hypre_ilu_maxiter': 1,
-        },
-    )
-    cpr = CompositePreconditioner(solvers=[cpr_1, cpr_2])
-    return [
-        InterfaceMassEnergyFluxPreconditioner(),
-        cpr,
-    ]
-
-
 def thm_factory():
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     interface_groups: list[EquationVariableGroup] = [
@@ -648,13 +599,6 @@ def thm_factory():
     )
 
 
-# MARK: Should not be here
-
-import numpy as np
-from itertools import chain
-from pp_solvers.block_linear_system import BlockLinearSystem
-
-
 def _to_cell_ordering(indexer: LinearSystemIndexer, group_lists: list[list[int]]):
     all_groups = list(chain.from_iterable(group_lists))
 
@@ -664,3 +608,150 @@ def _to_cell_ordering(indexer: LinearSystemIndexer, group_lists: list[list[int]]
     ]
 
     return np.vstack(rows).ravel("F")
+
+
+def cfle_factory():
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+
+    import porepy as pp
+    from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
+
+    class ComponentMassBalanceCO2Group(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "component_mass_balance_equation_CO2"
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            return model.fluid.components[1].fraction(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "component_mass_balance_equation_CO2"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "z_CO2"
+
+    class MassBalancePressureGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(
+                name=EquationNames.MASS_BALANCE.value, domains=no_production_wells
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(no_production_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "mass_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "pressure"
+
+    class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = EquationNames.ENERGY_BALANCE.value
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=no_injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.enthalpy(no_injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "energy_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "entalpy"
+
+    class ProductionPressureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "production_pressure_constraint"
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(name=name, domains=production_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(production_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "production_pressure_constraint"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "pressure_constraint"
+
+    class InjectionTemperatureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "injection_temperature_constraint"
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.enthalpy(injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "injection_temperature_constraint"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "enthalpy_constraint"
+
+    interface_groups = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mass_balance_groups = [
+        MassBalancePressureGroup(),
+        ProductionPressureConstraintGroup(),
+    ]
+    energy_balance_groups = [
+        EnergyBalanceEnthalpyGroup(),
+        InjectionTemperatureConstraintGroup(),
+    ]
+    component_groups = [ComponentMassBalanceCO2Group()]
+
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+            approximate_invertor=DiagonalInvertor(),
+            complement=CompositePreconditioner(
+                subsolvers=[
+                    FieldSplit(
+                        subsolver=Identity(
+                            groups=energy_balance_groups + component_groups,
+                            key="cpr_stage0_identity",
+                        ),
+                        approximate_invertor=DiagonalInvertor(),
+                        complement=AMG(
+                            groups=mass_balance_groups, key="cpr_stage0_amg"
+                        ),
+                        key="inner_fieldsplit",
+                    ),
+                    ILU(
+                        groups=energy_balance_groups
+                        + component_groups
+                        + mass_balance_groups,
+                        key="cpr_stage1_ilu",
+                    ),
+                ]
+            ),
+        )
+    )

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+from itertools import count
+
 import numpy as np
 import porepy as pp
 
+from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
+    EquationNames,
     EquationOnDomains,
     EquationVariableGroup,
-    EquationNames,
 )
-
-from pp_solvers.block_linear_system import concatenate_dof_indices
-
-from pp_solvers.block_linear_system import concatenate_dof_indices
 
 
 class DofManager:
