@@ -183,8 +183,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Apply the `contact_permutation`. With this, the equations for tangential and
         # normal fracture deformation are ordered cellwise (not with tangential and
         # normal separately, as is the case in the PorePy ordering).
-        mat = mat[dof_manager.eq_rows_permutation(self)]
-        rhs = rhs[dof_manager.eq_rows_permutation(self)]
+        mat = mat[dof_manager.eq_rows_permutation()]
+        rhs = rhs[dof_manager.eq_rows_permutation()]
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
         # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each

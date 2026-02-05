@@ -79,6 +79,9 @@ class DofManager:
             for dofs_in_group in variable_indices
         ]
 
+    def groups(self) -> list[EquationVariableGroup]:
+        return self._groups
+
     def indices_of_groups(self, groups: list[EquationVariableGroup]):
         return [self._groups.index(x) for x in groups]
 
@@ -137,7 +140,7 @@ class DofManager:
             var_dofs.append(model.equation_system.dofs_of([var]))
         return var_dofs
 
-    def eq_rows_permutation(self, model: pp.PorePyModel):
+    def eq_rows_permutation(self):
         """Get a permutation vector for the full linear system of equations.
 
         This is used to reorder the equations so that the contact equations for single
@@ -165,6 +168,7 @@ class DofManager:
             performed.
 
         """
+        model = self.model
         permutation = np.arange(model.equation_system.num_dofs())
         try:
             contact_group = self.indices_of_groups([ContactMechanicsGroup()])[0]

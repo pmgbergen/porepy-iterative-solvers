@@ -107,7 +107,7 @@ class LinearSystemIndexer:
         )
 
     def get_dofs_of_groups(
-        self, key: tuple[list[int], list[int]]
+        self, key: list | slice | tuple
     ) -> tuple[np.ndarray, np.ndarray]:
         """Builds indices that can be used to slice a submatrix, corresponding to the
         provided groups.
@@ -121,7 +121,7 @@ class LinearSystemIndexer:
             Two arrays, corresponding to row and column indices.
 
         """
-        groups_row, groups_col = key
+        groups_row, groups_col = self.correct_validate_getitem_key(key)
 
         dofs_row = []
         for group in groups_row:
@@ -319,23 +319,18 @@ class BlockLinearSystem:
             A block linear system object containing the selected groups.
 
         """
-        # Unifying and validating the passed key.
-        key = self.indexer.correct_validate_getitem_key(key)
-
         # Preparing the indices for slicing.
         groups_dofs_row, groups_dofs_col = self.indexer.get_dofs_of_groups(key)
-        dofs_row_for_slicing = groups_dofs_row
-        dofs_col_for_slicing = groups_dofs_col
         rows_expanded, cols_expanded = np.meshgrid(
-            dofs_row_for_slicing,
-            dofs_col_for_slicing,
+            groups_dofs_row,
+            groups_dofs_col,
             sparse=True,
             indexing="ij",
             copy=False,
         )
         # Slicing the matrix and the rhs.
         sliced_matrix = self.mat[rows_expanded, cols_expanded]
-        rhs = self.rhs[dofs_row_for_slicing]
+        rhs = self.rhs[groups_dofs_row]
 
         # Return a new block linear system object with the selected blocks. Compared to
         # the current object, the new object potentially has a subset of enabled groups,

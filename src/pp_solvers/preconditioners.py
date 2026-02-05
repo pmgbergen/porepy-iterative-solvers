@@ -1,16 +1,12 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.fixed_stress import make_fs_analytical_slow_new
-from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
-    # EnergyBalanceTemperatureFracturesGroup,
-    # EnergyBalanceTemperatureIntersectionsGroup,
-    # EnergyBalanceTemperatureMatrixGroup,
     EquationVariableGroup,
     InterfaceDarcyFluxGroup,
     InterfaceEnthalpyFluxGroup,
@@ -24,6 +20,8 @@ from pp_solvers.equation_variable_groups import (
     WellEnthalpyFluxGroup,
     WellFluxGroup,
 )
+from pp_solvers.fixed_stress import make_fs_analytical_slow_new
+from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.petsc_utils import csr_to_petsc
 
 __all__ = [
@@ -120,7 +118,7 @@ class FixedStressInvertor(PetscInvertor):
                         bmat,
                         p_mat_group=flow_mat_group,
                         p_frac_group=flow_frac_group,
-                        groups=bmat.enabled_groups_row,
+                        groups=bmat.indexer.enabled_groups_row,
                     ).mat,
                     bsize=1,
                 )
@@ -206,11 +204,24 @@ class GMRES(PetscKspPcConfiguration):
             "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
         }
         pc_options = self.preconditioner.petsc_options(
-            user_options=user_options, prefix=prefix
+            user_options=user_options, prefix=""
         )
+
+        this_user_options = user_options.get(self.key, {})
+
+        # There can be an unfortunate overlap in GMRES and preconditioner options. We
+        # print a warning in this case. The current behavior is that the preconditioner
+        # options are prioritized.
+        intersection_in_options = set(this_user_options).intersection(pc_options)
+        if len(intersection_in_options) > 0:
+            warnings.warn(
+                "Both GMRES and preconditioner override options: "
+                f"{intersection_in_options}. Preconditioner options are prioritized."
+            )
+
         return append_prefix_to_options(
             prefix=prefix,
-            options=pc_options | default_options | user_options.get(self.key, {}),
+            options=default_options | this_user_options | pc_options,
         )
 
     def petsc_assembly_config(
@@ -228,7 +239,11 @@ class CompositePreconditioner(PetscKspPcConfiguration):
         assert len(subsolvers) >= 1
         groups_of_subsolvers = [subsolver.groups for subsolver in subsolvers]
         for groups in groups_of_subsolvers[1:]:
-            assert groups == groups_of_subsolvers[0]
+            if groups != groups_of_subsolvers[0]:
+                raise ValueError(
+                    "CompositePreconditioner subsolvers must operate on identical"
+                    " groups."
+                )
         super().__init__(groups_of_subsolvers[0], key=key)
         self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
 
@@ -285,7 +300,12 @@ class FieldSplit(PetscKspPcConfiguration):
         self.petsc_complement_tag: str = petsc_complement_tag
         super().__init__(groups=self.subsolver.groups + self.complement.groups, key=key)
 
-        # assert set(self.subsolver.groups).intersection(self.complement.groups) == 0
+        # This is O(n^2), but we typically have 10 - 20 groups, and this type is not
+        # hashable, so why bother?
+        for g1 in self.subsolver.groups:
+            for g2 in self.complement.groups:
+                if g1 == g2:
+                    raise ValueError(f"Groups in FielSplit should not overlap: {g1}")
 
     def __repr__(self) -> str:
         return (
@@ -439,8 +459,8 @@ def mass_balance_factory():
 def momentum_balance_factory():
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     mechanics_groups: list[EquationVariableGroup] = [
-        InterfaceForceBalanceGroup(),
         MechanicsGroup(),
+        InterfaceForceBalanceGroup(),
     ]
     return GMRES(
         preconditioner=FieldSplit(
@@ -458,8 +478,8 @@ def hm_factory():
         WellFluxGroup(),
     ]
     mechanics_groups: list[EquationVariableGroup] = [
-        InterfaceForceBalanceGroup(),
         MechanicsGroup(),
+        InterfaceForceBalanceGroup(),
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
         MassBalancePressureMatrixGroup(),
@@ -546,8 +566,8 @@ def thm_factory():
         WellEnthalpyFluxGroup(),
     ]
     mechanics_groups: list[EquationVariableGroup] = [
-        InterfaceForceBalanceGroup(),
         MechanicsGroup(),
+        InterfaceForceBalanceGroup(),
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
         MassBalancePressureMatrixGroup(),
@@ -604,8 +624,10 @@ def thm_factory():
 
 # MARK: Should not be here
 
-import numpy as np
 from itertools import chain
+
+import numpy as np
+
 from pp_solvers.block_linear_system import BlockLinearSystem
 
 
