@@ -33,6 +33,8 @@ class PetscKSPScheme:
     dof_manager: DofManager
 
     def make_solver(self, mat_orig: BlockLinearSystem, options: dict):
+        # TODO: Check that all user-defined keys in options are present (e.g. cpr0_mass)
+
         # Construct a PETSc matrix from the scipy matrix.
         # TODO: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
@@ -123,6 +125,40 @@ class LinearTransformedScheme:
             )
 
         return solver
+
+
+def _assemble_pc_fieldsplit_additive(
+    ksp: PETSc.KSP,
+    pc: PETSc.PC,
+    additional_data: dict,
+    indexer: LinearSystemIndexer,
+    prefix: str,
+):
+    assert pc.type == "fieldsplit"
+
+    prefix_config = additional_data[prefix]
+    subsolver_groups = prefix_config["subsolver_groups"]
+
+    for i, groups in enumerate(subsolver_groups):
+        is_subsolver = construct_is(indexer, groups)
+        pc.setFieldSplitIS((f"sub_{i}", is_subsolver))
+
+    try:
+        pc.setUp()
+        ksp.setUp()
+    except:
+        print(f"failed on {prefix = }")
+        raise
+
+    sub_ksp_list = pc.getFieldSplitSubKSP()
+    for sub_ksp, groups in zip(sub_ksp_list, subsolver_groups):
+        assemble_petsc_ksp_pc(
+            ksp=sub_ksp,
+            pc=sub_ksp.getPC(),
+            assembly_config=additional_data,
+            indexer=indexer[groups],
+            prefix=sub_ksp.prefix,
+        )
 
 
 def _assemble_pc_fieldsplit(
@@ -287,6 +323,14 @@ def assemble_petsc_ksp_pc(
 
     if config_type == "fieldsplit":
         _assemble_pc_fieldsplit(
+            ksp=ksp,
+            pc=pc,
+            additional_data=assembly_config,
+            indexer=indexer,
+            prefix=prefix,
+        )
+    elif config_type == "fieldsplit_additive":
+        _assemble_pc_fieldsplit_additive(
             ksp=ksp,
             pc=pc,
             additional_data=assembly_config,

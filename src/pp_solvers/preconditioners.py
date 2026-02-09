@@ -174,7 +174,7 @@ class AMG(PetscKspPcConfiguration):
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
         # The default strong threshold is dimension-dependent.
-        strong_threshold = 0.7  # if dof_manager.model.nd == 3 else 0.25
+        strong_threshold = 0.7 if dof_manager.model.nd == 3 else 0.25
         default_options = {
             "pc_type": "hypre",
             "pc_hypre_type": "boomeramg",
@@ -307,6 +307,59 @@ class CompositePreconditioner(PetscKspPcConfiguration):
                 dof_manager=dof_manager,
             )
         return config
+
+
+class FieldSplitAdditive(PetscKspPcConfiguration):
+    def __init__(
+        self,
+        subsolvers: list[PetscKspPcConfiguration],
+        key: str = "fieldsplit_additive",
+    ) -> None:
+        self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
+        super().__init__(
+            groups=[g for subsolver in self.subsolvers for g in subsolver.groups],
+            key=key,
+        )
+        # TODO: Check that groups are unique
+
+    def __repr__(self) -> str:
+        return f"FieldSplitAdditive(subsolvers={self.subsolvers})"
+
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        options = {
+            "pc_type": "fieldsplit",
+            "pc_fieldsplit_type": "additive",
+        } | {
+            f"fieldsplit_sub_{i}_ksp_type": "preonly"
+            for i in range(len(self.subsolvers))
+        }
+        for i, subsolver in enumerate(self.subsolvers):
+            options.update(
+                subsolver.petsc_options(
+                    user_options=user_options,
+                    prefix=f"fieldsplit_sub_{i}_",
+                    dof_manager=dof_manager,
+                )
+            )
+
+        return append_prefix_to_options(
+            prefix=prefix, options=options | user_options.get(self.key, {})
+        )
+
+    def petsc_assembly_config(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return {
+            prefix: {
+                "config_type": "fieldsplit_additive",
+                "subsolver_groups": [
+                    dof_manager.indices_of_groups(subsolver.groups)
+                    for subsolver in self.subsolvers
+                ],
+            }
+        }
 
 
 class FieldSplit(PetscKspPcConfiguration):
@@ -669,15 +722,13 @@ def thm_factory():
                 {
                     "subsolver": CompositePreconditioner(
                         subsolvers=[
-                            FieldSplit(
-                                subsolver=Identity(
-                                    groups=energy_balance_groups, key="cpr0_energy"
-                                ),
-                                complement=AMG(
-                                    groups=mass_balance_groups, key="cpr0_mass"
-                                ),
-                                petsc_tag="mass_bal",
-                                approximate_invertor=DiagonalInvertor(),
+                            FieldSplitAdditive(
+                                subsolvers=[
+                                    Identity(
+                                        groups=energy_balance_groups, key="cpr0_energy"
+                                    ),
+                                    AMG(groups=mass_balance_groups, key="cpr0_mass"),
+                                ],
                             ),
                             PythonPermutationWrapper(
                                 permutation_groups=[
