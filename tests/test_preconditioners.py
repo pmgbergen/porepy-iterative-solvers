@@ -26,7 +26,7 @@ from pp_solvers.preconditioners import (
     Identity,
     PetscInvertor,
     PetscKspPcConfiguration,
-    PythonWrapper,
+    PythonPermutationWrapper,
 )
 from testing_utils import (
     generate_reference_dofs_3_groups,
@@ -77,10 +77,10 @@ CONFIGURATIONS_ALL = CONFIGURATIONS_FOR_PETSC + [
         approximate_invertor=DiagonalInvertor(),
         key="custom_key",
     ),
-    PythonWrapper(
+    PythonPermutationWrapper(
         key="custom_key",
-        python_context="mock_python_context",
-        inner_subsolver=Identity(groups=["g1"]),
+        permutation_groups=[["g1", "g2"]],
+        inner_subsolver=Identity(groups=["g1", "g2"]),
     ),
 ]
 """List of shallow configurations used for the rest of the tests."""
@@ -256,21 +256,21 @@ def test_nested_fieldsplits():
     )
     assert petsc_assembly_config == {
         "": {
-            "pc_type": "fieldsplit",
+            "config_type": "fieldsplit",
             "elim_tag": "elim",
             "keep_tag": "keep",
             "elim_groups": [0, 1],
             "keep_groups": [2, 3, 4],
         },
         "fieldsplit_elim_": {
-            "pc_type": "fieldsplit",
+            "config_type": "fieldsplit",
             "elim_tag": "elim",
             "keep_tag": "keep",
             "elim_groups": [0],
             "keep_groups": [1],
         },
         "fieldsplit_keep_": {
-            "pc_type": "fieldsplit",
+            "config_type": "fieldsplit",
             "elim_tag": "elim",
             "keep_tag": "keep",
             "elim_groups": [2],
@@ -328,11 +328,11 @@ def test_nested_composites():
     )
     assert petsc_assembly_config == {
         "": {
-            "pc_type": "composite",
+            "config_type": "composite",
             "num_stages": 3,
         },
         "sub_0_": {
-            "pc_type": "composite",
+            "config_type": "composite",
             "num_stages": 2,
         },
     }
@@ -360,16 +360,15 @@ def test_approximate_invertors_petsc_options(invertor: PetscInvertor, prefix: st
         # model. It is tested in test_fixed_stress.
     ],
 )
-@pytest.mark.parametrize("prefix", ["", "custom_prefix"])
-def test_approximate_invertors_petsc_options(invertor: PetscInvertor, prefix: str):
-    assert invertor.petsc_assembly_config(prefix=prefix, dof_manager=None) == {}
+def test_approximate_invertors_assembly_config(invertor: PetscInvertor):
+    assert invertor.petsc_assembly_config(dof_manager=None) == {}
 
 
-def test_python_wrapper():
+def test_python_permutation():
     groups = ["g1", "g2"]
-    configuration = PythonWrapper(
+    configuration = PythonPermutationWrapper(
         key="p1",
-        python_context="mock_python_context",
+        permutation_groups=[['g1'], ['g2']],
         inner_subsolver=Identity(groups=groups, key="i1"),
     )
 
@@ -389,10 +388,10 @@ def test_python_wrapper():
         assert petsc_options[expected_key] == expected_value
 
     assembly_config = configuration.petsc_assembly_config(
-        user_options={}, prefix="custom_prefix_", dof_manager=None
+        user_options={}, prefix="custom_prefix_", dof_manager=MockDofManager()
     )
-    assert assembly_config["custom_prefix_"]["pc_type"] == "python"
-    assert assembly_config["custom_prefix_"]["python_context"] == "mock_python_context"
+    assert assembly_config["custom_prefix_"]["config_type"] == "python_permutation"
+    assert assembly_config["custom_prefix_"]["permutation_groups"] == [[0], [1]]
 
 
 @pytest.fixture

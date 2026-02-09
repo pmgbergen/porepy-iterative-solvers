@@ -11,9 +11,9 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureMatrixGroup,
 )
 from pp_solvers.fixed_stress import (
-    make_fs_analytical_slow_new,
-    get_fixed_stress_stabilization,
-    get_fs_fractures_analytical,
+    construct_fixed_stress_block_matrix,
+    get_fixed_stress_stabilization_porous_media,
+    get_fixed_stress_stabilization_fractures,
 )
 from pp_solvers.petsc_utils import petsc_to_csr
 from pp_solvers.preconditioners import FixedStressInvertor
@@ -84,16 +84,15 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
         assert False, "These groups should be present."
 
     all_groups = list(range(num_groups))
-    result = make_fs_analytical_slow_new(
-        J=jacobian,
+    result = construct_fixed_stress_block_matrix(
+        indexer=jacobian.indexer,
         model=model,
         p_mat_group=p_mat_group,
         p_frac_group=p_frac_group,
-        groups=all_groups,
     )
 
-    expected_matrix = get_fixed_stress_stabilization(model).toarray()
-    expected_fractures = get_fs_fractures_analytical(model).toarray()
+    expected_matrix = get_fixed_stress_stabilization_porous_media(model).toarray()
+    expected_fractures = get_fixed_stress_stabilization_fractures(model).toarray()
 
     # We check that the right stabilization submatrices are placed correctly, and there
     # is nothing else.
@@ -120,21 +119,18 @@ def test_fixed_stress_invertor(model: pp.PorePyModel):
     invertor = FixedStressInvertor()
     bmat: BlockLinearSystem = model.bmat
 
-    config = invertor.petsc_assembly_config(
-        prefix="custom_prefix_", dof_manager=dof_manager
-    )
-    petsc_fs_matrix = petsc_to_csr(config["custom_prefix_"]["invertor"](bmat))
+    config = invertor.petsc_assembly_config(dof_manager=dof_manager)
+    petsc_fs_matrix = petsc_to_csr(config["invertor_additive"](bmat.indexer))
 
     p_mat_group, p_frac_group = dof_manager.indices_of_groups(
         [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
     )
 
-    expected_matrix = make_fs_analytical_slow_new(
+    expected_matrix = construct_fixed_stress_block_matrix(
         dof_manager.model,
-        bmat,
+        bmat.indexer,
         p_mat_group=p_mat_group,
         p_frac_group=p_frac_group,
-        groups=bmat.indexer.enabled_groups_row,
     ).mat
 
     # These should be identical.

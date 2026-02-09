@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional
 import warnings
 from abc import ABC, abstractmethod
 
@@ -20,7 +21,7 @@ from pp_solvers.equation_variable_groups import (
     WellEnthalpyFluxGroup,
     WellFluxGroup,
 )
-from pp_solvers.fixed_stress import make_fs_analytical_slow_new
+from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
 from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.petsc_utils import csr_to_petsc
 
@@ -51,7 +52,7 @@ class PetscInvertor(ABC):
     def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
         pass
 
-    def petsc_assembly_config(self, prefix: str, dof_manager: DofManager) -> dict:
+    def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
         return {}
 
 
@@ -96,7 +97,7 @@ class FixedStressInvertor(PetscInvertor):
             },
         )
 
-    def petsc_assembly_config(self, prefix: str, dof_manager: DofManager) -> dict:
+    def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
         flow_mat_group, flow_frac_group = dof_manager.indices_of_groups(
             [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
         )
@@ -112,18 +113,15 @@ class FixedStressInvertor(PetscInvertor):
             )
 
         return {
-            prefix: {
-                "invertor": lambda bmat: csr_to_petsc(
-                    make_fs_analytical_slow_new(
-                        dof_manager.model,
-                        bmat,
-                        p_mat_group=flow_mat_group,
-                        p_frac_group=flow_frac_group,
-                        groups=bmat.indexer.enabled_groups_row,
-                    ).mat,
-                    bsize=1,
-                )
-            }
+            "invertor_additive": lambda indexer: csr_to_petsc(
+                construct_fixed_stress_block_matrix(
+                    model=dof_manager.model,
+                    indexer=indexer,
+                    p_mat_group=flow_mat_group,
+                    p_frac_group=flow_frac_group,
+                ).mat,
+                bsize=1,
+            )
         }
 
 
@@ -163,15 +161,27 @@ class ILU(PetscKspPcConfiguration):
 
 
 class AMG(PetscKspPcConfiguration):
-    def __init__(self, groups: list[EquationVariableGroup], key: str = "amg") -> None:
+    def __init__(
+        self,
+        groups: list[EquationVariableGroup],
+        key: str = "amg",
+        vector_problem: bool = False,
+    ) -> None:
+        self.vector_problem: bool = vector_problem
         super().__init__(groups=groups, key=key)
 
     def petsc_options(
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
-        # This is where the default can be model-dependent. E.g. if 2d, strong_th=0.3
-        # and 0.7 if 3d.
-        default_options = {"pc_type": "hypre", "pc_hypre_type": "boomeramg"}
+        # The default strong threshold is dimension-dependent.
+        strong_threshold = 0.7  # if dof_manager.model.nd == 3 else 0.25
+        default_options = {
+            "pc_type": "hypre",
+            "pc_hypre_type": "boomeramg",
+            "pc_hypre_boomeramg_strong_threshold": strong_threshold,
+        }
+        if self.vector_problem:
+            default_options["mat_block_size"] = dof_manager.model.nd
         return append_prefix_to_options(
             prefix=prefix, options=default_options | user_options.get(self.key, {})
         )
@@ -285,7 +295,7 @@ class CompositePreconditioner(PetscKspPcConfiguration):
     ) -> dict:
         config = {
             prefix: {
-                "pc_type": "composite",
+                "config_type": "composite",
                 "num_stages": len(self.subsolvers),
             },
         }
@@ -305,11 +315,16 @@ class FieldSplit(PetscKspPcConfiguration):
         subsolver: PetscKspPcConfiguration,
         complement: PetscKspPcConfiguration,
         approximate_invertor: PetscInvertor,
-        petsc_tag: str = "elim",
-        petsc_complement_tag: str = "keep",
+        petsc_tag: Optional[str] = None,
+        petsc_complement_tag: Optional[str] = None,
         key: str = "fieldsplit",
     ) -> None:
         # petsc_tag - internal, for petsc prefix. Must be short, not necessarily unique.
+        if petsc_complement_tag is None and petsc_tag is None:
+            petsc_tag = "elim"
+            petsc_complement_tag = "elim"
+        elif petsc_complement_tag is None:
+            petsc_complement_tag = f"{petsc_tag}_cpl"
         self.subsolver: PetscKspPcConfiguration = subsolver
         self.complement: PetscKspPcConfiguration = complement
         self.approximate_invertor: PetscInvertor = approximate_invertor
@@ -368,7 +383,7 @@ class FieldSplit(PetscKspPcConfiguration):
         return (
             {
                 prefix: {
-                    "pc_type": "fieldsplit",
+                    "config_type": "fieldsplit",
                     "elim_tag": self.petsc_tag,
                     "keep_tag": self.petsc_complement_tag,
                     "elim_groups": dof_manager.indices_of_groups(
@@ -378,6 +393,9 @@ class FieldSplit(PetscKspPcConfiguration):
                         groups=self.complement.groups
                     ),
                 }
+                | self.approximate_invertor.petsc_assembly_config(
+                    dof_manager=dof_manager
+                )
             }
             | self.subsolver.petsc_assembly_config(
                 user_options=user_options,
@@ -389,22 +407,18 @@ class FieldSplit(PetscKspPcConfiguration):
                 prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",
                 dof_manager=dof_manager,
             )
-            | self.approximate_invertor.petsc_assembly_config(
-                prefix=f"{prefix}fieldsplit_",
-                dof_manager=dof_manager,
-            )
         )
 
 
-class PythonWrapper(PetscKspPcConfiguration):
+class PythonPermutationWrapper(PetscKspPcConfiguration):
     def __init__(
         self,
-        python_context: PcPythonPermutation,
         inner_subsolver: PetscKspPcConfiguration,
-        key: str = "python_wrapper",
+        permutation_groups: list[list[EquationVariableGroup]],
+        key: str = "python_permutation",
     ) -> None:
         super().__init__(groups=inner_subsolver.groups, key=key)
-        self.python_context: PcPythonPermutation = python_context
+        self.permutation_groups: list[list[EquationVariableGroup]] = permutation_groups
         self.inner_subsolver: PetscKspPcConfiguration = inner_subsolver
 
     def petsc_options(
@@ -422,10 +436,22 @@ class PythonWrapper(PetscKspPcConfiguration):
     def petsc_assembly_config(
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
+        inner_config = self.inner_subsolver.petsc_assembly_config(
+            user_options=user_options,
+            prefix=f"{prefix}python_",
+            dof_manager=dof_manager,
+        )
+        if len(inner_config) > 0:
+            raise NotImplementedError(
+                "Nested initialization inside PythonPermutationWrapper is not "
+                "implemented."
+            )
         return {
             prefix: {
-                "pc_type": "python",
-                "python_context": self.python_context,
+                "config_type": "python_permutation",
+                "permutation_groups": [
+                    dof_manager.indices_of_groups(g) for g in self.permutation_groups
+                ],
             }
         }
 
@@ -495,9 +521,10 @@ def momentum_balance_factory():
     return GMRES(
         preconditioner=FieldSplit(
             petsc_tag="contact",
-            petsc_complement_tag="contact_cmpl",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
-            complement=AMG(groups=mechanics_groups, key="mechanics_amg"),
+            complement=AMG(
+                groups=mechanics_groups, key="mechanics_amg", vector_problem=True
+            ),
             approximate_invertor=BlockDiagonalInvertor(),
         )
     )
@@ -528,21 +555,22 @@ def hm_factory():
                     ),
                     "approximate_invertor": BlockDiagonalInvertor(),
                     "petsc_tag": "contact",
-                    "petsc_complement_tag": "contact_cmpl",
                 },
                 {
                     "subsolver": ILU(
                         groups=interface_flux_groups, key="interface_flow"
                     ),
                     "approximate_invertor": DiagonalInvertor(),
-                    "petsc_tag": "intf",
-                    "petsc_complement_tag": "intf_cmpl",
+                    "petsc_tag": "intf_darcy_flux",
                 },
                 {
-                    "subsolver": AMG(groups=mechanics_groups, key="mechanics_amg"),
+                    "subsolver": AMG(
+                        groups=mechanics_groups,
+                        key="mechanics_amg",
+                        vector_problem=True,
+                    ),
                     "approximate_invertor": FixedStressInvertor(),
                     "petsc_tag": "mechanics",
-                    "petsc_complement_tag": "mechanics_cmpl",
                 },
                 {
                     "subsolver": AMG(
@@ -569,13 +597,11 @@ def th_factory():
     ]
     energy_balance_groups: list[EquationVariableGroup] = [
         EnergyBalanceTemperatureGroup(),
-        # EnergyBalanceTemperatureMatrixGroup(),
-        # EnergyBalanceTemperatureFracturesGroup(),
-        # EnergyBalanceTemperatureIntersectionsGroup(),
     ]
 
     return GMRES(
         preconditioner=FieldSplit(
+            petsc_tag="intf_mass_energy_flx",
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
             approximate_invertor=DiagonalInvertor(),
             complement=CompositePreconditioner(
@@ -614,9 +640,6 @@ def thm_factory():
     ]
     energy_balance_groups: list[EquationVariableGroup] = [
         EnergyBalanceTemperatureGroup(),
-        # EnergyBalanceTemperatureMatrixGroup(),
-        # EnergyBalanceTemperatureFracturesGroup(),
-        # EnergyBalanceTemperatureIntersectionsGroup(),
     ]
 
     return GMRES(
@@ -627,14 +650,21 @@ def thm_factory():
                         groups=contact_groups, key="contact"
                     ),
                     "approximate_invertor": BlockDiagonalInvertor(),
+                    "petsc_tag": "contact",
                 },
                 {
                     "subsolver": ILU(groups=interface_groups, key="interface_flow"),
                     "approximate_invertor": DiagonalInvertor(),
+                    "petsc_tag": "intf_mass_energy_flx",
                 },
                 {
-                    "subsolver": AMG(groups=mechanics_groups, key="mechanics_amg"),
+                    "subsolver": AMG(
+                        groups=mechanics_groups,
+                        key="mechanics_amg",
+                        vector_problem=True,
+                    ),
                     "approximate_invertor": FixedStressInvertor(),
+                    "petsc_tag": "mech",
                 },
                 {
                     "subsolver": CompositePreconditioner(
@@ -646,11 +676,18 @@ def thm_factory():
                                 complement=AMG(
                                     groups=mass_balance_groups, key="cpr0_mass"
                                 ),
+                                petsc_tag="mass_bal",
                                 approximate_invertor=DiagonalInvertor(),
                             ),
-                            ILU(
-                                groups=energy_balance_groups + mass_balance_groups,
-                                key="cpr1",
+                            PythonPermutationWrapper(
+                                permutation_groups=[
+                                    energy_balance_groups,
+                                    mass_balance_groups,
+                                ],
+                                inner_subsolver=ILU(
+                                    groups=energy_balance_groups + mass_balance_groups,
+                                    key="cpr1",
+                                ),
                             ),
                         ]
                     )
@@ -658,23 +695,3 @@ def thm_factory():
             ]
         )
     )
-
-
-# MARK: Should not be here
-
-from itertools import chain
-
-import numpy as np
-
-from pp_solvers.block_linear_system import BlockLinearSystem
-
-
-def _to_cell_ordering(J: BlockLinearSystem, group_lists: list[list[int]]):
-    all_groups = list(chain.from_iterable(group_lists))
-
-    indexer = J.empty_container()[all_groups].indexer
-    rows = [
-        np.concatenate([indexer.dofs_row[i] for i in groups]) for groups in group_lists
-    ]
-
-    return np.vstack(rows).ravel("F")

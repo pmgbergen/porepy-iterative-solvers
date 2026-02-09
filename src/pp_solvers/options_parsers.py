@@ -1,16 +1,23 @@
 from dataclasses import dataclass
 from typing import Optional
 from warnings import warn
+
+import numpy as np
 from petsc4py import PETSc
+
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-from pp_solvers.petsc_solvers import LinearSolverWithTransformations, PetscKrylovSolver
+from pp_solvers.dof_manager import DofManager
+from pp_solvers.petsc_solvers import (
+    LinearSolverWithTransformations,
+    PcPythonPermutation,
+    PetscKrylovSolver,
+)
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     construct_is,
     csr_to_petsc,
     insert_petsc_options,
 )
-from pp_solvers.dof_manager import DofManager
 from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
@@ -126,45 +133,36 @@ def _assemble_pc_fieldsplit(
     prefix: str,
 ):
     # calls: pc.setUp, ksp.setUp
+    assert pc.type == "fieldsplit"
+
     prefix_config = additional_data[prefix]
     elim_groups = prefix_config["elim_groups"]
     keep_groups = prefix_config["keep_groups"]
     elim_tag = prefix_config["elim_tag"]
     keep_tag = prefix_config["keep_tag"]
 
-    elim_prefix = f"{prefix}fieldsplit_{elim_tag}_"
-    elim_config = additional_data.get(elim_prefix, {})
-    # elim_matrix_block_size = elim_config.get("matrix_block_size")
-    keep_prefix = f"{prefix}fieldsplit_{keep_tag}_"
-    keep_config = additional_data.get(keep_prefix, {})
-    # keep_matrix_block_size = keep_config.get("matrix_block_size")
-
     is_elim = construct_is(indexer, elim_groups)
     is_keep = construct_is(indexer, keep_groups)
 
-    # if elim_matrix_block_size is not None:
-    #     is_elim.setBlockSize(elim_matrix_block_size)
-    # if keep_matrix_block_size is not None:
-    #     is_keep.setBlockSize(keep_matrix_block_size)
-
-    assert pc.type == "fieldsplit"
+    keep_groups_indexer = indexer[keep_groups]
 
     pc.setFieldSplitIS((elim_tag, is_elim))
     pc.setFieldSplitIS((keep_tag, is_keep))
 
-    # For a matrix [[A, B], [C, D]], Schur complement S = A - C * D^-1 * B, here A
+    # For a matrix [[A, B], [C, D]], Schur complement S = D - B * A^-1 * C, here D
     # corresponds to the index set "is_keep". An additive invertor is a matrix X to
-    # build the approximat: S = A + X. This is where the fixed-stress approximation for
+    # build the approximat: S = D + X. This is where the fixed-stress approximation for
     # hydromechanics is applied.
     invertor = prefix_config.get("invertor_additive", None)
     if invertor is not None:
-        # This copies the submatrix A into S.
+        # This copies the submatrix D into S.
         S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
         # Extracts the matrix X in petsc format.
-        petsc_matrix_invertor = invertor(indexer)
+        petsc_matrix_invertor = invertor(keep_groups_indexer)
         # S = S + 1 * X
         S.axpy(1, petsc_matrix_invertor)
         pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
+        petsc_matrix_invertor.destroy()
 
     try:
         pc.setUp()
@@ -184,7 +182,7 @@ def _assemble_pc_fieldsplit(
         pc=pc_elim,
         assembly_config=additional_data,
         indexer=indexer[elim_groups],
-        prefix=elim_prefix,
+        prefix=f"{prefix}fieldsplit_{elim_tag}_",
     )
 
     pc_keep = ksp_keep.getPC()
@@ -193,7 +191,7 @@ def _assemble_pc_fieldsplit(
         pc=pc_keep,
         assembly_config=additional_data,
         indexer=indexer[keep_groups],
-        prefix=keep_prefix,
+        prefix=f"{prefix}fieldsplit_{keep_tag}_",
     )
 
 
@@ -225,14 +223,38 @@ def _assemble_pc_composite(
     ksp.setUp()
 
 
-def _assemble_pc_python(
+def _assemble_pc_python_permutation(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
     additional_data: dict,
     indexer: LinearSystemIndexer,
     prefix: str,
 ):
-    python_context = additional_data[prefix]["python_context"]
+    permutation_groups: list[list[int]] = additional_data[prefix]["permutation_groups"]
+
+    perm = [indexer.get_dofs_of_groups(g)[0] for g in permutation_groups]
+    perm = np.vstack(perm).ravel("F")
+
+    python_context = PcPythonPermutation(
+        perm=perm, block_size=len(permutation_groups), prefix=prefix
+    )
+    python_context.setFromOptions(pc=pc)
+
+    # YZ: Nested initialization of python_context.petsc_pc can be here. However, we
+    # don't use it now, so I don't cover it with tests and thus not implement it here.
+    # assemble_petsc_ksp_pc(
+    #     ksp=ksp,
+    #     pc=python_context.petsc_pc,
+    #     assembly_config=additional_data,
+    #     indexer=indexer,
+    #     prefix=f"{prefix}_python_",
+    # )
+    # Another NotImplementedError for this case is raised in PythonPermutationWrapper.
+    if python_context.petsc_pc.type in ["fieldsplit", "composite"]:
+        raise NotImplementedError(
+            "Nested initialization inside PythonPermutationWrapper is not implemented."
+        )
+
     pc.setPythonContext(python_context)
     pc.setUp()
     ksp.setUp()
@@ -257,18 +279,13 @@ def assemble_petsc_ksp_pc(
 
     current_config: dict = assembly_config.get(prefix, {})
 
-    # matrix_block_size: int | None = current_config.get("matrix_block_size")
-    # if matrix_block_size is not None:
     petsc_amat, petsc_pmat = ksp.getOperators()
     petsc_amat.setFromOptions()
     petsc_pmat.setFromOptions()
 
-    pc_type: str = current_config.get("pc_type", "other")
-    # Sanity check.
-    if pc_type != "other":
-        assert pc.type == pc_type
+    config_type: str = current_config.get("config_type", "default")
 
-    if pc_type == "fieldsplit":
+    if config_type == "fieldsplit":
         _assemble_pc_fieldsplit(
             ksp=ksp,
             pc=pc,
@@ -276,7 +293,7 @@ def assemble_petsc_ksp_pc(
             indexer=indexer,
             prefix=prefix,
         )
-    elif pc_type == "composite":
+    elif config_type == "composite":
         _assemble_pc_composite(
             ksp=ksp,
             pc=pc,
@@ -284,8 +301,8 @@ def assemble_petsc_ksp_pc(
             indexer=indexer,
             prefix=prefix,
         )
-    elif pc_type == "python":
-        _assemble_pc_python(
+    elif config_type == "python_permutation":
+        _assemble_pc_python_permutation(
             ksp=ksp,
             pc=pc,
             additional_data=assembly_config,
