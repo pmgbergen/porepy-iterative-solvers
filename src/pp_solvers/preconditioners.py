@@ -611,6 +611,7 @@ def _to_cell_ordering(indexer: LinearSystemIndexer, group_lists: list[list[int]]
 
 
 def cfle_factory():
+    """Factory for a CFLE preconditioner with well equations."""
     from porepy.numerics.ad.operators import MixedDimensionalVariable
 
     import porepy as pp
@@ -753,5 +754,311 @@ def cfle_factory():
                     ),
                 ]
             ),
+        )
+    )
+
+
+def cfle_factory_no_well():
+    """Factory for a CFLE preconditioner without well equations."""
+
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+    import porepy as pp
+    from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
+
+    class ComponentMassBalanceCO2Group(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            name = "component_mass_balance_equation_CO2"
+
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.fluid.components[1].fraction(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "component_mass_balance_equation_CO2"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "z_CO2"
+
+    class MassBalancePressureGroup(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            return EquationOnDomains(
+
+                name=EquationNames.MASS_BALANCE.value, domains=model.mdg.subdomains()
+
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.pressure(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "mass_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "pressure"
+
+    class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            name = EquationNames.ENERGY_BALANCE.value
+
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.enthalpy(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "energy_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "entalpy"
+
+    interface_groups = [
+
+        InterfaceDarcyFluxGroup(),
+
+        InterfaceEnthalpyFluxGroup(),
+
+        InterfaceFourierFluxGroup(),
+
+        WellFluxGroup(),
+
+        WellEnthalpyFluxGroup(),
+
+    ]
+
+    mass_balance_groups = [
+
+        MassBalancePressureGroup(),
+
+    ]
+
+    energy_balance_groups = [
+
+        EnergyBalanceEnthalpyGroup(),
+
+    ]
+
+    component_groups = [ComponentMassBalanceCO2Group()]
+
+    return GMRES(
+
+        preconditioner=FieldSplit(
+
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+
+            approximate_invertor=DiagonalInvertor(),
+
+            complement=CompositePreconditioner(
+
+                subsolvers=[
+
+                    FieldSplit(
+
+                        subsolver=Identity(
+
+                            groups=energy_balance_groups + component_groups,
+
+                            key="cpr_stage0_identity",
+
+                        ),
+
+                        approximate_invertor=DiagonalInvertor(),
+
+                        complement=AMG(
+
+                            groups=mass_balance_groups, key="cpr_stage0_amg"
+
+                        ),
+
+                        key="inner_fieldsplit",
+
+                    ),
+
+                    ILU(
+
+                        groups=energy_balance_groups
+
+                        + component_groups
+
+                        + mass_balance_groups,
+
+                        key="cpr_stage1_ilu",
+
+                    ),
+
+                ]
+
+            ),
+
+        )
+
+    )
+
+
+def cf_factory_no_well():
+    """
+    Factory for a CF preconditioner without well equations.
+    Mike: Preconditioner factory defined for problem involving cf with correlations
+    """
+
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+    import porepy as pp
+    from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
+
+    class ComponentMassBalanceNaClGroup(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            name = "component_mass_balance_equation_NaCl"
+
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.fluid.components[1].fraction(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "component_mass_balance_equation_NaCl"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "z_NaCl"
+
+    class MassBalancePressureGroup(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            return EquationOnDomains(
+
+                name=EquationNames.MASS_BALANCE.value, domains=model.mdg.subdomains()
+
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.pressure(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "mass_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "pressure"
+
+    class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+
+            name = EquationNames.ENERGY_BALANCE.value
+
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+
+            return model.enthalpy(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+
+            return "energy_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+
+            return "enthalpy"
+
+    interface_groups = [
+
+        InterfaceDarcyFluxGroup(),
+
+        InterfaceEnthalpyFluxGroup(),
+
+        InterfaceFourierFluxGroup(),
+
+        WellFluxGroup(),
+
+        WellEnthalpyFluxGroup(),
+
+    ]
+
+    mass_balance_groups = [
+
+        MassBalancePressureGroup(),
+
+    ]
+
+    energy_balance_groups = [
+
+        EnergyBalanceEnthalpyGroup(),
+
+    ]
+
+    component_groups = [ComponentMassBalanceNaClGroup()]
+
+    return GMRES(
+
+        preconditioner=FieldSplit(
+
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+
+            approximate_invertor=DiagonalInvertor(),
+
+            complement=CompositePreconditioner(
+
+                subsolvers=[
+
+                    FieldSplit(
+
+                        subsolver=Identity(
+
+                            groups=energy_balance_groups + component_groups,
+
+                            key="cpr_stage0_identity",
+
+                        ),
+
+                        approximate_invertor=DiagonalInvertor(),
+
+                        complement=AMG(
+
+                            groups=mass_balance_groups, key="cpr_stage0_amg"
+
+                        ),
+
+                        key="inner_fieldsplit",
+
+                    ),
+
+                    ILU(
+
+                        groups=energy_balance_groups
+
+                        + component_groups
+
+                        + mass_balance_groups,
+
+                        key="cpr_stage1_ilu",
+
+                    ),
+
+                ]
+
+            ),
+
         )
     )
