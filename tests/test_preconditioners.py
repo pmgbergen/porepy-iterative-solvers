@@ -1,44 +1,38 @@
 import numpy as np
 import porepy as pp
 import pytest
+from petsc4py import PETSc
 from scipy.sparse import csr_matrix
+from testing_utils import MockDofManager
 
-
-from pp_solvers.preconditioners import (
-    PetscKspPcConfiguration,
-    ILU,
-    AMG,
-    Identity,
-    GMRES,
-    CompositePreconditioner,
-    FieldSplit,
-    PythonWrapper,
-    DiagonalInvertor,
-    PetscInvertor,
-    BlockDiagonalInvertor,
-    FixedStressInvertor,
-    BlockDiagonalPreconditioner,
-)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
+from pp_solvers.equation_variable_groups import EquationVariableGroup
+from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
-    insert_petsc_options,
     csr_to_petsc,
+    insert_petsc_options,
 )
-from pp_solvers.equation_variable_groups import EquationVariableGroup
-
-from petsc4py import PETSc
-
-
-class MockModel:
-    nd = 3
-
-
-class MockDofManager:
-    model = MockModel()
-
-    def indices_of_groups(self, groups: list[EquationVariableGroup]):
-        # each mock group is a string "g1", "g2", etc.
-        return [int(g[1]) - 1 for g in groups]
+from pp_solvers.preconditioners import (
+    AMG,
+    GMRES,
+    ILU,
+    BlockDiagonalInvertor,
+    BlockDiagonalPreconditioner,
+    CompositePreconditioner,
+    DiagonalInvertor,
+    FieldSplit,
+    FixedStressInvertor,
+    Identity,
+    PetscInvertor,
+    PetscKspPcConfiguration,
+    PythonWrapper,
+)
+from testing_utils import (
+    generate_reference_dofs_3_groups,
+    generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+)
 
 
 @pytest.fixture
@@ -97,7 +91,9 @@ def test_default_petsc_options(configuration: PetscKspPcConfiguration, ksp: PETS
     """We test that the leaf PetscKspPcConfiguration produce correct default PETSc
     options."""
     clear_petsc_options()
-    petsc_options = configuration.petsc_options(user_options={}, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options={}, prefix="", dof_manager=MockDofManager()
+    )
     assert isinstance(petsc_options, dict)
     insert_petsc_options(petsc_options)
 
@@ -121,7 +117,9 @@ def test_configurations_sanity_checks(configuration: PetscKspPcConfiguration):
     # 1. It should fetch our custom key.
     assert configuration.key == "custom_key"
     # 2. petsc_options should return something and it should be a dict.
-    petsc_options = configuration.petsc_options(user_options={}, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options={}, prefix="", dof_manager=MockDofManager()
+    )
     assert isinstance(petsc_options, dict)
     # 3. petsc_assembly_config should return something and it should be a dict.
     config = configuration.petsc_assembly_config(
@@ -170,17 +168,16 @@ def test_user_options_and_prefix(configuration: PetscKspPcConfiguration, prefix:
         "this_key_should_be_ignored": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix=prefix
+        user_options=user_options, prefix=prefix, dof_manager=MockDofManager()
     )
     # User options should override defaults.
-    if not isinstance(configuration, GMRES): 
+    if not isinstance(configuration, GMRES):
         assert petsc_options[f"{prefix}ksp_type"] == "cg"
         assert petsc_options[f"{prefix}pc_type"] == "sor"
     else:
         # This is the known edge case (preconditioner overrides gmres settings.)
         assert petsc_options[f"{prefix}ksp_type"] == "cg"
         assert petsc_options[f"{prefix}pc_type"] == "none"
-
 
 
 def test_gmres_and_preconditioner_override_user_params():
@@ -192,7 +189,9 @@ def test_gmres_and_preconditioner_override_user_params():
         "gmres": {"ksp_type": "cg", "pc_type": "sor"},
         "preconditioner": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
-    petsc_options = configuration.petsc_options(user_options=user_options, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
     # Preconditioner options are prioritized.
     assert petsc_options["ksp_type"] == "bcgs"
     assert petsc_options["pc_type"] == "ilu"
@@ -236,7 +235,9 @@ def test_nested_fieldsplits():
         "i3": {"test_option": "i3"},
         "i4": {"test_option": "i4"},
     }
-    petsc_options = configuration.petsc_options(user_options=user_options, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
         "test_option": "fs1",
@@ -307,7 +308,9 @@ def test_nested_composites():
         "i3": {"test_option": "i3"},
         "i4": {"test_option": "i4"},
     }
-    petsc_options = configuration.petsc_options(user_options=user_options, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
         "test_option": "c1",
@@ -376,7 +379,9 @@ def test_python_wrapper():
         "i1": {"custom_option": "i1"},
         "p1": {"custom_option": "p1"},
     }
-    petsc_options = configuration.petsc_options(user_options=user_options, prefix="")
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
     for expected_key, expected_value in {
         "custom_option": "p1",
         "python_custom_option": "i1",
@@ -388,3 +393,34 @@ def test_python_wrapper():
     )
     assert assembly_config["custom_prefix_"]["pc_type"] == "python"
     assert assembly_config["custom_prefix_"]["python_context"] == "mock_python_context"
+
+
+@pytest.fixture
+def block_linear_system() -> BlockLinearSystem:
+    dofs_row, dofs_col = generate_reference_dofs_3_groups()
+    return BlockLinearSystem(
+        mat=generate_reference_matrix_3_groups(),
+        rhs=generate_reference_rhs_3_groups(),
+        indexer=LinearSystemIndexer(
+            dofs_row=dofs_row,
+            dofs_col=dofs_col,
+        ),
+    )
+
+
+def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
+    ksp_scheme = PetscKSPScheme(
+        petsc_ksp_pc_configuration=GMRES(preconditioner=Identity(groups=["mock_g1"])),
+        dof_manager=MockDofManager(),
+    )
+    krylov_solver = ksp_scheme.make_solver(
+        mat_orig=block_linear_system, options={"gmres": {"ksp_type": "fgmres"}}
+    )
+    # Check that the custom option applied.
+    assert krylov_solver.ksp.type == "fgmres"
+    solution = krylov_solver.solve(block_linear_system.rhs)
+
+    np.testing.assert_allclose(
+        block_linear_system.mat @ solution,
+        block_linear_system.rhs,
+    )

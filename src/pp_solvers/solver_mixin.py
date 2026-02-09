@@ -160,8 +160,8 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "Check the solver options and the problem setup."
             )
 
-        # Project the solution back to the global (PorePy) ordering. For clarity, no
-        # contact reordering here, since only the equations (rows) and not the variables
+        # Project the solution back to the PorePy ordering. For clarity, no contact
+        # reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.nonlinear_solver_statistics.petsc_converged_reason.append(info)

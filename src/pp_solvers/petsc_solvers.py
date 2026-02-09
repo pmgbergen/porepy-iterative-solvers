@@ -92,8 +92,10 @@ class LinearSolverWithTransformations:
 
 
 class PcPythonPermutation:
-    def __init__(self, perm: np.ndarray, block_size: int):
+    def __init__(self, perm: np.ndarray, block_size: int, prefix: str):
+        self.prefix: str = prefix
         self.petsc_pc = PETSc.PC().create()
+        self.petsc_pc.setOptionsPrefix(f"{prefix}python_")
         self.petsc_is_perm = PETSc.IS().createGeneral(perm.astype(np.int32))
         self.P_perm = PETSc.Mat()
         self.b = PETSc.Vec().create()

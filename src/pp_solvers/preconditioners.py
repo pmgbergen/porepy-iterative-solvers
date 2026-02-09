@@ -79,6 +79,7 @@ class BlockDiagonalInvertor(PetscInvertor):
                 f"fieldsplit_{complement_tag}_mat_schur_complement_ainv_type": "blockdiag",
             },
         )
+        # YZ: How does it fetch the block size in that matrix?
 
 
 class FixedStressInvertor(PetscInvertor):
@@ -137,7 +138,9 @@ class PetscKspPcConfiguration(ABC):
         return f"{self.__class__.__name__}(groups={self.groups})"
 
     @abstractmethod
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         pass
 
     def petsc_assembly_config(
@@ -150,7 +153,9 @@ class ILU(PetscKspPcConfiguration):
     def __init__(self, groups: list[EquationVariableGroup], key: str = "ilu") -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         default_options = {"pc_type": "ilu"}
         return append_prefix_to_options(
             prefix=prefix, options=default_options | user_options.get(self.key, {})
@@ -161,7 +166,9 @@ class AMG(PetscKspPcConfiguration):
     def __init__(self, groups: list[EquationVariableGroup], key: str = "amg") -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         # This is where the default can be model-dependent. E.g. if 2d, strong_th=0.3
         # and 0.7 if 3d.
         default_options = {"pc_type": "hypre", "pc_hypre_type": "boomeramg"}
@@ -176,7 +183,9 @@ class Identity(PetscKspPcConfiguration):
     ) -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         default_options = {"pc_type": "none"}
         return append_prefix_to_options(
             prefix=prefix, options=default_options | user_options.get(self.key, {})
@@ -193,7 +202,9 @@ class GMRES(PetscKspPcConfiguration):
     def __repr__(self) -> str:
         return f"GMRES(preconditioner={self.preconditioner})"
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         default_options = {
             "ksp_type": "gmres",
             "ksp_pc_side": "right",
@@ -204,7 +215,9 @@ class GMRES(PetscKspPcConfiguration):
             "ksp_gmres_classicalgramschmidt": True,  # Not givens rotations??
         }
         pc_options = self.preconditioner.petsc_options(
-            user_options=user_options, prefix=""
+            user_options=user_options,
+            prefix="",
+            dof_manager=dof_manager,
         )
 
         this_user_options = user_options.get(self.key, {})
@@ -250,14 +263,18 @@ class CompositePreconditioner(PetscKspPcConfiguration):
     def __repr__(self) -> str:
         return f"CompositePreconditioner(subsolvers={self.subsolvers})"
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         result: dict = {
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
         }
         for i, subsolver in enumerate(self.subsolvers):
             result |= subsolver.petsc_options(
-                user_options=user_options, prefix=f"sub_{i}_"
+                user_options=user_options,
+                prefix=f"sub_{i}_",
+                dof_manager=dof_manager,
             )
         return append_prefix_to_options(
             prefix=prefix, options=result | user_options.get(self.key, {})
@@ -313,7 +330,9 @@ class FieldSplit(PetscKspPcConfiguration):
             f"approximate_invertor={self.approximate_invertor})"
         )
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         options = (
             {
                 "pc_type": "fieldsplit",
@@ -324,11 +343,14 @@ class FieldSplit(PetscKspPcConfiguration):
                 f"fieldsplit_{self.petsc_complement_tag}_ksp_type": "preonly",
             }
             | self.subsolver.petsc_options(
-                user_options=user_options, prefix=f"fieldsplit_{self.petsc_tag}_"
+                user_options=user_options,
+                prefix=f"fieldsplit_{self.petsc_tag}_",
+                dof_manager=dof_manager,
             )
             | self.complement.petsc_options(
                 user_options=user_options,
                 prefix=f"fieldsplit_{self.petsc_complement_tag}_",
+                dof_manager=dof_manager,
             )
             | self.approximate_invertor.petsc_options(
                 prefix="",
@@ -385,9 +407,11 @@ class PythonWrapper(PetscKspPcConfiguration):
         self.python_context: PcPythonPermutation = python_context
         self.inner_subsolver: PetscKspPcConfiguration = inner_subsolver
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
         options = {"pc_type": "python"} | self.inner_subsolver.petsc_options(
-            user_options=user_options, prefix=f"python_"
+            user_options=user_options, prefix=f"python_", dof_manager=dof_manager
         )
         return append_prefix_to_options(
             prefix=prefix, options=options | user_options.get(self.key, {})
@@ -412,32 +436,38 @@ class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
     ) -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(self, user_options: dict, prefix: str) -> dict:
-        default_options = {"pc_type": "pbjacobi"}
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        default_options = {
+            "pc_type": "pbjacobi",
+            "mat_block_size": dof_manager.model.nd,
+        }
         return append_prefix_to_options(
             prefix=prefix, options=default_options | user_options.get(self.key, {})
         )
 
-    def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        return {prefix: {"matrix_block_size": dof_manager.model.nd}}
-
 
 def nested_schur_complements(subsolvers: list[dict]) -> FieldSplit:
-    if len(subsolvers) != 2:
-        # recursion
+    # Unwrapping parameters.
+    kwargs = {
+        "subsolver": subsolvers[0]["subsolver"],
+        "approximate_invertor": subsolvers[0]["approximate_invertor"],
+    }
+    if "key" in subsolvers[0]:
+        kwargs["key"] = subsolvers[0]["key"]
+    if "petsc_tag" in subsolvers[0]:
+        kwargs["petsc_tag"] = subsolvers[0]["petsc_tag"]
+    if "petsc_complement_tag" in subsolvers[0]:
+        kwargs["petsc_complement_tag"] = subsolvers[0]["petsc_complement_tag"]
+
+    if len(subsolvers) > 2:
+        # Recursion.
         return FieldSplit(
-            subsolver=subsolvers[0]["subsolver"],
-            approximate_invertor=subsolvers[0]["approximate_invertor"],
-            complement=nested_schur_complements(subsolvers=subsolvers[1:]),
+            complement=nested_schur_complements(subsolvers=subsolvers[1:]), **kwargs
         )
-    # end of recursion
-    return FieldSplit(
-        subsolver=subsolvers[0]["subsolver"],
-        approximate_invertor=subsolvers[0]["approximate_invertor"],
-        complement=subsolvers[1]["subsolver"],
-    )
+    # End of recursion.
+    return FieldSplit(complement=subsolvers[1]["subsolver"], **kwargs)
 
 
 def mass_balance_factory():
@@ -464,6 +494,8 @@ def momentum_balance_factory():
     ]
     return GMRES(
         preconditioner=FieldSplit(
+            petsc_tag="contact",
+            petsc_complement_tag="contact_cmpl",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
             complement=AMG(groups=mechanics_groups, key="mechanics_amg"),
             approximate_invertor=BlockDiagonalInvertor(),
@@ -495,16 +527,22 @@ def hm_factory():
                         groups=contact_groups, key="contact"
                     ),
                     "approximate_invertor": BlockDiagonalInvertor(),
+                    "petsc_tag": "contact",
+                    "petsc_complement_tag": "contact_cmpl",
                 },
                 {
                     "subsolver": ILU(
                         groups=interface_flux_groups, key="interface_flow"
                     ),
                     "approximate_invertor": DiagonalInvertor(),
+                    "petsc_tag": "intf",
+                    "petsc_complement_tag": "intf_cmpl",
                 },
                 {
                     "subsolver": AMG(groups=mechanics_groups, key="mechanics_amg"),
                     "approximate_invertor": FixedStressInvertor(),
+                    "petsc_tag": "mechanics",
+                    "petsc_complement_tag": "mechanics_cmpl",
                 },
                 {
                     "subsolver": AMG(

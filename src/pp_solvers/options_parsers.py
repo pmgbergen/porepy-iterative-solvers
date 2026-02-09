@@ -25,22 +25,22 @@ class PetscKSPScheme:
 
     dof_manager: DofManager
 
-    def make_solver(self, mat_orig: BlockLinearSystem, options: dict | None = None):
+    def make_solver(self, mat_orig: BlockLinearSystem, options: dict):
         # Construct a PETSc matrix from the scipy matrix.
         # TODO: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
 
         # Clear the PETSc options from a previous solve.
-        clear_petsc_options()
+        petsc_options = clear_petsc_options()
 
-        petsc_options = self.petsc_ksp_pc_configuration.petsc_options(
-            user_options=options, prefix=""
+        all_options_dict = self.petsc_ksp_pc_configuration.petsc_options(
+            user_options=options, prefix="", dof_manager=self.dof_manager
         )
-        petsc_assembly_config = self.petsc_ksp_pc_configuration.petsc_assembly_config(
+        assembly_config = self.petsc_ksp_pc_configuration.petsc_assembly_config(
             user_options=options, prefix="", dof_manager=self.dof_manager
         )
 
-        insert_petsc_options(petsc_options)
+        insert_petsc_options(all_options_dict)
 
         petsc_ksp = PETSc.KSP().create()
         petsc_ksp.setFromOptions()
@@ -48,10 +48,17 @@ class PetscKSPScheme:
         assemble_petsc_ksp_pc(
             ksp=petsc_ksp,
             pc=petsc_ksp.getPC(),
-            assembly_config=petsc_assembly_config,
+            assembly_config=assembly_config,
             indexer=mat_orig.indexer,
             prefix="",
         )
+
+        for key in all_options_dict:
+            if not petsc_options.used(key):
+                raise ValueError(
+                    f"PETSc option {key}: {all_options_dict[key]} is not used. "
+                    "Check spelling."
+                )
 
         return PetscKrylovSolver(petsc_ksp)
 
@@ -70,7 +77,7 @@ class LinearTransformedScheme:
         return self.inner.dof_manager
 
     def make_solver(
-        self, mat_orig: BlockLinearSystem, options: dict | None = None
+        self, mat_orig: BlockLinearSystem, options: dict
     ) -> PetscKrylovSolver | LinearSolverWithTransformations:
         bmat = mat_orig[:]
 
@@ -101,7 +108,7 @@ class LinearTransformedScheme:
             raise ValueError("No inner solver provided.")
 
         # Set up the inner solver.
-        solver: PetscKrylovSolver = self.inner.make_solver(bmat_Q, options=options)
+        solver = self.inner.make_solver(bmat_Q, options=options or {})
 
         if Qleft is not None or Qright is not None:
             solver = LinearSolverWithTransformations(
@@ -127,23 +134,37 @@ def _assemble_pc_fieldsplit(
 
     elim_prefix = f"{prefix}fieldsplit_{elim_tag}_"
     elim_config = additional_data.get(elim_prefix, {})
-    elim_matrix_block_size = elim_config.get('matrix_block_size')
+    # elim_matrix_block_size = elim_config.get("matrix_block_size")
     keep_prefix = f"{prefix}fieldsplit_{keep_tag}_"
     keep_config = additional_data.get(keep_prefix, {})
-    keep_matrix_block_size = keep_config.get('matrix_block_size')
+    # keep_matrix_block_size = keep_config.get("matrix_block_size")
 
     is_elim = construct_is(indexer, elim_groups)
     is_keep = construct_is(indexer, keep_groups)
 
-    if elim_matrix_block_size is not None:
-        is_elim.setBlockSize(elim_matrix_block_size)
-    if keep_matrix_block_size is not None:
-        is_keep.setBlockSize(keep_matrix_block_size)
+    # if elim_matrix_block_size is not None:
+    #     is_elim.setBlockSize(elim_matrix_block_size)
+    # if keep_matrix_block_size is not None:
+    #     is_keep.setBlockSize(keep_matrix_block_size)
 
     assert pc.type == "fieldsplit"
 
     pc.setFieldSplitIS((elim_tag, is_elim))
     pc.setFieldSplitIS((keep_tag, is_keep))
+
+    # For a matrix [[A, B], [C, D]], Schur complement S = A - C * D^-1 * B, here A
+    # corresponds to the index set "is_keep". An additive invertor is a matrix X to
+    # build the approximat: S = A + X. This is where the fixed-stress approximation for
+    # hydromechanics is applied.
+    invertor = prefix_config.get("invertor_additive", None)
+    if invertor is not None:
+        # This copies the submatrix A into S.
+        S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
+        # Extracts the matrix X in petsc format.
+        petsc_matrix_invertor = invertor(indexer)
+        # S = S + 1 * X
+        S.axpy(1, petsc_matrix_invertor)
+        pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
 
     try:
         pc.setUp()
@@ -212,7 +233,6 @@ def _assemble_pc_python(
     prefix: str,
 ):
     python_context = additional_data[prefix]["python_context"]
-    python_context.petsc_pc.setOptionsPrefix(f"{prefix}python_")
     pc.setPythonContext(python_context)
     pc.setUp()
     ksp.setUp()
@@ -237,14 +257,13 @@ def assemble_petsc_ksp_pc(
 
     current_config: dict = assembly_config.get(prefix, {})
 
-    matrix_block_size: int | None = current_config.get('matrix_block_size')
-    if matrix_block_size is not None:
-        petsc_amat, petsc_pmat = ksp.getOperators()
-        petsc_amat.setBlockSize(matrix_block_size)
-        petsc_pmat.setBlockSize(matrix_block_size)
-        ksp.setOperators(petsc_amat, petsc_pmat)
+    # matrix_block_size: int | None = current_config.get("matrix_block_size")
+    # if matrix_block_size is not None:
+    petsc_amat, petsc_pmat = ksp.getOperators()
+    petsc_amat.setFromOptions()
+    petsc_pmat.setFromOptions()
 
-    pc_type: str = current_config.get('pc_type', 'other')
+    pc_type: str = current_config.get("pc_type", "other")
     # Sanity check.
     if pc_type != "other":
         assert pc.type == pc_type
