@@ -122,7 +122,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [0],
                         "keep_groups": [1, 2],
                         "elim_tag": "aaa",
@@ -144,14 +144,14 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [0, 1],
                         "keep_groups": [2],
                         "elim_tag": "aaa",
                         "keep_tag": "bbb",
                     },
                     "fieldsplit_aaa_": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [1],  # Intentionally switching order.
                         "keep_groups": [0],
                         "elim_tag": "ccc",
@@ -189,7 +189,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [0],
                         "keep_groups": [1, 2],
                         "elim_tag": "aaa",
@@ -216,7 +216,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                         "num_stages": 2,
                     },
                     "sub_0_": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [2, 0],  # Intentionally mixed order of groups.
                         "keep_groups": [1],
                         "elim_tag": "elim",
@@ -251,7 +251,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit",
+                        "config_type": "fieldsplit_schur",
                         "elim_groups": [2, 0],  # Intentionally mixed order of groups.
                         "keep_groups": [1],
                         "elim_tag": "elim",

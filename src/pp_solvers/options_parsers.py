@@ -161,7 +161,7 @@ def _assemble_pc_fieldsplit_additive(
         )
 
 
-def _assemble_pc_fieldsplit(
+def _assemble_pc_fieldsplit_schur(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
     additional_data: dict,
@@ -321,8 +321,8 @@ def assemble_petsc_ksp_pc(
 
     config_type: str = current_config.get("config_type", "default")
 
-    if config_type == "fieldsplit":
-        _assemble_pc_fieldsplit(
+    if config_type == "fieldsplit_schur":
+        _assemble_pc_fieldsplit_schur(
             ksp=ksp,
             pc=pc,
             additional_data=assembly_config,

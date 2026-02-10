@@ -376,7 +376,7 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
         return result
 
 
-class FieldSplit(PetscKspPcConfiguration):
+class FieldSplitSchur(PetscKspPcConfiguration):
     def __init__(
         self,
         subsolver: PetscKspPcConfiguration,
@@ -447,7 +447,7 @@ class FieldSplit(PetscKspPcConfiguration):
         return (
             {
                 prefix: {
-                    "config_type": "fieldsplit",
+                    "config_type": "fieldsplit_schur",
                     "elim_tag": self.petsc_tag,
                     "keep_tag": self.petsc_complement_tag,
                     "elim_groups": dof_manager.indices_of_groups(
@@ -538,7 +538,7 @@ class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
         )
 
 
-def nested_schur_complements(subsolvers: list[dict]) -> FieldSplit:
+def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     # Unwrapping parameters.
     kwargs = {
         "subsolver": subsolvers[0]["subsolver"],
@@ -553,11 +553,11 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplit:
 
     if len(subsolvers) > 2:
         # Recursion.
-        return FieldSplit(
+        return FieldSplitSchur(
             complement=nested_schur_complements(subsolvers=subsolvers[1:]), **kwargs
         )
     # End of recursion.
-    return FieldSplit(complement=subsolvers[1]["subsolver"], **kwargs)
+    return FieldSplitSchur(complement=subsolvers[1]["subsolver"], **kwargs)
 
 
 def mass_balance_factory():
@@ -568,7 +568,7 @@ def mass_balance_factory():
     mass_balance_groups: list[EquationVariableGroup] = [MassBalancePressureGroup()]
 
     return GMRES(
-        preconditioner=FieldSplit(
+        preconditioner=FieldSplitSchur(
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
             complement=AMG(groups=mass_balance_groups, key="mass_balance_amg"),
             approximate_invertor=DiagonalInvertor(),
@@ -583,7 +583,7 @@ def momentum_balance_factory():
         InterfaceForceBalanceGroup(),
     ]
     return GMRES(
-        preconditioner=FieldSplit(
+        preconditioner=FieldSplitSchur(
             petsc_tag="contact",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
             complement=AMG(
@@ -664,13 +664,13 @@ def th_factory():
     ]
 
     return GMRES(
-        preconditioner=FieldSplit(
+        preconditioner=FieldSplitSchur(
             petsc_tag="intf_mass_energy_flx",
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
             approximate_invertor=DiagonalInvertor(),
             complement=CompositePreconditioner(
                 subsolvers=[
-                    FieldSplit(
+                    FieldSplitSchur(
                         subsolver=Identity(
                             groups=energy_balance_groups, key="cpr0_energy"
                         ),

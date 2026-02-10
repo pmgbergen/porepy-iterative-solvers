@@ -59,6 +59,9 @@ class EquationVariableGroup(ABC):
 
     def __repr__(self) -> str:
         return self.__class__.__name__
+    
+    def __hash__(self) -> int:
+        return hash(self.__class__)
 
 
 class InterfaceDarcyFluxGroup(EquationVariableGroup):
