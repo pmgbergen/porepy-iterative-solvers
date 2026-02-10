@@ -4,8 +4,8 @@
 
 """
 
-import scipy.sparse as sp
 import numpy as np
+import scipy.sparse as sp
 
 from pp_solvers.equation_variable_groups import EquationVariableGroup
 
@@ -84,6 +84,7 @@ def generate_reference_matrix_3_groups():
 def generate_reference_rhs_3_groups():
     # The rhs is arranged for groups [2, 1, 0], same as the original matrix.
     return np.array([30, 31, 20, 21, 22, 23, 10, 11, 12], dtype=float)
+
 
 def generate_reference_dofs_3_groups():
     # Empty 4-th group.

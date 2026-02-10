@@ -1,9 +1,18 @@
+"""This module tests that the petsc options are generated correctly by various
+combinations of configuration classes, defined in `preconditioners.py`.
+
+"""
+
 import numpy as np
-import porepy as pp
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
-from testing_utils import MockDofManager
+from testing_utils import (
+    MockDofManager,
+    generate_reference_dofs_3_groups,
+    generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+)
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.equation_variable_groups import EquationVariableGroup
@@ -21,18 +30,13 @@ from pp_solvers.preconditioners import (
     BlockDiagonalPreconditioner,
     CompositePreconditioner,
     DiagonalInvertor,
-    FieldSplitSchur,
     FieldSplitAdditive,
+    FieldSplitSchur,
     FixedStressInvertor,
     Identity,
     PetscInvertor,
     PetscKspPcConfiguration,
     PythonPermutationWrapper,
-)
-from testing_utils import (
-    generate_reference_dofs_3_groups,
-    generate_reference_matrix_3_groups,
-    generate_reference_rhs_3_groups,
 )
 
 

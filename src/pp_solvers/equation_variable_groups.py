@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 import porepy as pp
-from porepy.models.fluid_mass_balance import FluidMassBalanceEquations
 from porepy.models.energy_balance import TotalEnergyBalanceEquations
+from porepy.models.fluid_mass_balance import FluidMassBalanceEquations
 from porepy.numerics.ad.operators import MixedDimensionalVariable
 
 
@@ -30,11 +30,30 @@ class EquationNames(Enum):
 
 @dataclass
 class EquationOnDomains:
+    """A PorePy equation defined on a collection of domains."""
+
     name: str
+    """Should be identical to the PorePy equation name."""
     domains: list[pp.GridLike]
+    """A list of domains of definition for the given equation."""
 
 
 class EquationVariableGroup(ABC):
+    """A base class for all groups. This represents a diagonal submatrix in a block
+    matrix, thus the number of DoFs for the equation and the variable should match.
+
+    Despite the group objects are instantiated (e.g. `MassBalancePressureGroup()`), they
+    are internally treated as singletones: we treat groups with equal class names as
+    equal. Therefore, the group should not have any conditional behavior, based on its
+    or model's state.
+
+    Equation and variable names defined should not necessarily match the PorePy equation
+    and variable names. They are used for debugging and diagnostics, thus should have
+    human readable names, e.g. "mass_balance on fractures" or
+    "constrained pressure on injection wells".
+
+    """
+
     @abstractmethod
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         pass
@@ -59,7 +78,7 @@ class EquationVariableGroup(ABC):
 
     def __repr__(self) -> str:
         return self.__class__.__name__
-    
+
     def __hash__(self) -> int:
         return hash(self.__class__)
 
@@ -177,6 +196,9 @@ class MechanicsGroup(EquationVariableGroup):
 
 class ContactMechanicsGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        # PorePy has no single contact mechanics equation: it has two: normal and
+        # tangential. However, we treat them as one in the linear solver context. This
+        # is an exception, which is manually treated in the DofManager.
         return EquationOnDomains(
             name=EquationNames.CONTACT.value,
             domains=model.mdg.subdomains(dim=model.nd - 1),

@@ -1,3 +1,6 @@
+"""This module defines the machinery to parse the configuration of the PETSc linear
+solver and build the corresponding PETSc KSP and PC objects."""
+
 from dataclasses import dataclass
 from typing import Optional
 from warnings import warn
@@ -21,7 +24,7 @@ from pp_solvers.petsc_utils import (
 from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
-# TODO: This class will be refactored (removed), because now it's just a wrapper to
+# TODO YZ: This class will be refactored (removed), because now it's just a wrapper to
 # create a ksp.
 @dataclass
 class PetscKSPScheme:
@@ -33,10 +36,13 @@ class PetscKSPScheme:
     dof_manager: DofManager
 
     def make_solver(self, mat_orig: BlockLinearSystem, options: dict):
-        # TODO: Check that all user-defined keys in options are present (e.g. cpr0_mass)
+        # TODO YZ: Check that the user did not misspell a key in options, e.g. cpr0_mass
+        # TODO YZ: Check that all keys in solvers are unique.
+        # These two tasks would require a recursive method on PetscKspPcScheme that will
+        # gather and count all the keys.
 
         # Construct a PETSc matrix from the scipy matrix.
-        # TODO: Can we at this point delete the scipy matrix to save memory?
+        # TODO EK: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
 
         # Clear the PETSc options from a previous solve.
@@ -72,7 +78,7 @@ class PetscKSPScheme:
         return PetscKrylovSolver(petsc_ksp)
 
 
-# TODO: This class will be refactored.
+# TODO YZ: This class will be refactored.
 @dataclass
 class LinearTransformedScheme:
     inner: PetscKSPScheme
@@ -303,6 +309,44 @@ def assemble_petsc_ksp_pc(
     indexer: LinearSystemIndexer,
     prefix: str = "",
 ):
+    """This is a recursive parser that initializes the PETSc KSP and PC objects based on
+    the provided assembly config. The assembly config contains sub-dictionaries, each
+    corresponding to a certain prefix. The empty prefix corresponds to the root KSP and
+    PC objects.
+
+    This method **does not** insert command-line options into PETSc.Options(), it
+    assumes that it is done beforehand. Method calls `.setFromOptions()` to initialize
+    each sub-solver.
+
+    Each sub-config contains a required field "config_type", which determines how to
+    parse the rest of config. Example sub-configs, which lists all available keys
+    (using example values):
+
+    {
+        "config_type": "fieldsplit_schur",
+        "elim_groups": [0, 1],  # groups to eliminate to build the Schur complement.
+        "keep_groups": [2, 3],  # groups to keep to build the Schur complement.
+        "elim_tag": "tag1",  # tag to build the petsc prefix for the eliminated groups.
+        "keep_tag": "tag2",  # tag to build the petsc prefix for the kept groups.
+    }
+    {
+        "config_type": "fieldsplit_additive",
+        "subsolver_groups": [
+            [0, 1],
+            [2, 3],
+            [5, 6],
+        ],  # list of groups to build the non-Schur-complement fieldsplit.
+    }
+    {
+        "config_type": "composite",
+        "num_stages": 3,  # number of stages for the composite preconditioner.
+    }
+    {
+        "config_type": "python_permutation",
+        "permutation_groups": [[1, 2], [3, 4]],  # Groups to permute.
+    }
+
+    """
     if len(prefix) > 126:
         # PETSc has a limit on the prefix length, which seems to be 127
         # characters. If the prefix is too long, we raise a warning.

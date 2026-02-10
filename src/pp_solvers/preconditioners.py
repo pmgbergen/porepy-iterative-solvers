@@ -1,8 +1,17 @@
+"""This module contains classes that describe the components of the PETSc KSP and PC.
+These classes do not produce PETSc options by themselves, they instead generate a dict
+of PETSc options, and a dict of instruction, used to assemble PETSc objects in
+`options_parser.py`.
+
+This module also defines the default linear solver configurations for PorePy models.
+
+"""
+
 from __future__ import annotations
 
-from typing import Optional, Sequence
 import warnings
 from abc import ABC, abstractmethod
+from typing import Optional, Sequence
 
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
@@ -28,12 +37,19 @@ from pp_solvers.petsc_utils import csr_to_petsc
 __all__ = [
     # Add all preconditioners and linear solvers here.
     "PetscKspPcConfiguration",
+    "PetscInvertor",
+    "DiagonalInvertor",
+    "BlockDiagonalInvertor",
+    "FixedStressInvertor",
     "ILU",
     "AMG",
     "Identity",
-    "CompositePreconditioner",
     "GMRES",
-    "DiagonalInvertor",
+    "CompositePreconditioner",
+    "FieldSplitAdditive",
+    "FieldSplitSchur",
+    "PythonPermutationWrapper",
+    "BlockDiagonalPreconditioner",
     # Add all the factory functions here.
     "mass_balance_factory",
     "momentum_balance_factory",
@@ -47,7 +63,15 @@ def append_prefix_to_options(prefix: str, options: dict):
     return {f"{prefix}{key}": value for key, value in options.items()}
 
 
+# MARK: Invertors
+
+
 class PetscInvertor(ABC):
+    """The base class for the customizable invertor instruction for the
+    `FieldSplitSchur` class.
+
+    """
+
     @abstractmethod
     def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
         pass
@@ -73,14 +97,16 @@ class BlockDiagonalInvertor(PetscInvertor):
         # the block-diagonal approximation when the Schur complement needs to be
         # assembled. This option applies not to the full "fieldsplit" context, but the
         # context of the complement, thus using the complement prefix.
+        key = f"fieldsplit_{complement_tag}_mat_schur_complement_ainv_type"
         return append_prefix_to_options(
             prefix=prefix,
             options={
                 "pc_fieldsplit_schur_precondition": "selfp",
-                f"fieldsplit_{complement_tag}_mat_schur_complement_ainv_type": "blockdiag",
+                key: "blockdiag",
             },
         )
-        # YZ: How does it fetch the block size in that matrix?
+        # The matrix block size should be provided by the subsolver of the group to
+        # eliminate.
 
 
 class FixedStressInvertor(PetscInvertor):
@@ -125,12 +151,27 @@ class FixedStressInvertor(PetscInvertor):
         }
 
 
+# MARK: Configurations
+
+
 class PetscKspPcConfiguration(ABC):
+    """The base class to define a component of the nested PETSc linear solver
+    configuration.
+
+    """
+
     def __init__(self, groups: list[EquationVariableGroup], key: str) -> None:
-        # keys - for the access of user options, must be unique
-        # should have semantic meaning, like "mechanics_subsolver"
         self.groups: list[EquationVariableGroup] = groups
+        """The groups this solver operates on. The non-leaf solvers contain groups of
+        their children sub-solvers.
+
+        """
         self.key: str = key
+        """The key to access the particular subsolver in the nested configuration. Must
+        be unique and meaningful for the user, like "mechanics_subsolver", not "amg", as
+        there can be several instances of "amg".
+
+        """
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(groups={self.groups})"
@@ -139,11 +180,54 @@ class PetscKspPcConfiguration(ABC):
     def petsc_options(
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
-        pass
+        """Builds the options for PETSc command-line format. The non-leaf solvers
+        include the options of their children sub-solvers, with the corresponding
+        prefices.
+
+        Parameters:
+            user_options: A dictionary of the petsc options that the user can pass to
+                customize the setup. Expected format:
+                ```
+                {
+                    key: {
+                        "petsc_option_1": "value1",
+                        "petsc_option_2": "value2",
+                    }
+                }
+                ```
+                where `key` corresponds to the unique `PetscKspPcConfiguration.key` of
+                the subsolver to apply options. The user should provide options without
+                a prefix, e.g. "pc_type", not "fieldsplit_sub_0_pc_type".
+
+            prefix: PETSc prefix to use with the options. If the method is called from
+                the user code, the empty prefix should typically be used. Internally,
+                used in recursion.
+
+            dof_manager: The `DofManager` for the problem.
+
+        Returns: A flat dictionary of PETSc command-line options.
+
+        """
 
     def petsc_assembly_config(
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
+        """Builds a configuration for the `assemble_petsc_ksp_pc` function. The non-leaf
+        solvers include the configurations of their children sub-solvers, with the
+        corresponding prefices.
+
+        Parameters:
+            user_options: A dictionary of the petsc options that the user can pass to
+                customize the setup. See `PetscKspPcConfiguration.petsc_options` for
+                more info.
+
+            prefix: PETSc prefix to use with the options. If the method is called from
+                the user code, the empty prefix should typically be used. Internally,
+                used in recursion.
+
+            dof_manager: The `DofManager` for the problem.
+
+        """
         return {}
 
 
@@ -539,6 +623,35 @@ class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
 
 
 def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
+    """A utility function that replaces a deeply nested syntax:
+    ```
+    configuration = FieldSplitSchur(
+        complement=FieldSplitSchur(
+            complement=FieldSplitSchur(
+                complement=FieldSplitSchur(
+                    complement=FieldSplitSchur(
+                        complement=...
+                    )
+                )
+            )
+        )
+    )
+    ```
+    with a more flat list of dictionary syntax:
+    ```
+    configuration = nested_schur_complements([
+        {'parameter_of_schur_complement_0': ...},
+        {'parameter_of_schur_complement_1': ...},
+        {'parameter_of_schur_complement_2': ...},
+        {'parameter_of_schur_complement_3': ...},
+        {'parameter_of_schur_complement_4': ...},
+    ])
+    ```
+
+    Each dictionary accepts has the keys as the `FieldSplitSchur` constructor
+    parameters.
+
+    """
     # Unwrapping parameters.
     kwargs = {
         "subsolver": subsolvers[0]["subsolver"],

@@ -12,8 +12,8 @@ from pp_solvers.equation_variable_groups import (
 )
 from pp_solvers.fixed_stress import (
     construct_fixed_stress_block_matrix,
-    get_fixed_stress_stabilization_porous_media,
     get_fixed_stress_stabilization_fractures,
+    get_fixed_stress_stabilization_porous_media,
 )
 from pp_solvers.petsc_utils import petsc_to_csr
 from pp_solvers.preconditioners import FixedStressInvertor
@@ -52,6 +52,16 @@ def model(with_fractures) -> pp.PorePyModel:
     }
     model = TailoredClass(params=params)
     model.prepare_simulation()
+
+    # The fixed stress in fractures requires a non-zero u_intf jump.
+    interfaces = model.mdg.interfaces(dim=model.nd - 1)
+    u_intf = model.interface_displacement(interfaces)
+    u_intf_values = model.equation_system.get_variable_values([u_intf], iterate_index=0)
+    u_intf_values[:] = np.arange(u_intf_values.size)
+    model.equation_system.set_variable_values(
+        values=u_intf_values, variables=[u_intf], iterate_index=0
+    )
+
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
     model.assemble_linear_system()
@@ -64,15 +74,6 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
     the pressure diagonal blocks and keeps everything else not touched."""
 
     jacobian = model.bmat
-
-    # The fixed stress in fractures requires a non-zero u_intf jump.
-    interfaces = model.mdg.interfaces(dim=model.nd - 1)
-    u_intf = model.interface_displacement(interfaces)
-    u_intf_values = model.equation_system.get_variable_values([u_intf], iterate_index=0)
-    u_intf_values[:] = np.arange(u_intf_values.size)
-    model.equation_system.set_variable_values(
-        values=u_intf_values, variables=[u_intf], iterate_index=0
-    )
 
     dof_manager: DofManager = model._solver_factory.dof_manager
     num_groups = len(dof_manager.groups())

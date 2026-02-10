@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-from pp_solvers import petsc_utils
-from scipy.sparse import csr_matrix
 from petsc4py import PETSc
+from scipy.sparse import csr_matrix
+
+from pp_solvers import petsc_utils
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 3])

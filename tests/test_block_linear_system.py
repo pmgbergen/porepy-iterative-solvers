@@ -6,14 +6,14 @@ class.
 import numpy as np
 import pytest
 import scipy.sparse as sp
+from testing_utils import (
+    generate_reference_dofs_3_groups,
+    generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+    generate_reference_submatrices_3_groups,
+)
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-from testing_utils import (
-    generate_reference_submatrices_3_groups,
-    generate_reference_matrix_3_groups,
-    generate_reference_dofs_3_groups,
-    generate_reference_rhs_3_groups,
-)
 
 
 @pytest.fixture

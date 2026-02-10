@@ -1,3 +1,5 @@
+"""This module contains routines to build the fixed-stress approximation matrix."""
+
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
@@ -8,7 +10,7 @@ from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexe
 def get_fixed_stress_stabilization_porous_media(
     model, l_factor: float = 0.6
 ) -> sps.spmatrix:
-    """Define the fixed stress stabilization matrix."""
+    """Define the fixed stress stabilization matrix for the porous media domains."""
 
     mu_lame = model.solid.shear_modulus
     lambda_lame = model.solid.lame_lambda
@@ -41,6 +43,7 @@ def get_fixed_stress_stabilization_porous_media(
 
 
 def get_fixed_stress_stabilization_fractures(model: pp.PorePyModel) -> sps.spmatrix:
+    """Define the fixed stress stabilization matrix for the fracture domains."""
     alpha_biot = model.solid.biot_coefficient  # [-]
     lame_lambda = model.solid.lame_lambda  # [Pa]
     M = 1 / model.solid.specific_storage  # [Pa]
@@ -79,11 +82,25 @@ def get_fixed_stress_stabilization_fractures(model: pp.PorePyModel) -> sps.spmat
 
 
 def construct_fixed_stress_block_matrix(
-    model,
+    model: pp.PorePyModel,
     indexer: LinearSystemIndexer,
     p_mat_group: int,
     p_frac_group: int,
 ) -> BlockLinearSystem:
+    """Constructs a block matrix with the fixed-stress stabilization terms in the porous
+    media and fractures and zeros everywhere else.
+
+    Params:
+        model: The corresponding PorePy model.
+        indexer: The indexer that defines the shape of the constructed matrix.
+        p_mat_group: index of the mass balance group in the porous media subdomains, the
+            corresponding diagonal submatrix will be constructed using
+            `get_fixed_stress_stabilization_porous_media`.
+        p_frac_group: index of the mass balance group in the fracture subdomains, the
+            corresponding diagonal submatrix will be constructed using
+            `get_fixed_stress_stabilization_fractures`.
+
+    """
     diagonals = []
     for group in indexer.enabled_groups_row:
         if group == p_mat_group:

@@ -3,28 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import count
 from time import time
 from typing import Callable
 from warnings import warn
-from itertools import count
 
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
+from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     InterfaceForceBalanceGroup,
 )
-
-from .block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-    concatenate_dof_indices,
-)
-from pp_solvers.dof_manager import DofManager
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
 from pp_solvers.preconditioners import (
@@ -34,6 +28,12 @@ from pp_solvers.preconditioners import (
     momentum_balance_factory,
     th_factory,
     thm_factory,
+)
+
+from .block_linear_system import (
+    BlockLinearSystem,
+    LinearSystemIndexer,
+    concatenate_dof_indices,
 )
 
 __all__ = [
@@ -179,12 +179,6 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         # TODO: Replace this with a different type of plugin
         mat, rhs = self.linear_system
-
-        # Apply the `contact_permutation`. With this, the equations for tangential and
-        # normal fracture deformation are ordered cellwise (not with tangential and
-        # normal separately, as is the case in the PorePy ordering).
-        mat = mat[dof_manager.eq_rows_permutation()]
-        rhs = rhs[dof_manager.eq_rows_permutation()]
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
         # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each

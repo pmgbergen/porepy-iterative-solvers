@@ -111,7 +111,6 @@ def test_equation_variable_group(
     for domain in equation_on_domains.domains:
         assert isinstance(domain, (pp.Grid, pp.MortarGrid))
 
-
     if group_class is ContactMechanicsGroup:
         # ContactMechanicsGroup is the known edge case, handled by a special logic, so
         # we skip the rest of the test.

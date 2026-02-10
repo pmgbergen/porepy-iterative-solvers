@@ -17,10 +17,12 @@ import pytest
 from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
+from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
+    EquationOnDomains,
     EquationVariableGroup,
     InterfaceForceBalanceGroup,
     MassBalancePressureFracturesGroup,
@@ -28,7 +30,6 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureMatrixGroup,
 )
 from pp_solvers.preconditioners import PetscKspPcConfiguration
-from pp_solvers.block_linear_system import concatenate_dof_indices
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -269,6 +270,7 @@ def test_eq_var_dofs(
 def test_indices_of_groups(
     dof_manager: DofManager, expected_num_dofs_in_groups: dict[str, int], params: dict
 ):
+    """Checks that `DofManager.indices_of_groups` returns expected groups or raises."""
     keys: list[str] = params["keys"]
     groups: list[EquationVariableGroup] = params["groups"]
 
@@ -289,47 +291,29 @@ def test_indices_of_groups(
         assert dof_manager.indices_of_groups(groups=groups) == expected_groups
 
 
-def test_eq_rows_permutation(dof_manager: DofManager):
-    """This tests the method `eq_rows_permutation`, assuming that `eq_dofs` and
+def test_permute_contact_dofs(dof_manager: DofManager):
+    """This tests the method `_permute_contact_dofs`, assuming that `eq_dofs` and
     `indices_of_groups` work correctly, as tested above.
 
     """
-    # Constructing the expected permutation. If contact mechanics is not present, it is
-    # equivalent to np.arange(num_dofs), meaning no permutation.
-    num_dofs = sum([array.size for array in dof_manager.eq_dofs()])
-    expected_permutation = np.arange(num_dofs)
+    assert dof_manager.model.nd == 2, "This test assumes a 2D problem."
 
     # Checking if there is contact mechanics in the model.
     try:
         contact_group = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
     except ValueError:
-        contact_group = None
-    if contact_group is not None:
-        # Construct the expected permutation vector: The contact equations should be
-        # permuted so that the normal and tangential equations are grouped together for
-        # each fracture cell. Other equations should be unperturbed.
+        return  # Skipping this test if no contact group.
 
-        # Accessing a list of contact mechanics dofs.
-        dofs_in_contact_group = dof_manager.eq_dofs()[contact_group]
+    dofs_in_contact_group = dof_manager.eq_dofs()[contact_group]
+    if len(dofs_in_contact_group) == 0:
+        return  # Skipping this test if the contact group is formally present but empty.
 
-        # The list can be empty if the contact equation is present, but there are no
-        # fractures in the model. In this case, we do nothing.
-        if len(dofs_in_contact_group) > 0:
-            # First half of the array - normal component for all fractures.
-            # Second half of the array - tangential.
-            assert dof_manager.model.nd == 2, "This test assumes 2D problem."
-            mid = dofs_in_contact_group.size // 2
-
-            # Making the normal and tangential dofs for a each grid cell live together.
-            perfuted_contact_dofs = np.stack(
-                [dofs_in_contact_group[:mid], dofs_in_contact_group[mid:]]
-            ).ravel("F")
-
-            # Setting the permutation array to the contact mechanics location.
-            expected_permutation[dofs_in_contact_group] = perfuted_contact_dofs
-
-    result = dof_manager.eq_rows_permutation()
-    assert np.all(expected_permutation == result)
+    # DoFs in the contact groups should be already permuted in DofManager.__init__.
+    # We check that permuting them back will give an increasing order.
+    np.testing.assert_equal(
+        np.vstack([dofs_in_contact_group[::2], dofs_in_contact_group[1::2]]).ravel(),
+        np.arange(dofs_in_contact_group[0], dofs_in_contact_group[-1] + 1),
+    )
 
 
 def test_equation_variable_names(dof_manager: DofManager):
@@ -342,3 +326,38 @@ def test_equation_variable_names(dof_manager: DofManager):
 
     variable_names = dof_manager.variable_names()
     assert all(isinstance(name, str) for name in variable_names)
+
+
+class DuplicatingGroup(EquationVariableGroup):
+    """This group has the same equation as the `EnergyBalanceTemperatureGroup` group
+    and same variable as the `MassBalancePressureMatrixGroup` group.
+
+    """
+
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        return EnergyBalanceTemperatureGroup().equation_group(model=model)
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        return MassBalancePressureMatrixGroup().variable_group(model=model)
+
+    def equation_name(self, model: pp.PorePyModel) -> str:
+        return "something"
+
+    def variable_name(self, model: pp.PorePyModel) -> str:
+        return "something"
+
+
+def test_duplicating_equations(model: pp.PorePyModel, model_kind: str):
+    if model_kind not in ["TH", "THM"]:
+        return  # Skip this test for other models.
+    groups = [EnergyBalanceTemperatureGroup(), DuplicatingGroup()]
+    with pytest.raises(ValueError):
+        _ = DofManager(model=model, groups=groups)
+
+
+def test_duplicating_variables(model: pp.PorePyModel, model_kind: str):
+    if model_kind not in ["TH", "THM"]:
+        return  # Skip this test for other models.
+    groups = [MassBalancePressureMatrixGroup(), DuplicatingGroup()]
+    with pytest.raises(ValueError):
+        _ = DofManager(model=model, groups=groups)

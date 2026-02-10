@@ -1,4 +1,7 @@
-"""TODO"""
+"""This module tests that the PETSc KSP and PCs are built correctly based on provided
+PETSc options and configuration dictionaries.
+
+"""
 
 import numpy as np
 import pytest
@@ -6,12 +9,11 @@ from petsc4py import PETSc
 from scipy.sparse import csr_matrix
 from testing_utils import (
     MockDofManager,
-    generate_reference_submatrices_3_groups,
-    generate_reference_rhs_3_groups,
     generate_reference_dofs_3_groups,
     generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+    generate_reference_submatrices_3_groups,
 )
-
 
 # integration tests for all the default factories (not here, in preconditioners?)
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
@@ -297,7 +299,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     "pc_fieldsplit_type": "additive",
                     "fieldsplit_sub_0_pc_type": "fieldsplit",
                     "fieldsplit_sub_0_pc_fieldsplit_type": "additive",
-                    'fieldsplit_sub_0_fieldsplit_sub_1_pc_type': 'sor',
+                    "fieldsplit_sub_0_fieldsplit_sub_1_pc_type": "sor",
                     "fieldsplit_sub_1_ksp_type": "bcgs",
                 },
                 "assembly_config": {
