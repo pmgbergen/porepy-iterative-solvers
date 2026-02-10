@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 import warnings
 from abc import ABC, abstractmethod
 
@@ -312,15 +312,20 @@ class CompositePreconditioner(PetscKspPcConfiguration):
 class FieldSplitAdditive(PetscKspPcConfiguration):
     def __init__(
         self,
-        subsolvers: list[PetscKspPcConfiguration],
+        subsolvers: Sequence[PetscKspPcConfiguration],
         key: str = "fieldsplit_additive",
     ) -> None:
-        self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
+        self.subsolvers: list[PetscKspPcConfiguration] = list(subsolvers)
         super().__init__(
             groups=[g for subsolver in self.subsolvers for g in subsolver.groups],
             key=key,
         )
-        # TODO: Check that groups are unique
+
+        if len(set(self.groups)) < len(self.groups):
+            # Non-unique groups are present.
+            raise ValueError(
+                f"Groups in FielSplitAdditive should not overlap:", self.groups
+            )
 
     def __repr__(self) -> str:
         return f"FieldSplitAdditive(subsolvers={self.subsolvers})"
@@ -351,7 +356,7 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
     def petsc_assembly_config(
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
-        return {
+        result = {
             prefix: {
                 "config_type": "fieldsplit_additive",
                 "subsolver_groups": [
@@ -360,6 +365,15 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
                 ],
             }
         }
+        for i, subsolver in enumerate(self.subsolvers):
+            result.update(
+                subsolver.petsc_assembly_config(
+                    user_options=user_options,
+                    prefix=f"fieldsplit_sub_{i}_",
+                    dof_manager=dof_manager,
+                )
+            )
+        return result
 
 
 class FieldSplit(PetscKspPcConfiguration):
@@ -385,12 +399,9 @@ class FieldSplit(PetscKspPcConfiguration):
         self.petsc_complement_tag: str = petsc_complement_tag
         super().__init__(groups=self.subsolver.groups + self.complement.groups, key=key)
 
-        # This is O(n^2), but we typically have 10 - 20 groups, and this type is not
-        # hashable, so why bother?
-        for g1 in self.subsolver.groups:
-            for g2 in self.complement.groups:
-                if g1 == g2:
-                    raise ValueError(f"Groups in FielSplit should not overlap: {g1}")
+        intersection = set(self.subsolver.groups).intersection(self.complement.groups)
+        if len(intersection) > 0:
+            raise ValueError(f"Groups in FielSplit should not overlap: {intersection}")
 
     def __repr__(self) -> str:
         return (

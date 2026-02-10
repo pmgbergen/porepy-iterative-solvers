@@ -9,7 +9,7 @@ from testing_utils import (
     generate_reference_submatrices_3_groups,
     generate_reference_rhs_3_groups,
     generate_reference_dofs_3_groups,
-    generate_reference_matrix_3_groups
+    generate_reference_matrix_3_groups,
 )
 
 
@@ -60,7 +60,9 @@ class MockPythonContext:
     def apply(self, pc: PETSc.PC, b: PETSc.Vec, x: PETSc.Vec) -> None:
         pass
 
+
 reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
+
 
 @pytest.mark.parametrize(
     "params",
@@ -233,7 +235,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 "assembly_config": {
                     "": {
                         "config_type": "python_permutation",
-                        "permutation_groups": [[2,0,1]],
+                        "permutation_groups": [[2, 0, 1]],
                     }
                 },
             },
@@ -268,7 +270,49 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="fieldsplit user invertor",
         ),
-        # matrix block size
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "additive",
+                    "fieldsplit_sub_0_pc_type": "sor",
+                    "fieldsplit_sub_1_ksp_type": "bcgs",
+                    "fieldsplit_sub_2_pc_type": "jacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2], [0], [1]],
+                    }
+                },
+            },
+            id="fieldsplit additive",
+        ),
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "additive",
+                    "fieldsplit_sub_0_pc_type": "fieldsplit",
+                    "fieldsplit_sub_0_pc_fieldsplit_type": "additive",
+                    'fieldsplit_sub_0_fieldsplit_sub_1_pc_type': 'sor',
+                    "fieldsplit_sub_1_ksp_type": "bcgs",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2, 0], [1]],
+                    },
+                    "fieldsplit_sub_0_": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2], [0]],
+                    },
+                },
+            },
+            id="nested fieldsplit additive",
+        ),
     ],
 )
 def test_assemble_petsc_ksp_pc(

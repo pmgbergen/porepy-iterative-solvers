@@ -22,6 +22,7 @@ from pp_solvers.preconditioners import (
     CompositePreconditioner,
     DiagonalInvertor,
     FieldSplit,
+    FieldSplitAdditive,
     FixedStressInvertor,
     Identity,
     PetscInvertor,
@@ -75,6 +76,14 @@ CONFIGURATIONS_ALL = CONFIGURATIONS_FOR_PETSC + [
         subsolver=Identity(groups=["g1"]),
         complement=Identity(groups=["g2"]),
         approximate_invertor=DiagonalInvertor(),
+        key="custom_key",
+    ),
+    FieldSplitAdditive(
+        subsolvers=[
+            Identity(groups=["g1"]),
+            Identity(groups=["g2"]),
+            Identity(groups=["g3"]),
+        ],
         key="custom_key",
     ),
     PythonPermutationWrapper(
@@ -135,6 +144,15 @@ def test_fieldsplit_bad_groups():
             subsolver=Identity(groups=["g2", "g1"]),
             complement=Identity(groups=["g1"]),
             approximate_invertor=DiagonalInvertor(),
+        )
+
+    with pytest.raises(ValueError):
+        FieldSplitAdditive(
+            subsolvers=[
+                Identity(groups=["g2"]),
+                AMG(groups=["g2"]),
+                Identity(groups=["g3"]),
+            ],
         )
 
 
@@ -279,6 +297,160 @@ def test_nested_fieldsplits():
     }
 
 
+def test_nested_fieldsplits():
+    def make_fieldsplit(subsolver, complement, key):
+        return FieldSplit(
+            subsolver=subsolver,
+            complement=complement,
+            approximate_invertor=DiagonalInvertor(),
+            key=key,
+            petsc_tag="elim",
+            petsc_complement_tag="keep",
+        )
+
+    configuration = make_fieldsplit(
+        key="fs1",
+        subsolver=make_fieldsplit(
+            key="fs2",
+            subsolver=Identity(groups=["g1"], key="i1"),
+            complement=Identity(groups=["g2"], key="i2"),
+        ),
+        complement=make_fieldsplit(
+            key="fs3",
+            subsolver=Identity(groups=["g3"], key="i3"),
+            complement=Identity(groups=["g4", "g5"], key="i4"),
+        ),
+    )
+
+    # Check that the root fielsplit fetched the groups in the right order.
+    assert configuration.groups == ["g1", "g2", "g3", "g4", "g5"]
+
+    # Passing options to each key, both leaves and fieldsplits.
+    user_options = {
+        "fs1": {"test_option": "fs1"},
+        "fs2": {"test_option": "fs2"},
+        "fs3": {"test_option": "fs3"},
+        "i1": {"test_option": "i1"},
+        "i2": {"test_option": "i2"},
+        "i3": {"test_option": "i3"},
+        "i4": {"test_option": "i4"},
+    }
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
+    # Each option should be fetched with the corresponding petsc prefix.
+    for expected_key, expected_value in {
+        "test_option": "fs1",
+        "fieldsplit_elim_test_option": "fs2",
+        "fieldsplit_elim_fieldsplit_elim_test_option": "i1",
+        "fieldsplit_elim_fieldsplit_keep_test_option": "i2",
+        "fieldsplit_keep_test_option": "fs3",
+        "fieldsplit_keep_fieldsplit_elim_test_option": "i3",
+        "fieldsplit_keep_fieldsplit_keep_test_option": "i4",
+    }.items():
+        assert petsc_options[expected_key] == expected_value
+
+    # Nested fieldsplits should return correct assembly configs.
+    petsc_assembly_config = configuration.petsc_assembly_config(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
+    assert petsc_assembly_config == {
+        "": {
+            "config_type": "fieldsplit",
+            "elim_tag": "elim",
+            "keep_tag": "keep",
+            "elim_groups": [0, 1],
+            "keep_groups": [2, 3, 4],
+        },
+        "fieldsplit_elim_": {
+            "config_type": "fieldsplit",
+            "elim_tag": "elim",
+            "keep_tag": "keep",
+            "elim_groups": [0],
+            "keep_groups": [1],
+        },
+        "fieldsplit_keep_": {
+            "config_type": "fieldsplit",
+            "elim_tag": "elim",
+            "keep_tag": "keep",
+            "elim_groups": [2],
+            "keep_groups": [3, 4],
+        },
+    }
+
+
+def test_nested_additive_fieldsplits():
+    configuration = FieldSplitAdditive(
+        key="fs1",
+        subsolvers=[
+            FieldSplitAdditive(
+                key="fs2",
+                subsolvers=[
+                    Identity(groups=["g1"], key="i1"),
+                    Identity(groups=["g2"], key="i2"),
+                ],
+            ),
+            Identity(groups=["g3"], key="i3"),
+            FieldSplitAdditive(
+                key="fs3",
+                subsolvers=[
+                    Identity(groups=["g4"], key="i4"),
+                    Identity(groups=["g5"], key="i5"),
+                ],
+            ),
+        ],
+    )
+
+    # Check that the root fielsplit fetched the groups in the right order.
+    assert configuration.groups == ["g1", "g2", "g3", "g4", "g5"]
+
+    # Passing options to each key, both leaves and fieldsplits.
+    user_options = {
+        "fs1": {"test_option": "fs1"},
+        "fs2": {"test_option": "fs2"},
+        "fs3": {"test_option": "fs3"},
+        "i1": {"test_option": "i1"},
+        "i2": {"test_option": "i2"},
+        "i3": {"test_option": "i3"},
+        "i4": {"test_option": "i4"},
+        "i5": {"test_option": "i5"},
+    }
+    petsc_options = configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
+    # Each option should be fetched with the corresponding petsc prefix.
+    for expected_key, expected_value in {
+        "test_option": "fs1",
+        "fieldsplit_sub_0_test_option": "fs2",
+        "fieldsplit_sub_0_fieldsplit_sub_0_test_option": "i1",
+        "fieldsplit_sub_0_fieldsplit_sub_1_test_option": "i2",
+        "fieldsplit_sub_1_test_option": "i3",
+        "fieldsplit_sub_2_test_option": "fs3",
+        "fieldsplit_sub_2_fieldsplit_sub_0_test_option": "i4",
+        "fieldsplit_sub_2_fieldsplit_sub_1_test_option": "i5",
+    }.items():
+        assert petsc_options[expected_key] == expected_value
+
+    # Nested fieldsplits should return correct assembly configs.
+    petsc_assembly_config = configuration.petsc_assembly_config(
+        user_options=user_options, prefix="", dof_manager=MockDofManager()
+    )
+    assert petsc_assembly_config == {
+        "": {
+            "config_type": "fieldsplit_additive",
+            "subsolver_groups": [[0, 1], [2], [3, 4]],
+        },
+        "fieldsplit_sub_0_": {
+            "config_type": "fieldsplit_additive",
+            "subsolver_groups": [[0], [1]],
+        },
+        "fieldsplit_sub_2_": {
+            "config_type": "fieldsplit_additive",
+            "subsolver_groups": [[3], [4]],
+        },
+    }
+
+
 def test_nested_composites():
     groups = ["g1", "g2", "g3"]
     configuration = CompositePreconditioner(
@@ -368,7 +540,7 @@ def test_python_permutation():
     groups = ["g1", "g2"]
     configuration = PythonPermutationWrapper(
         key="p1",
-        permutation_groups=[['g1'], ['g2']],
+        permutation_groups=[["g1"], ["g2"]],
         inner_subsolver=Identity(groups=groups, key="i1"),
     )
 
