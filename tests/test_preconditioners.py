@@ -15,8 +15,7 @@ from testing_utils import (
 )
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-from pp_solvers.equation_variable_groups import EquationVariableGroup
-from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
+from pp_solvers.options_parsers import PetscKSPScheme
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     csr_to_petsc,

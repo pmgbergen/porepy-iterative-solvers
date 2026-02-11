@@ -31,7 +31,6 @@ from pp_solvers.equation_variable_groups import (
     WellFluxGroup,
 )
 from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
-from pp_solvers.petsc_solvers import PcPythonPermutation
 from pp_solvers.petsc_utils import csr_to_petsc
 
 __all__ = [
@@ -156,7 +155,8 @@ class FixedStressInvertor(PetscInvertor):
 
 class PetscKspPcConfiguration(ABC):
     """The base class to define a component of the nested PETSc linear solver
-    configuration.
+    configuration. All the components serve as blueprints and can be customized via the
+    `user_options` parameter.
 
     """
 
@@ -227,11 +227,34 @@ class PetscKspPcConfiguration(ABC):
 
             dof_manager: The `DofManager` for the problem.
 
+        Returns: A dictionary of the following structure:
+            ```
+            {
+                petsc_prefix_1: {
+                    "config_type": "fieldsplit_schur",
+                    ...
+                },
+                petsc_prefix_2: {
+                    "config_type": "composite",
+                    ...
+                },
+                ...
+            }
+            ```
+            where each sub-dictionary corresponds to a sub-solver, which needs to be
+            configured via python. `petsc_prefix_x` corresponds to the petsc prefix of
+            this sub-solver.
+
         """
         return {}
 
 
 class ILU(PetscKspPcConfiguration):
+    """PETSc implementation of ILU, see for additional options:
+    https://petsc.org/release/manualpages/PC/PCILU/
+
+    """
+
     def __init__(self, groups: list[EquationVariableGroup], key: str = "ilu") -> None:
         super().__init__(groups=groups, key=key)
 
@@ -245,6 +268,15 @@ class ILU(PetscKspPcConfiguration):
 
 
 class AMG(PetscKspPcConfiguration):
+    """HYPRE BoomerAMG, classical AMG. Uses strong threshold of 0.25 for 2D problems and
+    0.7 for 3D problem.
+
+    See for additional options:
+    https://petsc.org/main/manualpages/PC/PCHYPRE/
+    https://mooseframework.inl.gov/releases/moose/2022-06-10/application_development/hypre.html
+
+    """
+
     def __init__(
         self,
         groups: list[EquationVariableGroup],
@@ -272,6 +304,8 @@ class AMG(PetscKspPcConfiguration):
 
 
 class Identity(PetscKspPcConfiguration):
+    """A dummy preconditioner that does nothing."""
+
     def __init__(
         self, groups: list[EquationVariableGroup], key: str = "identity"
     ) -> None:
@@ -287,6 +321,12 @@ class Identity(PetscKspPcConfiguration):
 
 
 class GMRES(PetscKspPcConfiguration):
+    """PETSc implementation of GMRES. By default, estimates convergence based on the
+    unpreconditioned residual norm. See for more options:
+    https://petsc.org/release/manualpages/KSP/KSPGMRES/
+
+    """
+
     def __init__(
         self, preconditioner: PetscKspPcConfiguration, key: str = "gmres"
     ) -> None:
@@ -340,6 +380,11 @@ class GMRES(PetscKspPcConfiguration):
 
 
 class CompositePreconditioner(PetscKspPcConfiguration):
+    """A multi-stage preconditioner that applies preconditioners (stages) to the same
+    problem. See: https://petsc.org/release/manualpages/PC/PCCOMPOSITE/
+
+    """
+
     def __init__(
         self, subsolvers: list[PetscKspPcConfiguration], key: str = "composite"
     ) -> None:
@@ -394,6 +439,12 @@ class CompositePreconditioner(PetscKspPcConfiguration):
 
 
 class FieldSplitAdditive(PetscKspPcConfiguration):
+    """A preconditioner that splits the problem into n sub-problems and treats each
+    separately with a sub-solver. See:
+    https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/
+
+    """
+
     def __init__(
         self,
         subsolvers: Sequence[PetscKspPcConfiguration],
@@ -461,6 +512,12 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
 
 
 class FieldSplitSchur(PetscKspPcConfiguration):
+    """A preconditioner that splits the problem into two sub-problems by building a
+    Schur complement approximation and treats each separately with a sub-solver. See:
+    https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/
+
+    """
+
     def __init__(
         self,
         subsolver: PetscKspPcConfiguration,
@@ -559,6 +616,19 @@ class FieldSplitSchur(PetscKspPcConfiguration):
 
 
 class PythonPermutationWrapper(PetscKspPcConfiguration):
+    """A pre- and post-processing tool for a preconditioner, that permutes the physical
+    quantities in the underlying matrix and then applies the `inner_subsolver`.
+
+    `permutation_groups` denotes the submatrices to permute. For instance,
+    ```
+    [
+        [MassBalanceMatrix(), MassBalanceFractures(), MassBalanceInterfaces()],
+        [EnergyBalanceAllSubdomains()]
+    ]
+    ``` will interleave all values of mass balance and energy balance submatrices.
+
+    """
+
     def __init__(
         self,
         inner_subsolver: PetscKspPcConfiguration,
@@ -605,6 +675,11 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
 
 
 class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
+    """PETSc point-block jacobi preconditioner. See:
+    https://petsc.org/release/manualpages/PC/PCBJACOBI/
+
+    """
+
     def __init__(
         self, groups: list[EquationVariableGroup], key: str = "block_diagonal"
     ) -> None:
@@ -671,6 +746,9 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
         )
     # End of recursion.
     return FieldSplitSchur(complement=subsolvers[1]["subsolver"], **kwargs)
+
+
+# MARK: Factories
 
 
 def mass_balance_factory():

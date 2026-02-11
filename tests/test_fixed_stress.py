@@ -1,7 +1,6 @@
 import numpy as np
 import porepy as pp
 import pytest
-from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem

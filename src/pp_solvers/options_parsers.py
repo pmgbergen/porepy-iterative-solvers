@@ -136,13 +136,13 @@ class LinearTransformedScheme:
 def _assemble_pc_fieldsplit_additive(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
-    additional_data: dict,
+    assembly_config: dict,
     indexer: LinearSystemIndexer,
     prefix: str,
 ):
     assert pc.type == "fieldsplit"
 
-    prefix_config = additional_data[prefix]
+    prefix_config = assembly_config[prefix]
     subsolver_groups = prefix_config["subsolver_groups"]
 
     for i, groups in enumerate(subsolver_groups):
@@ -161,7 +161,7 @@ def _assemble_pc_fieldsplit_additive(
         assemble_petsc_ksp_pc(
             ksp=sub_ksp,
             pc=sub_ksp.getPC(),
-            assembly_config=additional_data,
+            assembly_config=assembly_config,
             indexer=indexer[groups],
             prefix=sub_ksp.prefix,
         )
@@ -170,14 +170,14 @@ def _assemble_pc_fieldsplit_additive(
 def _assemble_pc_fieldsplit_schur(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
-    additional_data: dict,
+    assembly_config: dict,
     indexer: LinearSystemIndexer,
     prefix: str,
 ):
     # calls: pc.setUp, ksp.setUp
     assert pc.type == "fieldsplit"
 
-    prefix_config = additional_data[prefix]
+    prefix_config = assembly_config[prefix]
     elim_groups = prefix_config["elim_groups"]
     keep_groups = prefix_config["keep_groups"]
     elim_tag = prefix_config["elim_tag"]
@@ -222,7 +222,7 @@ def _assemble_pc_fieldsplit_schur(
     assemble_petsc_ksp_pc(
         ksp=ksp_elim,
         pc=pc_elim,
-        assembly_config=additional_data,
+        assembly_config=assembly_config,
         indexer=indexer[elim_groups],
         prefix=f"{prefix}fieldsplit_{elim_tag}_",
     )
@@ -231,7 +231,7 @@ def _assemble_pc_fieldsplit_schur(
     assemble_petsc_ksp_pc(
         ksp=ksp_keep,
         pc=pc_keep,
-        assembly_config=additional_data,
+        assembly_config=assembly_config,
         indexer=indexer[keep_groups],
         prefix=f"{prefix}fieldsplit_{keep_tag}_",
     )
@@ -240,39 +240,43 @@ def _assemble_pc_fieldsplit_schur(
 def _assemble_pc_composite(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
-    additional_data: dict,
+    assembly_config: dict,
     indexer: LinearSystemIndexer,
     prefix: str,
 ):
     assert pc.type == "composite"
-    num_stages = additional_data[prefix]["num_stages"]
+    num_stages = assembly_config[prefix]["num_stages"]
 
     for i in range(num_stages):
         # explaining this
-        pc_type = additional_data.get(f"{prefix}sub_{i}_", {}).get("pc_type", "none")
+        pc_type = assembly_config.get(f"{prefix}sub_{i}_", {}).get("pc_type", "none")
         pc.addCompositePCType(pc_type)
         sub_pc = pc.getCompositePC(i)
         sub_pc.setOperators(*pc.getOperators())
         assemble_petsc_ksp_pc(
             ksp=ksp,
             pc=sub_pc,
-            assembly_config=additional_data,
+            assembly_config=assembly_config,
             indexer=indexer,
             prefix=f"{prefix}sub_{i}_",
         )
 
-    pc.setUp()
-    ksp.setUp()
+    try:
+        ksp.setUp()
+        pc.setUp()
+    except:
+        print(f"Failed on {prefix = }")
+        raise
 
 
 def _assemble_pc_python_permutation(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
-    additional_data: dict,
+    assembly_config: dict,
     indexer: LinearSystemIndexer,
     prefix: str,
 ):
-    permutation_groups: list[list[int]] = additional_data[prefix]["permutation_groups"]
+    permutation_groups: list[list[int]] = assembly_config[prefix]["permutation_groups"]
 
     perm = [indexer.get_dofs_of_groups(g)[0] for g in permutation_groups]
     perm = np.vstack(perm).ravel("F")
@@ -298,8 +302,12 @@ def _assemble_pc_python_permutation(
         )
 
     pc.setPythonContext(python_context)
-    pc.setUp()
-    ksp.setUp()
+    try:
+        ksp.setUp()
+        pc.setUp()
+    except:
+        print(f"Failed on {prefix = }")
+        raise
 
 
 def assemble_petsc_ksp_pc(
@@ -311,16 +319,16 @@ def assemble_petsc_ksp_pc(
 ):
     """This is a recursive parser that initializes the PETSc KSP and PC objects based on
     the provided assembly config. The assembly config contains sub-dictionaries, each
-    corresponding to a certain prefix. The empty prefix corresponds to the root KSP and
-    PC objects.
+    corresponding to a certain PETSc prefix. The empty prefix corresponds to the root
+    KSP and PC objects.
 
     This method **does not** insert command-line options into PETSc.Options(), it
     assumes that it is done beforehand. Method calls `.setFromOptions()` to initialize
     each sub-solver.
 
-    Each sub-config contains a required field "config_type", which determines how to
-    parse the rest of config. Example sub-configs, which lists all available keys
-    (using example values):
+    Each sub-dictionary contains a required field "config_type", which determines how to
+    parse the rest of the sub-dictionary. Example sub-dictionaries, which list all the
+    available keys (using example values) are:
 
     {
         "config_type": "fieldsplit_schur",
@@ -354,12 +362,16 @@ def assemble_petsc_ksp_pc(
         msg += "Check the configuration of the preconditioner."
         warn(msg)
 
+    # This is where the ksp and pc objects fetch options in PETSc command-line format.
     ksp.setFromOptions()
     pc.setFromOptions()
 
     current_config: dict = assembly_config.get(prefix, {})
 
     petsc_amat, petsc_pmat = ksp.getOperators()
+    # The command-line options for a matrix include mat_block_size (integer) and
+    # mat_type including "aij" or "baij", corresponding to csr and bsr sparse formats,
+    # respectively. Matrices share the prefix of the ksp and the pc.
     petsc_amat.setFromOptions()
     petsc_pmat.setFromOptions()
 
@@ -369,7 +381,7 @@ def assemble_petsc_ksp_pc(
         _assemble_pc_fieldsplit_schur(
             ksp=ksp,
             pc=pc,
-            additional_data=assembly_config,
+            assembly_config=assembly_config,
             indexer=indexer,
             prefix=prefix,
         )
@@ -377,7 +389,7 @@ def assemble_petsc_ksp_pc(
         _assemble_pc_fieldsplit_additive(
             ksp=ksp,
             pc=pc,
-            additional_data=assembly_config,
+            assembly_config=assembly_config,
             indexer=indexer,
             prefix=prefix,
         )
@@ -385,7 +397,7 @@ def assemble_petsc_ksp_pc(
         _assemble_pc_composite(
             ksp=ksp,
             pc=pc,
-            additional_data=assembly_config,
+            assembly_config=assembly_config,
             indexer=indexer,
             prefix=prefix,
         )
@@ -393,11 +405,12 @@ def assemble_petsc_ksp_pc(
         _assemble_pc_python_permutation(
             ksp=ksp,
             pc=pc,
-            additional_data=assembly_config,
+            assembly_config=assembly_config,
             indexer=indexer,
             prefix=prefix,
         )
     else:
+        # Anything else does not need a special initialization from python.
         try:
             ksp.setUp()
             pc.setUp()

@@ -1,4 +1,7 @@
-"""This module contains schemes, e.g., recepies for constructing a PETSc solver."""
+"""This module contains the `IterativeSolverMixin` class, which provides the capabilitiy
+of using iterative linear solvers to a PorePy model.
+
+"""
 
 from __future__ import annotations
 
@@ -30,11 +33,7 @@ from pp_solvers.preconditioners import (
     thm_factory,
 )
 
-from .block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-    concatenate_dof_indices,
-)
+from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
 __all__ = [
     "IterativeSolverMixin",
@@ -126,6 +125,30 @@ class LinearSolverStatistics(SolverStatistics):
 
 
 class IterativeSolverMixin(pp.PorePyModel):
+    """Intended usage:
+
+    (i) Plug in the `IterativeSolverMixin` to the PorePy model inheritance chain below
+    your methods that override `solve_linear_system` and `assemble_linear_system`, e.g.
+    for logging purposes.
+
+    (ii) Insert an additional option to the model options dictionary:
+    ```
+    model_options["linear_solver"] = {
+        "options": {
+            {
+                # Uncomment below to enable convergence logging:
+                # "gmres: {
+                #     "ksp_monitor": None,
+                # }
+            }
+        }
+    }
+    ```
+    The linear solver can be customized via the `"options"` sub-dictionary, see
+    the examples folder for details.
+
+    """
+
     def solve_linear_system(self) -> None:
         # Check for NaN or Inf in the RHS.
         # The rhs inside the linear system object is rearranged to match the matrix.
@@ -181,12 +204,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         mat, rhs = self.linear_system
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
-        # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each
-        # array corresponds to one subdomain (or interface). We concatenate them into
-        # a list of arrays, where each array corresponds to a single-physics subsolver.
-        # That is, each array will include multiple subdomains, and potentially multiple
-        # equations / variables.
-
         bmat = BlockLinearSystem(
             mat=mat,
             rhs=rhs,

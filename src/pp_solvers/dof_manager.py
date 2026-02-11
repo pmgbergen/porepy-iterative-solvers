@@ -59,6 +59,10 @@ class DofManager:
         """Constructs the DoFs mapping for the passed groups of equations and
         variables.
 
+        Raises:
+            ValueError: If a group defines a variable or an equation on the same domain
+            more than once.
+
         """
         # We need a weak reference here to avoid a reference cycle, which can lead to a
         # memory leak. The weak reference is alive until the PorePy model is alive.
