@@ -1062,3 +1062,322 @@ def cf_factory_no_well():
 
         )
     )
+
+
+def cf_factory_well_inj_prod():
+    """
+    Factory for a CF preconditioner with energy PDE eliminated at the injection well by 
+     enthalpy or temperature constraint and the pressure equation eliminated at the producing well
+     well equations.
+    Mike: Preconditioner factory defined for problem involving cf with correlations
+    """
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+
+    import porepy as pp
+    from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
+
+    class ComponentMassBalanceNaClGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "component_mass_balance_equation_NaCl"
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            return model.fluid.components[1].fraction(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "component_mass_balance_equation_NaCl"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "z_NaCl"
+
+    class MassBalancePressureGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(
+                name=EquationNames.MASS_BALANCE.value, domains=no_production_wells
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(no_production_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "mass_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "pressure"
+
+    class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = EquationNames.ENERGY_BALANCE.value
+
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=no_injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.enthalpy(no_injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "energy_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "enthalpy"
+
+    class ProductionPressureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            # TODO: I need to check this out, for my case I do not 
+            # have production wells, but I have injection wells with temperature constraints, 
+            # so I need to check how to handle this case.
+            name = "production_pressure_constraint"
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(name=name, domains=production_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(production_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "production_pressure_constraint"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "pressure_constraint"
+
+    class InjectionTemperatureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "injection_temperature_constraint"
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.enthalpy(injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "injection_temperature_constraint"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "enthalpy_constraint"
+
+    interface_groups = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mass_balance_groups = [
+        MassBalancePressureGroup(),
+        ProductionPressureConstraintGroup(),
+    ]
+    energy_balance_groups = [
+        EnergyBalanceEnthalpyGroup(),
+        InjectionTemperatureConstraintGroup(),
+    ]
+    component_groups = [ComponentMassBalanceNaClGroup()]
+
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+            approximate_invertor=DiagonalInvertor(),
+            complement=CompositePreconditioner(
+                subsolvers=[
+                    FieldSplit(
+                        subsolver=Identity(
+                            groups=energy_balance_groups + component_groups,
+                            key="cpr_stage0_identity",
+                        ),
+                        approximate_invertor=DiagonalInvertor(),
+                        complement=AMG(
+                            groups=mass_balance_groups, key="cpr_stage0_amg"
+                        ),
+                        key="inner_fieldsplit",
+                    ),
+                    ILU(
+                        groups=energy_balance_groups
+                        + component_groups
+                        + mass_balance_groups,
+                        key="cpr_stage1_ilu",
+                    ),
+                ]
+            ),
+        )
+    )
+
+
+def cf_factory_well_inj():
+    """
+    Factory for a CF preconditioner with energy PDE eliminated at the injection grid cell
+    is replaced by temperture or enthalpy constraint!!.
+    Mike: Preconditioner factory defined for problem involving cf with correlations
+    """
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+
+    import porepy as pp
+    from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
+
+    class ComponentMassBalanceNaClGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "component_mass_balance_equation_NaCl"
+            return EquationOnDomains(name=name, domains=model.mdg.subdomains())
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            return model.fluid.components[1].fraction(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "component_mass_balance_equation_NaCl"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "z_NaCl"
+
+    class MassBalancePressureGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            # production_wells, no_production_wells = model._filter_wells(
+            #     model.mdg.subdomains(), "production"
+            # )
+            return EquationOnDomains(
+                name=EquationNames.MASS_BALANCE.value, domains=model.mdg.subdomains()
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            # production_wells, no_production_wells = model._filter_wells(
+            #     model.mdg.subdomains(), "production"
+            # )
+            return model.pressure(model.mdg.subdomains())
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "mass_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "pressure"
+
+    class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = EquationNames.ENERGY_BALANCE.value
+
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            print(f"DEBUG: EnergyBalanceEnthalpyGroup - Injection wells (eq): {len(injection_wells)}, No injection wells (eq): {len(no_injection_wells)}")
+            return EquationOnDomains(name=name, domains=no_injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            print(f"DEBUG: EnergyBalanceEnthalpyGroup - Injection wells (var): {len(injection_wells)}, No injection wells (var): {len(no_injection_wells)}")
+            return model.enthalpy(no_injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "energy_balance"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "enthalpy"
+
+    # class ProductionPressureConstraintGroup(EquationVariableGroup):
+    #     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+    #         # TODO: I need to check this out, for my case I do not
+    #         # have production wells, but I have injection wells with temperature constraints,
+    #         # so I need to check how to handle this case.
+    #         name = "production_pressure_constraint"
+    #         production_wells, no_production_wells = model._filter_wells(
+    #             model.mdg.subdomains(), "production"
+    #         )
+    #         print(f"DEBUG: ProductionPressureConstraintGroup - Production wells (eq): {len(production_wells)}, No production wells (eq): {len(no_production_wells)}")
+    #         return EquationOnDomains(name=name, domains=production_wells)
+
+    #     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+    #         production_wells, no_production_wells = model._filter_wells(
+    #             model.mdg.subdomains(), "production"
+    #         )
+    #         print(f"DEBUG: ProductionPressureConstraintGroup - Production wells (var): {len(production_wells)}, No production wells (var): {len(no_production_wells)}")
+    #         return model.pressure(production_wells)
+
+    #     def equation_name(self, model: pp.PorePyModel) -> str:
+    #         return "production_pressure_constraint"
+
+    #     def variable_name(self, model: pp.PorePyModel) -> str:
+    #         return "pressure_constraint"
+
+    class InjectionTemperatureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "injection_temperature_constraint"
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            print(f"DEBUG: InjectionTemperatureConstraintGroup - Injection wells (eq): {len(injection_wells)}, No injection wells (eq): {len(no_injection_wells)}")
+            return EquationOnDomains(name=name, domains=injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            print(f"DEBUG: InjectionTemperatureConstraintGroup - Injection wells (var): {len(injection_wells)}, No injection wells (var): {len(no_injection_wells)}")
+            return model.enthalpy(injection_wells)
+
+        def equation_name(self, model: pp.PorePyModel) -> str:
+            return "injection_temperature_constraint"
+
+        def variable_name(self, model: pp.PorePyModel) -> str:
+            return "enthalpy_constraint"
+
+    interface_groups = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mass_balance_groups = [
+        MassBalancePressureGroup(),
+        # ProductionPressureConstraintGroup(),
+    ]
+    energy_balance_groups = [
+        EnergyBalanceEnthalpyGroup(),
+        InjectionTemperatureConstraintGroup(),
+    ]
+    component_groups = [ComponentMassBalanceNaClGroup()]
+
+    return GMRES(
+        preconditioner=FieldSplit(
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+            approximate_invertor=DiagonalInvertor(),
+            complement=CompositePreconditioner(
+                subsolvers=[
+                    FieldSplit(
+                        subsolver=Identity(
+                            groups=energy_balance_groups + component_groups,
+                            key="cpr_stage0_identity",
+                        ),
+                        approximate_invertor=DiagonalInvertor(),
+                        complement=AMG(
+                            groups=mass_balance_groups, key="cpr_stage0_amg"
+                        ),
+                        key="inner_fieldsplit",
+                    ),
+                    ILU(
+                        groups=energy_balance_groups
+                        + component_groups
+                        + mass_balance_groups,
+                        key="cpr_stage1_ilu",
+                    ),
+                ]
+            ),
+        )
+    )
