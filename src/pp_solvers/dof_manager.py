@@ -122,6 +122,14 @@ class DofManager:
             "local_fluid_enthalpy_constraint",
             "local_phase_mass_constraint_G",
         }
+        
+        for (
+            eq_name,
+            domains
+        ) in model.equation_system._equation_image_space_composition.items():
+            if eq_name.startswith("elimination"):
+                skip_list.add(eq_name)
+
         eq_dofs: list[np.ndarray] = []
         offset = 0
         for (
@@ -332,9 +340,9 @@ class DofManager:
             "x_NaCl_gas",
         }
         ### Debug!!!
-        for var in model.equation_system.variables:
-            # if var.name in skip_list:
-            print(f"Variable '{var.name}' is skipped in variable block indices.")
+        # for var in model.equation_system.variables:
+        #     # if var.name in skip_list:
+        #     print(f"Variable '{var.name}' is skipped in variable block indices.")
 
         counter = count(0)
         variable_to_idx = {
@@ -383,13 +391,20 @@ class DofManager:
             "local_fluid_enthalpy_constraint",
             "local_phase_mass_constraint_G",
             # Mike: hardcoded skip list for cf-model for brine flow:
-            "elimination_of_s_halite_on_grids_[0]",
-            "elimination_of_s_gas_on_grids_[0]",
-            "elimination_of_x_NaCl_liq_on_grids_[0]",
-            "elimination_of_x_NaCl_halite_on_grids_[0]",
-            "elimination_of_x_NaCl_gas_on_grids_[0]",
-            "elimination_of_temperature_on_grids_[0]",
+            # "elimination_of_s_halite_on_grids_[0]",
+            # "elimination_of_s_gas_on_grids_[0]",
+            # "elimination_of_x_NaCl_liq_on_grids_[0]",
+            # "elimination_of_x_NaCl_halite_on_grids_[0]",
+            # "elimination_of_x_NaCl_gas_on_grids_[0]",
+            # "elimination_of_temperature_on_grids_[0]",
         }
+        
+        for (
+            eq_name,
+            domains
+        ) in model.equation_system._equation_image_space_composition.items():
+            if eq_name.startswith("elimination"):
+                skip_list.add(eq_name)
 
         equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
         idx: int = 0
