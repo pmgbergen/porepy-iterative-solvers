@@ -69,6 +69,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
 @pytest.mark.parametrize(
     "params",
     [
+        # If broken: we failed to configure the most basice PETSc commands.
         pytest.param(
             {
                 "petsc_options": {"ksp_type": "bcgs", "pc_type": "sor"},
@@ -76,6 +77,8 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="monolithic petsc solver",
         ),
+        # If broken: we failed to configure the matrix block size. Did you call
+        # mat.setFromOptions() ?
         pytest.param(
             {
                 "petsc_options": {
@@ -85,8 +88,10 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {},
             },
-            id="matrix block size = 2",
+            id="matrix block size = 3",
         ),
+        # If broken, recursive setup of a nested ksp does not work. Did you call
+        # ksp.setFromOptions and ksp.setUp on the inner ksp?
         pytest.param(
             {
                 "petsc_options": {
@@ -100,6 +105,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="fgmres with inner gmres",
         ),
+        # If broken: Hypre is not installed?
         pytest.param(
             {
                 "petsc_options": {
@@ -111,6 +117,8 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="hypre boomeramg",
         ),
+        # This is a basic fieldsplit test. If broken: check
+        # _assemble_pc_fieldsplit_schur
         pytest.param(
             {
                 "petsc_options": {
@@ -134,6 +142,9 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="fieldsplit",
         ),
+        # This is fieldsplit test, where the subsolver of a group to be eliminated is
+        # also an inner fieldsplit (not typical use case, covered for completeness).
+        # If broken: do we recursively configure the inner fieldsplit?
         pytest.param(
             {
                 "petsc_options": {
@@ -163,6 +174,40 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="nested fieldsplit - elim",
         ),
+        # This is fieldsplit test, where the subsolver of Schur complement group is
+        # also an inner fieldsplit (typical use case for multiphysics). If broken: do we
+        # recursively configure the inner fieldsplit?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "fieldsplit_aaa_pc_type": "jacobi",
+                    "fieldsplit_bbb_pc_type": "fieldsplit",
+                    "fieldsplit_bbb_fieldsplit_ccc_pc_type": "sor",
+                    "fieldsplit_bbb_fieldsplit_ddd_pc_type": "pbjacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [2],
+                        "keep_groups": [0, 1],
+                        "elim_tag": "aaa",
+                        "keep_tag": "bbb",
+                    },
+                    "fieldsplit_bbb_": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [1],  # Intentionally switching order.
+                        "keep_groups": [0],
+                        "elim_tag": "ccc",
+                        "keep_tag": "ddd",
+                    },
+                },
+            },
+            id="nested fieldsplit - keep",
+        ),
+        # This is a basic test for PCComposite with 3 stages. If broken: check
+        # _assemble_pc_composite
         pytest.param(
             {
                 "petsc_options": {
@@ -179,28 +224,11 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     },
                 },
             },
-            id="nested fieldsplit - keep",
-        ),
-        pytest.param(
-            {
-                "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "fieldsplit_aaa_pc_type": "sor",
-                    "fieldsplit_bbb_pc_type": "jacobi",
-                },
-                "assembly_config": {
-                    "": {
-                        "config_type": "fieldsplit_schur",
-                        "elim_groups": [0],
-                        "keep_groups": [1, 2],
-                        "elim_tag": "aaa",
-                        "keep_tag": "bbb",
-                    }
-                },
-            },
             id="composite",
         ),
+        # This test mimics the structure of the CPR preconditioner: The composite
+        # preconditioner, where one of the stages is a fieldsplit. If broken, something
+        # fails in the communication between the composite and the fieldsplit parts.
         pytest.param(
             {
                 "petsc_options": {
@@ -228,6 +256,8 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="cpr",  # This is not a complete setup of the CPR preconditioner.
         ),
+        # This test covers the python callback from petsc, which we use to transform the
+        # underlying matrix. If broken, check _assemble_pc_python_permutation
         pytest.param(
             {
                 "petsc_options": {
@@ -241,8 +271,10 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     }
                 },
             },
-            id="python context",
+            id="python permutation",
         ),
+        # This test covers a user-defined invertor for the Schur complement fieldsplit,
+        # such as the fixed-stress approximation.
         pytest.param(
             {
                 "petsc_options": {
@@ -258,8 +290,8 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                         "keep_groups": [1],
                         "elim_tag": "elim",
                         "keep_tag": "keep",
-                        # Constructing an invertor matrix, so S = A - C * D^-1 * B ≈ A.
-                        "invertor_additive": lambda _: csr_to_petsc(
+                        # Constructing an inverter matrix, so S = A - C * D^-1 * B ≈ A.
+                        "inverter_additive": lambda _: csr_to_petsc(
                             csr_matrix(
                                 (
                                     len(reference_dofs_row[1]),
@@ -270,8 +302,10 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     }
                 },
             },
-            id="fieldsplit user invertor",
+            id="fieldsplit user inverter",
         ),
+        # This test covers the non-Schur complement fieldsplit. If broken, check
+        # _assemble_pc_fieldsplit_additive
         pytest.param(
             {
                 "petsc_options": {
@@ -291,6 +325,8 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
             },
             id="fieldsplit additive",
         ),
+        # This test covers the nested additive fieldsplits. If broken, do we initialize
+        # the inner fieldsplit?
         pytest.param(
             {
                 "petsc_options": {

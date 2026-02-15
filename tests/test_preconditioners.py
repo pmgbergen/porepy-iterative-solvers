@@ -25,15 +25,15 @@ from pp_solvers.preconditioners import (
     AMG,
     GMRES,
     ILU,
-    BlockDiagonalInvertor,
+    BlockDiagonalInverter,
     BlockDiagonalPreconditioner,
     CompositePreconditioner,
-    DiagonalInvertor,
+    DiagonalInverter,
     FieldSplitAdditive,
     FieldSplitSchur,
-    FixedStressInvertor,
+    FixedStressInverter,
     Identity,
-    PetscInvertor,
+    PetscInverter,
     PetscKspPcConfiguration,
     PythonPermutationWrapper,
 )
@@ -77,8 +77,8 @@ CONFIGURATIONS_FOR_PETSC = [
 CONFIGURATIONS_ALL = CONFIGURATIONS_FOR_PETSC + [
     FieldSplitSchur(
         subsolver=Identity(groups=["g1"]),
-        complement=Identity(groups=["g2"]),
-        approximate_invertor=DiagonalInvertor(),
+        complement_solver=Identity(groups=["g2"]),
+        approximate_inverter=DiagonalInverter(),
         key="custom_key",
     ),
     FieldSplitAdditive(
@@ -145,8 +145,8 @@ def test_fieldsplit_bad_groups():
     with pytest.raises(ValueError):
         FieldSplitSchur(
             subsolver=Identity(groups=["g2", "g1"]),
-            complement=Identity(groups=["g1"]),
-            approximate_invertor=DiagonalInvertor(),
+            complement_solver=Identity(groups=["g1"]),
+            approximate_inverter=DiagonalInverter(),
         )
 
     with pytest.raises(ValueError):
@@ -222,8 +222,8 @@ def test_nested_fieldsplits_schur():
     def make_fieldsplit(subsolver, complement, key):
         return FieldSplitSchur(
             subsolver=subsolver,
-            complement=complement,
-            approximate_invertor=DiagonalInvertor(),
+            complement_solver=complement,
+            approximate_inverter=DiagonalInverter(),
             key=key,
             petsc_tag="elim",
             petsc_complement_tag="keep",
@@ -432,11 +432,11 @@ def test_nested_composites():
 
 
 @pytest.mark.parametrize(
-    "invertor", [DiagonalInvertor(), BlockDiagonalInvertor(), FixedStressInvertor()]
+    "inverter", [DiagonalInverter(), BlockDiagonalInverter(), FixedStressInverter()]
 )
 @pytest.mark.parametrize("prefix", ["", "custom_prefix"])
-def test_approximate_invertors_petsc_options(invertor: PetscInvertor, prefix: str):
-    petsc_options = invertor.petsc_options(
+def test_approximate_inverters_petsc_options(inverter: PetscInverter, prefix: str):
+    petsc_options = inverter.petsc_options(
         prefix=prefix, tag="elim", complement_tag="keep"
     )
     assert isinstance(petsc_options, dict)
@@ -445,16 +445,16 @@ def test_approximate_invertors_petsc_options(invertor: PetscInvertor, prefix: st
 
 
 @pytest.mark.parametrize(
-    "invertor",
+    "inverter",
     [
-        DiagonalInvertor(),
-        BlockDiagonalInvertor(),
-        # FixedStressInvertor() is not tested here, because it requires the real PorePy
+        DiagonalInverter(),
+        BlockDiagonalInverter(),
+        # FixedStressInverter() is not tested here, because it requires the real PorePy
         # model. It is tested in test_fixed_stress.
     ],
 )
-def test_approximate_invertors_assembly_config(invertor: PetscInvertor):
-    assert invertor.petsc_assembly_config(dof_manager=None) == {}
+def test_approximate_inverters_assembly_config(inverter: PetscInverter):
+    assert inverter.petsc_assembly_config(dof_manager=None) == {}
 
 
 def test_python_permutation():

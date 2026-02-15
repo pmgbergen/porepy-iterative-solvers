@@ -36,10 +36,10 @@ from pp_solvers.petsc_utils import csr_to_petsc
 __all__ = [
     # Add all preconditioners and linear solvers here.
     "PetscKspPcConfiguration",
-    "PetscInvertor",
-    "DiagonalInvertor",
-    "BlockDiagonalInvertor",
-    "FixedStressInvertor",
+    "PetscInverter",
+    "DiagonalInverter",
+    "BlockDiagonalInverter",
+    "FixedStressInverter",
     "ILU",
     "AMG",
     "Identity",
@@ -62,11 +62,11 @@ def append_prefix_to_options(prefix: str, options: dict):
     return {f"{prefix}{key}": value for key, value in options.items()}
 
 
-# MARK: Invertors
+# MARK: Inverters
 
 
-class PetscInvertor(ABC):
-    """The base class for the customizable invertor instruction for the
+class PetscInverter(ABC):
+    """The base class for the customizable inverter instruction for the
     `FieldSplitSchur` class.
 
     """
@@ -79,7 +79,7 @@ class PetscInvertor(ABC):
         return {}
 
 
-class DiagonalInvertor(PetscInvertor):
+class DiagonalInverter(PetscInverter):
     def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
         return append_prefix_to_options(
             prefix=prefix,
@@ -89,7 +89,7 @@ class DiagonalInvertor(PetscInvertor):
         )
 
 
-class BlockDiagonalInvertor(PetscInvertor):
+class BlockDiagonalInverter(PetscInverter):
     def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
         # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
         # which represents the non-assembled Schur complement matrix. It tells it to use
@@ -108,7 +108,7 @@ class BlockDiagonalInvertor(PetscInvertor):
         # eliminate.
 
 
-class FixedStressInvertor(PetscInvertor):
+class FixedStressInverter(PetscInverter):
     def petsc_options(
         self,
         prefix: str,
@@ -126,8 +126,12 @@ class FixedStressInvertor(PetscInvertor):
         flow_mat_group, flow_frac_group = dof_manager.indices_of_groups(
             [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
         )
+        # Check that the MassBalancePressureGroup (common for porous media, fractures
+        # and interfaces) is not used by mistake. The fixed stress code relies on
+        # separate groups for different dimensions.
         try:
-            dof_manager.indices_of_groups([MassBalancePressureGroup()])
+            # Not using the return value, just checking that it is present.
+            _ = dof_manager.indices_of_groups([MassBalancePressureGroup()])
         except ValueError:
             pass  # It's ok, this group is not present.
         else:
@@ -138,7 +142,7 @@ class FixedStressInvertor(PetscInvertor):
             )
 
         return {
-            "invertor_additive": lambda indexer: csr_to_petsc(
+            "inverter_additive": lambda indexer: csr_to_petsc(
                 construct_fixed_stress_block_matrix(
                     model=dof_manager.model,
                     indexer=indexer,
@@ -516,13 +520,31 @@ class FieldSplitSchur(PetscKspPcConfiguration):
     Schur complement approximation and treats each separately with a sub-solver. See:
     https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/
 
+    Consider a 2x2 block matrix:
+    ```
+    [[A, B],
+     [C, D]]
+    ```
+    with the Schur complement `S = D - B * A^-1 * C`.
+
+    Parameters:
+        subsolver: A configuration class of a solver that approximates `A^-1`.
+        complement_solver: A configuration class of a solver that approximates `S^-1`.
+        approximate_inverter: A configuration class to construct the approximate `S`.
+        petsc_tag: A string to build a PETSc options prefix that identifies the `A^-1`
+            sub-solver. Defaults to `"elim"` (submatrix to eliminate).
+        petsc_complemet_tag: A string to build a PETSc options prefix that identifies
+            the `S^-1` sub-solver. Defaults to `"keep"` (submatrix to keep) if
+            `petsc_tag` is not passed, otherwise to `f"{petsc_tag}_cpl"` (complenent).
+        key: A key to pass user options to the configurations.
+
     """
 
     def __init__(
         self,
         subsolver: PetscKspPcConfiguration,
-        complement: PetscKspPcConfiguration,
-        approximate_invertor: PetscInvertor,
+        complement_solver: PetscKspPcConfiguration,
+        approximate_inverter: PetscInverter,
         petsc_tag: Optional[str] = None,
         petsc_complement_tag: Optional[str] = None,
         key: str = "fieldsplit",
@@ -534,20 +556,25 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         elif petsc_complement_tag is None:
             petsc_complement_tag = f"{petsc_tag}_cpl"
         self.subsolver: PetscKspPcConfiguration = subsolver
-        self.complement: PetscKspPcConfiguration = complement
-        self.approximate_invertor: PetscInvertor = approximate_invertor
+        self.complement_solver: PetscKspPcConfiguration = complement_solver
+        self.approximate_inverter: PetscInverter = approximate_inverter
         self.petsc_tag: str = petsc_tag
         self.petsc_complement_tag: str = petsc_complement_tag
-        super().__init__(groups=self.subsolver.groups + self.complement.groups, key=key)
+        super().__init__(
+            groups=self.subsolver.groups + self.complement_solver.groups, key=key
+        )
 
-        intersection = set(self.subsolver.groups).intersection(self.complement.groups)
+        intersection = set(self.subsolver.groups).intersection(
+            self.complement_solver.groups
+        )
         if len(intersection) > 0:
             raise ValueError(f"Groups in FielSplit should not overlap: {intersection}")
 
     def __repr__(self) -> str:
         return (
-            f"FieldSplit(subsolver={self.subsolver}, complement={self.complement}, "
-            f"approximate_invertor={self.approximate_invertor})"
+            f"FieldSplit(subsolver={self.subsolver}, "
+            f"complement_solver={self.complement_solver}, "
+            f"approximate_inverter={self.approximate_inverter})"
         )
 
     def petsc_options(
@@ -567,12 +594,12 @@ class FieldSplitSchur(PetscKspPcConfiguration):
                 prefix=f"fieldsplit_{self.petsc_tag}_",
                 dof_manager=dof_manager,
             )
-            | self.complement.petsc_options(
+            | self.complement_solver.petsc_options(
                 user_options=user_options,
                 prefix=f"fieldsplit_{self.petsc_complement_tag}_",
                 dof_manager=dof_manager,
             )
-            | self.approximate_invertor.petsc_options(
+            | self.approximate_inverter.petsc_options(
                 prefix="",
                 tag=self.petsc_tag,
                 complement_tag=self.petsc_complement_tag,
@@ -595,10 +622,10 @@ class FieldSplitSchur(PetscKspPcConfiguration):
                         groups=self.subsolver.groups
                     ),
                     "keep_groups": dof_manager.indices_of_groups(
-                        groups=self.complement.groups
+                        groups=self.complement_solver.groups
                     ),
                 }
-                | self.approximate_invertor.petsc_assembly_config(
+                | self.approximate_inverter.petsc_assembly_config(
                     dof_manager=dof_manager
                 )
             }
@@ -607,7 +634,7 @@ class FieldSplitSchur(PetscKspPcConfiguration):
                 prefix=f"{prefix}fieldsplit_{self.petsc_tag}_",
                 dof_manager=dof_manager,
             )
-            | self.complement.petsc_assembly_config(
+            | self.complement_solver.petsc_assembly_config(
                 user_options=user_options,
                 prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",
                 dof_manager=dof_manager,
@@ -730,7 +757,7 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     # Unwrapping parameters.
     kwargs = {
         "subsolver": subsolvers[0]["subsolver"],
-        "approximate_invertor": subsolvers[0]["approximate_invertor"],
+        "approximate_inverter": subsolvers[0]["approximate_inverter"],
     }
     if "key" in subsolvers[0]:
         kwargs["key"] = subsolvers[0]["key"]
@@ -742,16 +769,46 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     if len(subsolvers) > 2:
         # Recursion.
         return FieldSplitSchur(
-            complement=nested_schur_complements(subsolvers=subsolvers[1:]), **kwargs
+            complement_solver=nested_schur_complements(subsolvers=subsolvers[1:]),
+            **kwargs,
         )
     # End of recursion.
-    return FieldSplitSchur(complement=subsolvers[1]["subsolver"], **kwargs)
+    return FieldSplitSchur(complement_solver=subsolvers[1]["subsolver"], **kwargs)
 
 
 # MARK: Factories
 
 
 def mass_balance_factory():
+    """This configures an iterative linear solver for the single-phase flow model in
+    fractured porous media.
+
+    The solver configuration can be customized by passing petsc options without a prefix
+    to the PorePy model `params` dictionary as follows:
+    ```
+    params = {
+        "linear_solver": {
+            "options": {
+                "gmres": {
+                    # Customize the Krylov subspace solver. Example:
+                    "ksp_gmres_restart": 200,
+                },
+                "interface_flow": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "mass_balance_amg": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                }
+            }
+        }
+    }
+    ```
+    Refer to PETSc documentation to see the possible options:
+    https://petsc.org/main/manual/ksp/#preconditioners
+
+    """
     interface_groups: list[EquationVariableGroup] = [
         InterfaceDarcyFluxGroup(),
         WellFluxGroup(),
@@ -761,13 +818,42 @@ def mass_balance_factory():
     return GMRES(
         preconditioner=FieldSplitSchur(
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
-            complement=AMG(groups=mass_balance_groups, key="mass_balance_amg"),
-            approximate_invertor=DiagonalInvertor(),
+            complement_solver=AMG(groups=mass_balance_groups, key="mass_balance_amg"),
+            approximate_inverter=DiagonalInverter(),
         )
     )
 
 
 def momentum_balance_factory():
+    """This configures an iterative linear solver for the contact mechanics model in
+    fractured porous media.
+
+    The solver configuration can be customized by passing petsc options without a prefix
+    to the PorePy model `params` dictionary as follows:
+    ```
+    params = {
+        "linear_solver": {
+            "options": {
+                "gmres": {
+                    # Customize the Krylov subspace solver. Example:
+                    "ksp_gmres_restart": 200,
+                },
+                "contact": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "mechanics_amg": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                }
+            }
+        }
+    }
+    ```
+    Refer to PETSc documentation to see the possible options:
+    https://petsc.org/main/manual/ksp/#preconditioners
+
+    """
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     mechanics_groups: list[EquationVariableGroup] = [
         MechanicsGroup(),
@@ -777,15 +863,52 @@ def momentum_balance_factory():
         preconditioner=FieldSplitSchur(
             petsc_tag="contact",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
-            complement=AMG(
+            complement_solver=AMG(
                 groups=mechanics_groups, key="mechanics_amg", vector_problem=True
             ),
-            approximate_invertor=BlockDiagonalInvertor(),
+            approximate_inverter=BlockDiagonalInverter(),
         )
     )
 
 
 def hm_factory():
+    """This configures an iterative linear solver for the poromechanics model in
+    fractured porous media.
+
+    The solver configuration can be customized by passing petsc options without a prefix
+    to the PorePy model `params` dictionary as follows:
+    ```
+    params = {
+        "linear_solver": {
+            "options": {
+                "gmres": {
+                    # Customize the Krylov subspace solver. Example:
+                    "ksp_gmres_restart": 200,
+                },
+                "contact": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "mechanics_amg": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                },
+                "interface_flow": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "mass_balance_amg": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                }
+            }
+        }
+    }
+    ```
+    Refer to PETSc documentation to see the possible options:
+    https://petsc.org/main/manual/ksp/#preconditioners
+
+    """
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     interface_flux_groups: list[EquationVariableGroup] = [
         InterfaceDarcyFluxGroup(),
@@ -808,14 +931,14 @@ def hm_factory():
                     "subsolver": BlockDiagonalPreconditioner(
                         groups=contact_groups, key="contact"
                     ),
-                    "approximate_invertor": BlockDiagonalInvertor(),
+                    "approximate_inverter": BlockDiagonalInverter(),
                     "petsc_tag": "contact",
                 },
                 {
                     "subsolver": ILU(
                         groups=interface_flux_groups, key="interface_flow"
                     ),
-                    "approximate_invertor": DiagonalInvertor(),
+                    "approximate_inverter": DiagonalInverter(),
                     "petsc_tag": "intf_darcy_flux",
                 },
                 {
@@ -824,7 +947,7 @@ def hm_factory():
                         key="mechanics_amg",
                         vector_problem=True,
                     ),
-                    "approximate_invertor": FixedStressInvertor(),
+                    "approximate_inverter": FixedStressInverter(),
                     "petsc_tag": "mechanics",
                 },
                 {
@@ -838,6 +961,43 @@ def hm_factory():
 
 
 def th_factory():
+    """This configures an iterative linear solver for the poromechanics model in
+    fractured porous media.
+
+    The solver configuration can be customized by passing petsc options without a prefix
+    to the PorePy model `params` dictionary as follows:
+    ```
+    params = {
+        "linear_solver": {
+            "options": {
+                "gmres": {
+                    # Customize the Krylov subspace solver. Example:
+                    "ksp_gmres_restart": 200,
+                },
+                "interface_flow": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "cpr0_energy": {
+                    # customize the energy-balance sub-solver.
+                    "pc_type": "pbjacobi",
+                },
+                "cpr0_mass": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                }
+                "cpr1": {
+                    # customize the coupled mass-energy sub-solver.
+                    "pc_type": "sor",
+                }
+            }
+        }
+    }
+    ```
+    Refer to PETSc documentation to see the possible options:
+    https://petsc.org/main/manual/ksp/#preconditioners
+
+    """
     interface_groups: list[EquationVariableGroup] = [
         InterfaceDarcyFluxGroup(),
         InterfaceEnthalpyFluxGroup(),
@@ -858,15 +1018,17 @@ def th_factory():
         preconditioner=FieldSplitSchur(
             petsc_tag="intf_mass_energy_flx",
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
-            approximate_invertor=DiagonalInvertor(),
-            complement=CompositePreconditioner(
+            approximate_inverter=DiagonalInverter(),
+            complement_solver=CompositePreconditioner(
                 subsolvers=[
                     FieldSplitSchur(
                         subsolver=Identity(
                             groups=energy_balance_groups, key="cpr0_energy"
                         ),
-                        complement=AMG(groups=mass_balance_groups, key="cpr0_mass"),
-                        approximate_invertor=DiagonalInvertor(),
+                        complement_solver=AMG(
+                            groups=mass_balance_groups, key="cpr0_mass"
+                        ),
+                        approximate_inverter=DiagonalInverter(),
                     ),
                     ILU(groups=energy_balance_groups + mass_balance_groups, key="cpr1"),
                 ]
@@ -876,6 +1038,51 @@ def th_factory():
 
 
 def thm_factory():
+    """This configures an iterative linear solver for the poromechanics model in
+    fractured porous media.
+
+    The solver configuration can be customized by passing petsc options without a prefix
+    to the PorePy model `params` dictionary as follows:
+    ```
+    params = {
+        "linear_solver": {
+            "options": {
+                "gmres": {
+                    # Customize the Krylov subspace solver. Example:
+                    "ksp_gmres_restart": 200,
+                },
+                "contact": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "mechanics_amg": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                },
+                "interface_flow": {
+                    # customize the interface flow sub-solver.
+                    "pc_type": "sor",
+                },
+                "cpr0_energy": {
+                    # customize the energy-balance sub-solver.
+                    "pc_type": "pbjacobi",
+                },
+                "cpr0_mass": {
+                    # customize the mass-balance sub-solver.
+                    "pc_hypre_boomeramg_strong_threshold": 0.6,
+                }
+                "cpr1": {
+                    # customize the coupled mass-energy sub-solver.
+                    "pc_type": "sor",
+                }
+            }
+        }
+    }
+    ```
+    Refer to PETSc documentation to see the possible options:
+    https://petsc.org/main/manual/ksp/#preconditioners
+
+    """
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     interface_groups: list[EquationVariableGroup] = [
         InterfaceDarcyFluxGroup(),
@@ -904,12 +1111,12 @@ def thm_factory():
                     "subsolver": BlockDiagonalPreconditioner(
                         groups=contact_groups, key="contact"
                     ),
-                    "approximate_invertor": BlockDiagonalInvertor(),
+                    "approximate_inverter": BlockDiagonalInverter(),
                     "petsc_tag": "contact",
                 },
                 {
                     "subsolver": ILU(groups=interface_groups, key="interface_flow"),
-                    "approximate_invertor": DiagonalInvertor(),
+                    "approximate_inverter": DiagonalInverter(),
                     "petsc_tag": "intf_mass_energy_flx",
                 },
                 {
@@ -918,7 +1125,7 @@ def thm_factory():
                         key="mechanics_amg",
                         vector_problem=True,
                     ),
-                    "approximate_invertor": FixedStressInvertor(),
+                    "approximate_inverter": FixedStressInverter(),
                     "petsc_tag": "mech",
                 },
                 {

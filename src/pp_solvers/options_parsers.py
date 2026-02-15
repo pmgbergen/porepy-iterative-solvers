@@ -192,19 +192,22 @@ def _assemble_pc_fieldsplit_schur(
     pc.setFieldSplitIS((keep_tag, is_keep))
 
     # For a matrix [[A, B], [C, D]], Schur complement S = D - B * A^-1 * C, here D
-    # corresponds to the index set "is_keep". An additive invertor is a matrix X to
+    # corresponds to the index set "is_keep". An additive inverter is a matrix X to
     # build the approximat: S = D + X. This is where the fixed-stress approximation for
     # hydromechanics is applied.
-    invertor = prefix_config.get("invertor_additive", None)
-    if invertor is not None:
+    inverter = prefix_config.get("inverter_additive", None)
+    if inverter is not None:
         # This copies the submatrix D into S.
         S = pc.getOperators()[1].createSubMatrix(is_keep, is_keep)
         # Extracts the matrix X in petsc format.
-        petsc_matrix_invertor = invertor(keep_groups_indexer)
+        petsc_matrix_inverter = inverter(keep_groups_indexer)
         # S = S + 1 * X
-        S.axpy(1, petsc_matrix_invertor)
+        S.axpy(1, petsc_matrix_inverter)
+        # Passing the operator S as a user-defined Schur complement approximation to the
+        # preconditioner.
         pc.setFieldSplitSchurPreType(PETSc.PC.FieldSplitSchurPreType.USER, S)
-        petsc_matrix_invertor.destroy()
+        # Destroying a temporary matrix used to construct S.
+        petsc_matrix_inverter.destroy()
 
     try:
         pc.setUp()
@@ -248,11 +251,16 @@ def _assemble_pc_composite(
     num_stages = assembly_config[prefix]["num_stages"]
 
     for i in range(num_stages):
-        # explaining this
+        # We need to access each sub-preconditioner. We need to create them using
+        # pc.addCompositePCType(type). We do not know the type here, as it is provided
+        # in petsc options. So we create them with a placeholder type "none".
         pc_type = assembly_config.get(f"{prefix}sub_{i}_", {}).get("pc_type", "none")
         pc.addCompositePCType(pc_type)
+        # Access the newly created sub-preconditioner.
         sub_pc = pc.getCompositePC(i)
+        # Each sub-pc of a composite preconditioner works with the same Amat and Pmat.
         sub_pc.setOperators(*pc.getOperators())
+        # The actual type of each sub_pc will be fetched here from PETSc options.
         assemble_petsc_ksp_pc(
             ksp=ksp,
             pc=sub_pc,

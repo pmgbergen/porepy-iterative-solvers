@@ -73,8 +73,8 @@ class EquationVariableGroup(ABC):
     def __eq__(self, other: "EquationVariableGroup") -> bool:
         if not isinstance(other, EquationVariableGroup):
             return False
-        # Assuming groups are immutable! Probably this must be stated in the class doc.
-        return self.__class__ == other.__class__
+        # Assuming groups are immutable!
+        return hash(self) == hash(other)
 
     def __repr__(self) -> str:
         return self.__class__.__name__

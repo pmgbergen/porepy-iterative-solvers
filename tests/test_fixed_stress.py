@@ -15,7 +15,7 @@ from pp_solvers.fixed_stress import (
     get_fixed_stress_stabilization_porous_media,
 )
 from pp_solvers.petsc_utils import petsc_to_csr
-from pp_solvers.preconditioners import FixedStressInvertor
+from pp_solvers.preconditioners import FixedStressInverter
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -112,15 +112,15 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
                 assert submat.nnz == 0, submat
 
 
-def test_fixed_stress_invertor(model: pp.PorePyModel):
-    """Integration test that check that the configuration FixedStressInvertor provides a
+def test_fixed_stress_inverter(model: pp.PorePyModel):
+    """Integration test that check that the configuration FixedStressInverter provides a
     correct fixed stress matrix."""
     dof_manager: DofManager = model._solver_factory.dof_manager
-    invertor = FixedStressInvertor()
+    inverter = FixedStressInverter()
     bmat: BlockLinearSystem = model.bmat
 
-    config = invertor.petsc_assembly_config(dof_manager=dof_manager)
-    petsc_fs_matrix = petsc_to_csr(config["invertor_additive"](bmat.indexer))
+    config = inverter.petsc_assembly_config(dof_manager=dof_manager)
+    petsc_fs_matrix = petsc_to_csr(config["inverter_additive"](bmat.indexer))
 
     p_mat_group, p_frac_group = dof_manager.indices_of_groups(
         [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
