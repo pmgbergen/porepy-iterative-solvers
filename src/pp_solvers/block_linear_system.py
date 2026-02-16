@@ -1,3 +1,17 @@
+"""This module contains the `BlockLinearSystem` class. It wraps a linear system (sparse
+matrix and the rhs vector), where each degree of freedom corresponds to a particular
+part of a problem. E.g., for a coupled poromechanics problem, DoFs 0 - 999 correspond to
+the mass balance equation, and DoFs 1000 - 3999 correspond to the momentum balance
+equation. This class provides convenient indexing to operate with these submatrices.
+
+Internally, slicing of submatrices is handled by the `LinearSystemIndexer` class, which
+stores all the DoFs information.
+
+While PorePy is treated as the primary provided of block linear systems, the classes
+here do not depend on it, and can be used without establishing a PorePy model.
+
+"""
+
 from __future__ import annotations
 
 from typing import Literal, Optional
@@ -9,12 +23,14 @@ from scipy.sparse import coo_matrix, csr_matrix, spmatrix
 
 from pp_solvers.plot_linear_system import color_spy, matshow, plot_max, plot_vector
 
-__all__ = ["BlockLinearSystem"]
+__all__ = ["BlockLinearSystem", "LinearSystemIndexer"]
 
 
 class LinearSystemIndexer:
     """This class bookkeeps the information about row/column degrees of freedom of
-    groups of a block linear system."""
+    groups of a block linear system.
+
+    """
 
     def __init__(
         self,
@@ -76,15 +92,60 @@ class LinearSystemIndexer:
         if group_names_row is None:
             group_names_row = [str(i) for i in range(len(dofs_row))]
         self.group_names_row: list[str] = group_names_row
-        """List of group names for the rows."""
+        """List of group names for the rows. They typically represent equation names in
+        a multiphysics simulation, however, this information is stored here only for
+        debugging purposes and does not affect the behavior of the class. These names
+        are not necesserily the same as PorePy equation names. 
+
+        """
         if group_names_col is None:
             group_names_col = [str(i) for i in range(len(dofs_col))]
 
         self.group_names_col: list[str] = group_names_col
-        """List of group names for the columns."""
+        """List of group names for the columns. They typically represent variable names
+        in a multiphysics simulation, however, this information is stored here only for
+        debugging purposes and does not affect the behavior of the class. These names
+        are not necesserily the same as PorePy variable names. 
+
+        """
+
+    def __getitem__(self, key: list | slice | tuple) -> LinearSystemIndexer:
+        """Get a sub-indexer corresponding to the given group indices.
+
+        Parameters:
+            key: The key to index the matrix. See `BlockLinearSystem.__getitem__` for
+            permissible formats.
+
+        Raises:
+            IndexError: If a disabled or out-of-bounds group is selected.
+
+        Returns:
+            A block linear system object containing the selected groups.
+
+        """
+        # Unifying and validating the passed key.
+        key = self.correct_validate_getitem_key(key)
+        groups_row, groups_col = key
+
+        # Creating a new index for the sliced matrix, as it was likely permuted.
+        new_dofs_row, new_dofs_col = self._make_permutation_after_slicing(key)
+
+        # Return a new indexer object with the selected groups. Compared to
+        # the current inexer, the new object potentially has a subset of enabled groups,
+        # with a corresponding subset of local indices (dofs_row and dofs_col).
+        return LinearSystemIndexer(
+            dofs_row=new_dofs_row,
+            dofs_col=new_dofs_col,
+            original_dofs_row=self.original_dofs_row,  # unchanged
+            original_dofs_col=self.original_dofs_col,  # unchanged
+            group_names_col=self.group_names_col,  # unchanged
+            group_names_row=self.group_names_row,  # unchanged
+            enabled_groups_row=groups_row,
+            enabled_groups_col=groups_col,
+        )
 
     def get_dofs_of_groups(
-        self, key: tuple[list[int], list[int]]
+        self, key: list | slice | tuple
     ) -> tuple[np.ndarray, np.ndarray]:
         """Builds indices that can be used to slice a submatrix, corresponding to the
         provided groups.
@@ -98,7 +159,7 @@ class LinearSystemIndexer:
             Two arrays, corresponding to row and column indices.
 
         """
-        groups_row, groups_col = key
+        groups_row, groups_col = self.correct_validate_getitem_key(key)
 
         dofs_row = []
         for group in groups_row:
@@ -110,13 +171,11 @@ class LinearSystemIndexer:
 
         return concatenate_dof_indices(dofs_row), concatenate_dof_indices(dofs_col)
 
-    def make_permutation_after_slicing(
+    def _make_permutation_after_slicing(
         self, key: tuple[list[int], list[int]]
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        """Indices produced by `get_dofs_of_groups` can be used to slice a submatrix A.
-        This method returns indices that are used during creation of a
-        `BlockLinearSystem` of the submatrix A. They will be used later if we need to
-        slice a submatrix B originating from submatrix A.
+        """Produces new indices that correspond to a new submatrix, generated by slicing
+        in with the given key.
 
         Parameters:
             key: The groups of rows and columns. Does not validate input, so if key is
@@ -148,8 +207,8 @@ class LinearSystemIndexer:
     def correct_validate_getitem_key(
         self, key: list | slice | tuple
     ) -> tuple[list[int], list[int]]:
-        """Helper function to process the key for __getitem__ and __setitem__. See the
-        former method of `BlockLinearSystem` for permissible formats.
+        """Helper function to unify the format of the key, passed into __getitem__ and
+        __setitem__. See `BlockLinearSystem.__getitem__` for permissible formats.
 
         """
         # Since the key is defined as a single argument (see __getitem__), passing
@@ -182,7 +241,7 @@ class LinearSystemIndexer:
                 try:
                     # Try to iterate over the key. If not successful (which means this
                     # is an int?), convert to a list.
-                    iter(key_)
+                    iter(key_)  # type: ignore
                     result = key_
                 except TypeError:
                     result = [key_]
@@ -256,28 +315,28 @@ class BlockLinearSystem:
             f"with {rows}x{cols} enabled groups."
         )
 
-    # Slicing
+    # MARK: Slicing
 
     def __getitem__(self, key: list | slice | tuple) -> BlockLinearSystem:
-        """Get a subset of blocks from the matrix. The block indexing is defined
-        according to the groups
+        """Get a block submatrix corresponding to the given group indices.
 
         The following indexing is supported:
 
-        - `1, 2`: Get the block corresponding to row block index 1 and column block
-           index 2. Results in submatrix [J_12].
-        - `[1, 2]`: Get the blocks corresponding row block indices 1 and 2 and column
-           block indices 1 and 2. Results in the submatrix [[J_11, J_12], [J_21, J_22]].
-        - `([1, 2], [3, 4])`: Get the blocks corresponding to row block indices 1 and 2
-           and column block indices 3 and 4. Results in the submatrix
+        - `1, 2`: Get the submatrix corresponding to the single row group index 1 and
+           column group index 2. Results in submatrix [J_12].
+        - `[1, 2]`: Get the submatrix corresponding to multiple row group indices 1 and
+           2 and column group indices 1 and 2. Results in the submatrix
+           [[J_11, J_12], [J_21, J_22]].
+        - `([1, 2], [3, 4])`: Get the groups corresponding to row group indices 1 and 2
+           and column group indices 3 and 4. Results in the submatrix
            [[J_13, J_14], [J_23, J_24]].
-        - `:, [1, 2]: Get all row blocks and column blocks 1 and 2. Results in the
+        - `:, [1, 2]: Get all row groups and column groups 1 and 2. Results in the
            submatrix [[J_11, J_12], [J_21, J_22], ..., [J_m1, J_m2]], where m is the
-           maximum row block index.
-        - `[1, 2], :`: Get row blocks 1 and 2 and all column blocks. Results in the
+           maximum row group index.
+        - `[1, 2], :`: Get row groups 1 and 2 and all column groups. Results in the
            submatrix [[J_11, J_12, ..., J_1n], [J_21, J_22, ..., J_2n]], where n is the
-           maximum column block index.
-        - `[1, 2], 1:4`: Get row blocks 1 and 2 and column blocks 1 to 3. Results in
+           maximum column group index.
+        - `[1, 2], 1:4`: Get row groups 1 and 2 and column blocks 1 to 3. Results in
            the submatrix [[J_11, J_12, J_13], [J_21, J_22, J_23]].
 
         Indices can be given by tuples as well as lists. The indexing is 0-based.
@@ -296,27 +355,18 @@ class BlockLinearSystem:
             A block linear system object containing the selected groups.
 
         """
-        # Unifying and validating the passed key.
-        key = self.indexer.correct_validate_getitem_key(key)
-        groups_row, groups_col = key
-
         # Preparing the indices for slicing.
         groups_dofs_row, groups_dofs_col = self.indexer.get_dofs_of_groups(key)
-        dofs_row_for_slicing = groups_dofs_row
-        dofs_col_for_slicing = groups_dofs_col
         rows_expanded, cols_expanded = np.meshgrid(
-            dofs_row_for_slicing,
-            dofs_col_for_slicing,
+            groups_dofs_row,
+            groups_dofs_col,
             sparse=True,
             indexing="ij",
             copy=False,
         )
         # Slicing the matrix and the rhs.
         sliced_matrix = self.mat[rows_expanded, cols_expanded]
-        rhs = self.rhs[dofs_row_for_slicing]
-
-        # Creating a new index for the sliced matrix, as it was likely permuted.
-        new_dofs_row, new_dofs_col = self.indexer.make_permutation_after_slicing(key)
+        rhs = self.rhs[groups_dofs_row]
 
         # Return a new block linear system object with the selected blocks. Compared to
         # the current object, the new object potentially has a subset of enabled groups,
@@ -324,16 +374,7 @@ class BlockLinearSystem:
         return BlockLinearSystem(
             mat=sliced_matrix,
             rhs=rhs,
-            indexer=LinearSystemIndexer(
-                dofs_row=new_dofs_row,
-                dofs_col=new_dofs_col,
-                original_dofs_row=self.indexer.original_dofs_row,  # unchanged
-                original_dofs_col=self.indexer.original_dofs_col,  # unchanged
-                group_names_col=self.indexer.group_names_col,  # unchanged
-                group_names_row=self.indexer.group_names_row,  # unchanged
-                enabled_groups_row=groups_row,
-                enabled_groups_col=groups_col,
-            ),
+            indexer=self.indexer[key],
             validate_input=False,
         )
 
@@ -443,7 +484,7 @@ class BlockLinearSystem:
         result[concatenate_dof_indices(dofs)] = vec
         return result
 
-    # Efficient matrix construction
+    # MARK: Matrix construction
 
     def set_zeros(
         self, group_row_idx: list[int] | int, group_col_idx: list[int] | int
@@ -484,7 +525,7 @@ class BlockLinearSystem:
         tmp = coo_matrix((values, (dofs_row, dofs_col)), shape=self.mat.shape).tocsr()
         self.mat += tmp
 
-    # Visualization
+    # MARK: Visualization
 
     def color_spy(
         self,

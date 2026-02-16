@@ -1,3 +1,5 @@
+"""This module contains utility functions to operate with sparse matrices."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -15,7 +17,8 @@ __all__ = [
 def build_mechanics_near_null_space(
     model: pp.PorePyModel, include_sd=True, include_intf=True
 ):
-    # YZ: this function will probably go somewhere else.
+    # YZ: this function will probably go somewhere else. It is currently not in use, but
+    # we will definitely need it at some point.
     cell_center_array = []
     if include_sd:
         cell_center_array.append(model.mdg.subdomains(dim=model.nd)[0].cell_centers)
@@ -73,10 +76,15 @@ def build_mechanics_near_null_space(
 
 
 def csr_ones(n: int) -> scipy.sparse.csr_matrix:
+    """Constructs a square sparse matrix with ones on the diagonal."""
     return scipy.sparse.eye(n, format="csr")
 
 
 def inv_block_diag(mat, nd: int):
+    """Inverses the small block matrices (nd x nd) located on the matrix diagonal.
+    Ignores the nonzero entities outside the small block matrices.
+
+    """
     # YZ: The equivalent function in porepy is not truly equivalent, because this one
     # ignores the nonzero entries outside the block diagonal, and PorePy raises an
     # exception. Thus it cannot be easily replaced.
@@ -86,8 +94,7 @@ def inv_block_diag(mat, nd: int):
         return _inv_block_diag_2x2(mat)
     if nd == 3:
         return _inv_block_diag_3x3(mat)
-    print(f"Using inefficient invert block diag, {nd = }")
-    return _inv_direct(_diag_nd(mat, nd=nd))
+    raise ValueError(f"{nd = } not supported.")
 
 
 def _extract_diag_inv(mat, eliminate_zeros=False):
@@ -120,17 +127,6 @@ def _inv_block_diag_2x2(mat):
     upper[::2] = -b / det
 
     return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
-
-
-def _diag_nd(mat, nd: int):
-    result = scipy.sparse.lil_matrix(mat.shape)
-    indices = np.arange(0, mat.shape[0], nd)
-    for i in range(nd):
-        for j in range(nd):
-            indices_i = indices + i
-            indices_j = indices + j
-            result[indices_i, indices_j] = mat[indices_i, indices_j]
-    return result.tocsr()
 
 
 @njit
@@ -171,9 +167,3 @@ def _inv_block_diag_3x3(mat):
     ).transpose(2, 0, 1)
     mats_3x3_inv = _inv_list_of_matrices(mats_3x3)
     return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
-
-
-def _inv_direct(mat):
-    return scipy.sparse.csr_matrix(
-        scipy.sparse.linalg.inv(scipy.sparse.csc_matrix(mat))
-    )

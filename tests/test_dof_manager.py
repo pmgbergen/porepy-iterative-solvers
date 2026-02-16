@@ -17,8 +17,19 @@ import pytest
 from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
+from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.preconditioners import SinglePhysicsPreconditioner
+from pp_solvers.equation_variable_groups import (
+    ContactMechanicsGroup,
+    EnergyBalanceTemperatureGroup,
+    EquationOnDomains,
+    EquationVariableGroup,
+    InterfaceForceBalanceGroup,
+    MassBalancePressureFracturesGroup,
+    MassBalancePressureIntersectionsGroup,
+    MassBalancePressureMatrixGroup,
+)
+from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -66,7 +77,7 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
 
 
 @pytest.fixture(scope="module")
-def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
+def solvers(model_kind: str) -> PetscKspPcConfiguration:
     match model_kind:
         case "flow":
             return pp_solvers.mass_balance_factory()
@@ -83,17 +94,16 @@ def solvers(model_kind: str) -> list[SinglePhysicsPreconditioner]:
 
 
 @pytest.fixture(scope="module")
-def dof_manager(
-    model: pp.PorePyModel, solvers: list[SinglePhysicsPreconditioner]
-) -> DofManager:
-    return DofManager(model, solvers)
+def dof_manager(model: pp.PorePyModel, solvers: PetscKspPcConfiguration) -> DofManager:
+    return DofManager(model, solvers.groups)
 
 
 @pytest.fixture(scope="module")
-def expected_composition(
+def expected_num_dofs_in_groups(
     model: pp.PorePyModel, model_kind: str
-) -> dict[str, np.ndarray]:
-    """The expected values for the tests."""
+) -> dict[str, int]:
+    """The expected values for the tests. Returns a mapping of a group name to the
+    number of DoFs of the corresponding groups."""
 
     # Constructing relevant sets of domains.
     all_subdomains = model.mdg.subdomains()
@@ -109,13 +119,13 @@ def expected_composition(
     porous_media_subdomains = model.mdg.subdomains(dim=model.nd)
 
     # And counting the number of cells in each.
-    all_subdomains = np.array([x.num_cells for x in all_subdomains])
-    fractures = np.array([x.num_cells for x in fractures])
-    all_interfaces_codim_1 = np.array([x.num_cells for x in all_interfaces_codim_1])
-    all_interfaces_codim_2 = np.array([x.num_cells for x in all_interfaces_codim_2])
-    intersections = np.array([x.num_cells for x in intersections])
-    interfaces_ambient_frac = np.array([x.num_cells for x in interfaces_ambient_frac])
-    porous_media_subdomains = np.array([x.num_cells for x in porous_media_subdomains])
+    all_subdomains = sum([x.num_cells for x in all_subdomains])
+    fractures = sum([x.num_cells for x in fractures])
+    all_interfaces_codim_1 = sum([x.num_cells for x in all_interfaces_codim_1])
+    all_interfaces_codim_2 = sum([x.num_cells for x in all_interfaces_codim_2])
+    intersections = sum([x.num_cells for x in intersections])
+    interfaces_ambient_frac = sum([x.num_cells for x in interfaces_ambient_frac])
+    porous_media_subdomains = sum([x.num_cells for x in porous_media_subdomains])
 
     nd = model.nd
 
@@ -141,14 +151,12 @@ def expected_composition(
                 "intf_heat_diffusion": all_interfaces_codim_1,
                 "well_flux_equation": all_interfaces_codim_2,
                 "well_enthalpy_flux_equation": all_interfaces_codim_2,
+                # Energy balance ambient, fractures, lower (together).
+                "energy_balance": all_subdomains,
                 # Mass balance ambient, fractures, lower (separately).
                 "mass_balance_ambient": porous_media_subdomains,
                 "mass_balance_fractures": fractures,
                 "mass_balance_intersections": intersections,
-                # Energy balance ambient, fractures, lower (separately).
-                "energy_balance_ambient": porous_media_subdomains,
-                "energy_balance_fractures": fractures,
-                "energy_balance_intersections": intersections,
             }
         case "HM":
             return {
@@ -174,268 +182,182 @@ def expected_composition(
                 # Elasticity and force balance.
                 "momentum_balance": porous_media_subdomains * nd,
                 "intf_force_balance": interfaces_ambient_frac * nd,
+                # Energy balance ambient, fractures, lower (together).
+                "energy_balance": all_subdomains,
                 # Mass balance ambient, fractures, lower (separately).
                 "mass_balance_ambient": porous_media_subdomains,
                 "mass_balance_fractures": fractures,
                 "mass_balance_intersections": intersections,
-                # Energy balance ambient, fractures, lower (separately).
-                "energy_balance_ambient": porous_media_subdomains,
-                "energy_balance_fractures": fractures,
-                "energy_balance_intersections": intersections,
             }
         case default:
             raise ValueError(default)
 
 
-# Tests begin here.
+# MARK: Tests begin here.
 
 
-def test_variable_equation_groups(dof_manager: DofManager, expected_composition: dict):
-    """Tests properties `variable_groups` and `equation_groups`."""
-    variable_groups = dof_manager.variable_groups
-    equation_groups = dof_manager.equation_groups
-
-    # All indices within groups should form a range [0, num_groups).
-    flat_variable_groups = [idx for group in variable_groups for idx in group]
-    flat_equation_groups = [idx for group in equation_groups for idx in group]
-    assert np.all(np.arange(len(flat_equation_groups)) == np.sort(flat_equation_groups))
-    assert np.all(np.arange(len(flat_variable_groups)) == np.sort(flat_variable_groups))
-
-    # We check the expected composition.
-    assert len(variable_groups) == len(equation_groups) == len(expected_composition)
-    for i, expected_domains in enumerate(expected_composition.values()):
-        len_expected_domains = len(expected_domains)
-        assert len(variable_groups[i]) == len_expected_domains
-        assert len(equation_groups[i]) == len_expected_domains
-
-
-def test_eq_var_dofs_by_blocks(
+def test_eq_var_dofs(
     dof_manager: DofManager,
-    model: pp.PorePyModel,
-    expected_composition: dict[str, np.ndarray],
+    expected_num_dofs_in_groups: dict[str, int],
 ):
-    """Tests methods `eq_dofs_by_blocks` and `var_dofs_by_blocks`. This test assumes
-    that properties `variable_groups` and `equation_groups` work correctly as tested in
-    `test_variable_equation_groups`.
+    """Tests methods `eq_dofs` and `var_dofs`."""
+    eq_dofs = dof_manager.eq_dofs()
+    var_dofs = dof_manager.var_dofs()
 
-    """
-    eq_dofs_by_blocks = dof_manager.eq_dofs_by_blocks(model)
-    var_dofs_by_blocks = dof_manager.var_dofs_by_blocks(model)
-
-    # The number of dofs_by_blocks must be as expected in their groups.
-    variable_groups = dof_manager.variable_groups
-    equation_groups = dof_manager.equation_groups
-    flat_variable_groups = [idx for group in variable_groups for idx in group]
-    flat_equation_groups = [idx for group in equation_groups for idx in group]
-    assert len(eq_dofs_by_blocks) == len(flat_equation_groups)
-    assert len(var_dofs_by_blocks) == len(flat_variable_groups)
-
-    # Total number of dofs must be equal to the problem size
-    total_num_dofs = model.equation_system.num_dofs()
-    flat_eq_dofs = [idx for block in eq_dofs_by_blocks for idx in block]
-    flat_var_dofs = [idx for block in var_dofs_by_blocks for idx in block]
-    assert np.all(np.arange(total_num_dofs) == np.sort(flat_eq_dofs))
-    assert np.all(np.arange(total_num_dofs) == np.sort(flat_var_dofs))
-
-    # We check the expected composition.
-    for i, expected_num_dofs in enumerate(expected_composition.values()):
-        # We take dofs of all subdomains/interfaces that are in the same group.
-        expected_num_dofs = sum(expected_num_dofs)
-        num_eq_dofs_in_group = sum(
-            dofs.size for blk in equation_groups[i] for dofs in eq_dofs_by_blocks[blk]
-        )
-        num_var_dofs_in_group = sum(
-            dofs.size for blk in variable_groups[i] for dofs in var_dofs_by_blocks[blk]
-        )
-        assert num_eq_dofs_in_group == expected_num_dofs
-        assert num_var_dofs_in_group == expected_num_dofs
-
-
-def test_blocks_of_solver(
-    dof_manager: DofManager,
-    solvers: list[SinglePhysicsPreconditioner],
-    model_kind: str,
-    expected_composition: dict,
-):
-    """Tests method `blocks_of_solver` against known expected compositions."""
-    match model_kind:
-        case "flow":
-            expected = [
-                [
-                    "intf_fluid_flux",
-                    "well_flux_equation",
-                ],
-                ["mass_balance_everywhere"],
-            ]
-        case "mechanics":
-            expected = [
-                ["contact"],
-                [
-                    "momentum_balance",
-                    "intf_force_balance",
-                ],
-            ]
-        case "TH":
-            expected = [
-                [
-                    "intf_fluid_flux",
-                    "intf_heat_advection",
-                    "intf_heat_diffusion",
-                    "well_flux_equation",
-                    "well_enthalpy_flux_equation",
-                ],
-                [
-                    "mass_balance_ambient",
-                    "mass_balance_fractures",
-                    "mass_balance_intersections",
-                    "energy_balance_ambient",
-                    "energy_balance_fractures",
-                    "energy_balance_intersections",
-                ],
-            ]
-        case "HM":
-            expected = [
-                ["contact"],
-                [
-                    "intf_fluid_flux",
-                    "well_flux_equation",
-                ],
-                [
-                    "momentum_balance",
-                    "intf_force_balance",
-                ],
-                [
-                    "mass_balance_ambient",
-                    "mass_balance_fractures",
-                    "mass_balance_intersections",
-                ],
-            ]
-        case "THM":
-            expected = [
-                ["contact"],
-                [
-                    "intf_fluid_flux",
-                    "intf_heat_advection",
-                    "intf_heat_diffusion",
-                    "well_flux_equation",
-                    "well_enthalpy_flux_equation",
-                ],
-                [
-                    "momentum_balance",
-                    "intf_force_balance",
-                ],
-                [
-                    "mass_balance_ambient",
-                    "mass_balance_fractures",
-                    "mass_balance_intersections",
-                    "energy_balance_ambient",
-                    "energy_balance_fractures",
-                    "energy_balance_intersections",
-                ],
-            ]
-        case default:
-            raise ValueError(default)
-
-    keys = list(expected_composition.keys())
-    index_groups = [[keys.index(k) for k in group] for group in expected]
-
-    assert len(solvers) == len(expected)
-    for expected_blocks_of_solver, solver in zip(index_groups, solvers):
-        assert dof_manager.blocks_of_solver(solver) == expected_blocks_of_solver
-
-
-def test_identify_contact_group(dof_manager: DofManager, expected_composition: dict):
-    try:
-        expected = list(expected_composition.keys()).index("contact")
-    except ValueError:
-        expected = None
-    assert dof_manager.identify_contact_group() == expected
-
-
-def test_identify_u_intf_group(
-    dof_manager: DofManager,
-    model: pp.PorePyModel,
-    expected_composition: dict,
-    with_fractures: bool,
-):
-    if with_fractures:
-        try:
-            expected = list(expected_composition.keys()).index("intf_force_balance")
-        except ValueError:
-            expected = None
-    else:
-        expected = None
-
-    assert dof_manager.identify_u_intf_group(model) == expected
-
-
-def test_identify_energy_balance_group(
-    dof_manager: DofManager,
-    expected_composition: dict,
-):
-    expected = list(
-        i for i, key in enumerate(expected_composition) if "energy_balance" in key
+    # The number of dof arrays must be as the number of expected values.
+    assert (
+        len(eq_dofs)
+        == len(var_dofs)
+        == len(expected_num_dofs_in_groups)
+        == len(dof_manager.groups())
     )
-    assert dof_manager.identify_energy_balance_groups() == expected
+
+    # eq_dofs and var_dofs should include all dofs of the problem, no duplicates, no
+    # values out of range.
+    total_num_dofs = sum([array.size for array in dof_manager.eq_dofs()])
+    assert np.all(
+        np.arange(total_num_dofs) == np.sort(concatenate_dof_indices(eq_dofs))
+    )
+    assert np.all(
+        np.arange(total_num_dofs) == np.sort(concatenate_dof_indices(var_dofs))
+    )
+
+    # We check the number of dofs in each group.
+    for i, expected_num_dofs in enumerate(expected_num_dofs_in_groups.values()):
+        # We take dofs of all subdomains/interfaces that are in the same group.
+        assert eq_dofs[i].size == expected_num_dofs
+        assert var_dofs[i].size == expected_num_dofs
 
 
-def test_eq_rows_permutation(dof_manager: DofManager, model: pp.PorePyModel):
-    """This tests the method `eq_rows_permutation`, assuming that `eq_dofs_by_blocks`,
-    `equation_groups` and `identify_contact_group` work correctly, as tested above.
+@pytest.mark.parametrize(
+    "params",
+    [
+        pytest.param(
+            {"keys": ["energy_balance"], "groups": [EnergyBalanceTemperatureGroup()]},
+            id="energy_balance",
+        ),
+        pytest.param(
+            {"keys": ["intf_force_balance"], "groups": [InterfaceForceBalanceGroup()]},
+            id="u_intf",
+        ),
+        pytest.param(
+            {"keys": ["contact"], "groups": [ContactMechanicsGroup()]}, id="contact"
+        ),
+        pytest.param(
+            {
+                "keys": [
+                    "mass_balance_fractures",
+                    "mass_balance_ambient",
+                    "mass_balance_intersections",
+                ],
+                "groups": [
+                    MassBalancePressureFracturesGroup(),
+                    MassBalancePressureMatrixGroup(),
+                    MassBalancePressureIntersectionsGroup(),
+                ],
+            },
+            id="mass_balance",
+        ),
+        pytest.param(
+            {
+                "keys": ["contact", "energy_balance"],
+                "groups": [ContactMechanicsGroup(), EnergyBalanceTemperatureGroup()],
+            },
+            id="contact_and_energy",
+        ),
+    ],
+)
+def test_indices_of_groups(
+    dof_manager: DofManager, expected_num_dofs_in_groups: dict[str, int], params: dict
+):
+    """Checks that `DofManager.indices_of_groups` returns expected groups or raises."""
+    keys: list[str] = params["keys"]
+    groups: list[EquationVariableGroup] = params["groups"]
+
+    try:
+        expected_groups = [
+            list(expected_num_dofs_in_groups.keys()).index(key) for key in keys
+        ]
+        should_raise = False
+    except ValueError:
+        # If at least one not found, we expect the method to raise ValueError.
+        expected_groups = []
+        should_raise = True
+
+    if should_raise:
+        with pytest.raises(ValueError):
+            dof_manager.indices_of_groups(groups=groups)
+    else:
+        assert dof_manager.indices_of_groups(groups=groups) == expected_groups
+
+
+def test_permute_contact_dofs(dof_manager: DofManager):
+    """This tests the method `_permute_contact_dofs`, assuming that `eq_dofs` and
+    `indices_of_groups` work correctly, as tested above.
 
     """
-    # Constructing the expected permutation. So far, it is equivalent to
-    # np.arange(num_dofs), meaning no permutation. This is the right behavior if contact
-    # mechanics is not present in the model. If it is, we will modify the array below.
-    eq_dofs_by_blocks = dof_manager.eq_dofs_by_blocks(model)
-    expected_permutation = np.concatenate(eq_dofs_by_blocks)
+    assert dof_manager.model.nd == 2, "This test assumes a 2D problem."
 
     # Checking if there is contact mechanics in the model.
-    contact_group = dof_manager.identify_contact_group()
-    if contact_group is not None:
-        # Construct the expected permutation vector: The contact equations should be
-        # permuted so that the normal and tangential equations are grouped together for
-        # each fracture cell. Other equations should be unperturbed.
-        blocks_in_contact_group = dof_manager.equation_groups[contact_group]
+    try:
+        contact_group = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
+    except ValueError:
+        return  # Skipping this test if no contact group.
 
-        # Making a list of contact mechanics dofs. Each element is an array of contact
-        # dofs for a single fracture.
-        dofs_in_contact_group = [
-            eq_dofs_by_blocks[blk] for blk in blocks_in_contact_group
-        ]
+    dofs_in_contact_group = dof_manager.eq_dofs()[contact_group]
+    if len(dofs_in_contact_group) == 0:
+        return  # Skipping this test if the contact group is formally present but empty.
 
-        # The list can be empty if the contact equation is present, but there are no
-        # fractures in the model. In this case, we do nothing.
-        if len(dofs_in_contact_group) > 0:
-            # Making a flat array of dofs correspoding to all fractures.
-            dofs_in_contact_group = np.concatenate(dofs_in_contact_group)
-
-            # First half of the array - normal component for all fractures.
-            # Second half of the array - tangential.
-            # TODO: Probably, should extend this test for 3D.
-            mid = dofs_in_contact_group.size // 2
-
-            # Making the normal and tangential dofs for a each grid cell live together.
-            perfuted_contact_dofs = np.stack(
-                [dofs_in_contact_group[:mid], dofs_in_contact_group[mid:]]
-            ).ravel("F")
-
-            # Setting the permutation array to the contact mechanics location.
-            expected_permutation[dofs_in_contact_group] = perfuted_contact_dofs
-
-    result = dof_manager.eq_rows_permutation(model)
-    assert np.all(expected_permutation == result)
+    # DoFs in the contact groups should be already permuted in DofManager.__init__.
+    # We check that permuting them back will give an increasing order.
+    np.testing.assert_equal(
+        np.vstack([dofs_in_contact_group[::2], dofs_in_contact_group[1::2]]).ravel(),
+        np.arange(dofs_in_contact_group[0], dofs_in_contact_group[-1] + 1),
+    )
 
 
-def test_equation_variable_names(
-    dof_manager: DofManager, model: pp.PorePyModel, expected_composition: dict
-):
+def test_equation_variable_names(dof_manager: DofManager):
     """This is a simple regression test ensuring that `equation_names` and
     `variable_names` don't raise.
 
     """
-    equation_names = dof_manager.equation_names(model)
+    equation_names = dof_manager.equation_names()
     assert all(isinstance(name, str) for name in equation_names)
 
-    variable_names = dof_manager.variable_names(model)
+    variable_names = dof_manager.variable_names()
     assert all(isinstance(name, str) for name in variable_names)
+
+
+class DuplicatingGroup(EquationVariableGroup):
+    """This group has the same equation as the `EnergyBalanceTemperatureGroup` group
+    and same variable as the `MassBalancePressureMatrixGroup` group.
+
+    """
+
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        return EnergyBalanceTemperatureGroup().equation_group(model=model)
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        return MassBalancePressureMatrixGroup().variable_group(model=model)
+
+    def equation_name(self, model: pp.PorePyModel) -> str:
+        return "something"
+
+    def variable_name(self, model: pp.PorePyModel) -> str:
+        return "something"
+
+
+def test_duplicating_equations(model: pp.PorePyModel, model_kind: str):
+    if model_kind not in ["TH", "THM"]:
+        return  # Skip this test for other models.
+    groups = [EnergyBalanceTemperatureGroup(), DuplicatingGroup()]
+    with pytest.raises(ValueError):
+        _ = DofManager(model=model, groups=groups)
+
+
+def test_duplicating_variables(model: pp.PorePyModel, model_kind: str):
+    if model_kind not in ["TH", "THM"]:
+        return  # Skip this test for other models.
+    groups = [MassBalancePressureMatrixGroup(), DuplicatingGroup()]
+    with pytest.raises(ValueError):
+        _ = DofManager(model=model, groups=groups)

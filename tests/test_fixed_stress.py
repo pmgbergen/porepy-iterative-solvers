@@ -1,17 +1,21 @@
 import numpy as np
 import porepy as pp
 import pytest
-from porepy.applications.test_utils.models import add_mixin
 
 import pp_solvers
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.preconditioners import SinglePhysicsPreconditioner
-
-from pp_solvers.fixed_stress import (
-    make_fs_analytical_slow_new,
-    get_fixed_stress_stabilization,
-    get_fs_fractures_analytical,
+from pp_solvers.equation_variable_groups import (
+    MassBalancePressureFracturesGroup,
+    MassBalancePressureMatrixGroup,
 )
+from pp_solvers.fixed_stress import (
+    construct_fixed_stress_block_matrix,
+    get_fixed_stress_stabilization_fractures,
+    get_fixed_stress_stabilization_porous_media,
+)
+from pp_solvers.petsc_utils import petsc_to_csr
+from pp_solvers.preconditioners import FixedStressInverter
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -47,14 +51,6 @@ def model(with_fractures) -> pp.PorePyModel:
     }
     model = TailoredClass(params=params)
     model.prepare_simulation()
-    model.before_nonlinear_loop()
-    model.before_nonlinear_iteration()
-    model.assemble_linear_system()
-    return model
-
-
-def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bool):
-    jacobian = model.bmat
 
     # The fixed stress in fractures requires a non-zero u_intf jump.
     interfaces = model.mdg.interfaces(dim=model.nd - 1)
@@ -65,22 +61,38 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
         values=u_intf_values, variables=[u_intf], iterate_index=0
     )
 
-    # YZ: Is there a better way than hard-coding these numbers?
-    num_groups = 14
-    p_mat_group = 8
-    p_frac_group = 9
+    model.before_nonlinear_loop()
+    model.before_nonlinear_iteration()
+    model.assemble_linear_system()
+    return model
+
+
+def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bool):
+    """The function to compose the fixed stress stabilization for the block matrix is
+    `make_fs_analytical_slow_new`. This checks that it does the right things - modifies
+    the pressure diagonal blocks and keeps everything else not touched."""
+
+    jacobian = model.bmat
+
+    dof_manager: DofManager = model._solver_factory.dof_manager
+    num_groups = len(dof_manager.groups())
+    try:
+        p_mat_group, p_frac_group = dof_manager.indices_of_groups(
+            [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+        )
+    except:
+        assert False, "These groups should be present."
 
     all_groups = list(range(num_groups))
-    result = make_fs_analytical_slow_new(
-        J=jacobian,
+    result = construct_fixed_stress_block_matrix(
+        indexer=jacobian.indexer,
         model=model,
         p_mat_group=p_mat_group,
         p_frac_group=p_frac_group,
-        groups=all_groups,
     )
 
-    expected_matrix = get_fixed_stress_stabilization(model).toarray()
-    expected_fractures = get_fs_fractures_analytical(model).toarray()
+    expected_matrix = get_fixed_stress_stabilization_porous_media(model).toarray()
+    expected_fractures = get_fixed_stress_stabilization_fractures(model).toarray()
 
     # We check that the right stabilization submatrices are placed correctly, and there
     # is nothing else.
@@ -98,3 +110,28 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
                 np.testing.assert_equal(submat.toarray(), expected_fractures)
             else:
                 assert submat.nnz == 0, submat
+
+
+def test_fixed_stress_inverter(model: pp.PorePyModel):
+    """Integration test that check that the configuration FixedStressInverter provides a
+    correct fixed stress matrix."""
+    dof_manager: DofManager = model._solver_factory.dof_manager
+    inverter = FixedStressInverter()
+    bmat: BlockLinearSystem = model.bmat
+
+    config = inverter.petsc_assembly_config(dof_manager=dof_manager)
+    petsc_fs_matrix = petsc_to_csr(config["inverter_additive"](bmat.indexer))
+
+    p_mat_group, p_frac_group = dof_manager.indices_of_groups(
+        [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+    )
+
+    expected_matrix = construct_fixed_stress_block_matrix(
+        dof_manager.model,
+        bmat.indexer,
+        p_mat_group=p_mat_group,
+        p_frac_group=p_frac_group,
+    ).mat
+
+    # These should be identical.
+    assert np.all((petsc_fs_matrix - expected_matrix).data == 0)

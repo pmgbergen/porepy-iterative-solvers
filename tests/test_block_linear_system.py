@@ -6,84 +6,33 @@ class.
 import numpy as np
 import pytest
 import scipy.sparse as sp
+from testing_utils import (
+    generate_reference_dofs_3_groups,
+    generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+    generate_reference_submatrices_3_groups,
+)
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-
-
-# The submatrices of the tested matrix are defined globally to generate tests.
-_J00 = [
-    [5, 1, 1],
-    [2, 5, 1],
-    [2, 2, 5],
-]
-_J01 = [
-    [1, 3, 0, 0],
-    [2, 3, 1, 1],
-    [1, 3, 0, 0],
-]
-_J02 = [
-    [3, -1],
-    [-2, 3],
-    [-2, 2],
-]
-_J10 = [
-    [-2, 0, 2],
-    [2, 0, -2],
-    [-2, 1, 2],
-    [2, 1, -2],
-]
-_J11 = [
-    [6, 1, 5, 1],
-    [1, 6, 1, 5],
-    [2, 1, 6, 2],
-    [1, 2, 2, 6],
-]
-_J12 = [
-    [1, 1],
-    [0, 1],
-    [1, 2],
-    [0, 2],
-]
-_J20 = [
-    [-3, 1, 1],
-    [2, -3, 1],
-]
-_J21 = [
-    [-1, -3, 5, 0],
-    [-2, -3, 0, 5],
-]
-_J22 = [
-    [-3, 1],
-    [2, -3],
-]
 
 
 @pytest.fixture
 def sample_linear_system() -> BlockLinearSystem:
     """The block matrix we use in all the tests. It contains one empty group."""
+    reference_dofs_row_3_groups, reference_dofs_col_3_groups = (
+        generate_reference_dofs_3_groups()
+    )
     return BlockLinearSystem(
-        # The matrix is intentionally shuffled from the start, as we expect PorePy to
-        # generate blocks not in the order we want here.
-        mat=sp.block_array(
-            [
-                [_J22, _J21, _J20],
-                [_J12, _J11, _J10],
-                [_J02, _J01, _J00],
-            ]
-        )
-        .astype(float)
-        .tocsr(),
-        # The rhs is arranged for groups [2, 1, 0], same as the original matrix.
-        rhs=np.array([30, 31, 20, 21, 22, 23, 10, 11, 12]),
+        mat=generate_reference_matrix_3_groups(),
+        rhs=generate_reference_rhs_3_groups(),
         indexer=LinearSystemIndexer(
-            dofs_row=[
-                np.array(x, dtype=int) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]
-            ],
-            dofs_col=[
-                np.array(x, dtype=int) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]
-            ],
+            dofs_row=reference_dofs_row_3_groups,
+            dofs_col=reference_dofs_col_3_groups,
         ),
     )
+
+
+J00, J01, J02, J10, J11, J12, J20, J21, J22 = generate_reference_submatrices_3_groups()
 
 
 @pytest.mark.parametrize(
@@ -91,35 +40,35 @@ def sample_linear_system() -> BlockLinearSystem:
     [
         # Diagonal blocks are not square submatrices.
         {
-            "submatrices": [[_J10, _J11], [_J00, _J01]],
+            "submatrices": [[J10, J11], [J00, J01]],
             "dofs_row": [[0, 1, 2, 3], [4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "raises": True,
         },
         # Too few dofs.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5]],
             "dofs_col": [[0, 1, 2], [3, 4, 5]],
             "raises": True,
         },
         # Too many dofs.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2, 3], [4, 5, 6, 7]],
             "dofs_col": [[0, 1, 2, 3], [4, 5, 6, 7]],
             "raises": True,
         },
         # Correct shape but garbage values.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[1, 7, 123], [3, 55, 66, 87]],
             "dofs_col": [[643, 12, 42], [312, 2, 32, 52]],
             "raises": True,
         },
         # Too few enabled groups.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "enabled_groups_row": [1],
@@ -128,7 +77,7 @@ def sample_linear_system() -> BlockLinearSystem:
         },
         # Too many enabled groups.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "enabled_groups_row": [0, 1, 2],
@@ -137,7 +86,7 @@ def sample_linear_system() -> BlockLinearSystem:
         },
         # Correct number of enabled groups, but garbage values.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "enabled_groups_row": [0, 5],
@@ -146,14 +95,14 @@ def sample_linear_system() -> BlockLinearSystem:
         },
         # Just a normal matrix creation with all default parameters.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "raises": False,
         },
         # Inconsistent rhs shape.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "rhs": np.ones(8, dtype=float),
@@ -161,7 +110,7 @@ def sample_linear_system() -> BlockLinearSystem:
         },
         # Inconsistent group names - too few.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "group_names_row": ["a"] * 6,
@@ -170,7 +119,7 @@ def sample_linear_system() -> BlockLinearSystem:
         },
         # Inconsistent group names - too many.
         {
-            "submatrices": [[_J00, _J01], [_J10, _J11]],
+            "submatrices": [[J00, J01], [J10, J11]],
             "dofs_row": [[0, 1, 2], [3, 4, 5, 6]],
             "dofs_col": [[0, 1, 2], [3, 4, 5, 6]],
             "group_names_row": ["a"] * 8,
@@ -193,7 +142,7 @@ def test_block_linear_system_creation(params):
     if raises:
         with pytest.raises(Exception):
             _ = BlockLinearSystem(
-                mat=sp.block_array(submatrices).astype(float).tocsr(),
+                mat=sp.csr_matrix(sp.block_array(submatrices).astype(float)),
                 rhs=np.array(rhs, dtype=float),
                 indexer=LinearSystemIndexer(
                     dofs_row=[np.array(x) for x in dofs_row],
@@ -206,7 +155,7 @@ def test_block_linear_system_creation(params):
             )
     else:
         _ = BlockLinearSystem(
-            mat=sp.block_array(submatrices).astype(float).tocsr(),
+            mat=sp.csr_matrix(sp.block_array(submatrices).astype(float)),
             rhs=np.ones(7, dtype=float),
             indexer=LinearSystemIndexer(
                 dofs_row=[np.array(x) for x in dofs_row],
@@ -323,31 +272,31 @@ def test_shape_tuple_index(
         {
             "index": slice(None, None, None),
             "expected": [
-                [_J00, _J01, _J02],
-                [_J10, _J11, _J12],
-                [_J20, _J21, _J22],
+                [J00, J01, J02],
+                [J10, J11, J12],
+                [J20, J21, J22],
             ],
         },
         # J[2, 0].
-        {"index": (2, 0), "expected": [[_J20]]},
+        {"index": (2, 0), "expected": [[J20]]},
         # J[0, 0].
-        {"index": (0, 0), "expected": [[_J00]]},
+        {"index": (0, 0), "expected": [[J00]]},
         # J[1, 1].
-        {"index": (1, 1), "expected": [[_J11]]},
+        {"index": (1, 1), "expected": [[J11]]},
         # J[2, 2].
-        {"index": (2, 2), "expected": [[_J22]]},
+        {"index": (2, 2), "expected": [[J22]]},
         # J[[2, 1, 0], 2].
-        {"index": ([2, 1, 0], 2), "expected": [[_J22], [_J12], [_J02]]},
+        {"index": ([2, 1, 0], 2), "expected": [[J22], [J12], [J02]]},
         # J[2, [1, 2, 0]].
-        {"index": (2, [1, 2, 0]), "expected": [[_J21, _J22, _J20]]},
+        {"index": (2, [1, 2, 0]), "expected": [[J21, J22, J20]]},
         # J[[2, 1], [2, 0]].
-        {"index": ([2, 1], [2, 0]), "expected": [[_J22, _J20], [_J12, _J10]]},
+        {"index": ([2, 1], [2, 0]), "expected": [[J22, J20], [J12, J10]]},
         # J[[1, 1], [0, 2]] (repeated index).
-        {"index": ([1, 1], [0, 2]), "expected": [[_J10, _J12], [_J10, _J12]]},
+        {"index": ([1, 1], [0, 2]), "expected": [[J10, J12], [J10, J12]]},
         # J[:, 1] (rows should be sorted, same as [0, 1, 2]).
-        {"index": (slice(None, None, None), 1), "expected": [[_J01], [_J11], [_J21]]},
+        {"index": (slice(None, None, None), 1), "expected": [[J01], [J11], [J21]]},
         # J[1, :] (columns should be sorted, same as [0, 1, 2]).
-        {"index": (1, slice(None, None, None)), "expected": [[_J10, _J11, _J12]]},
+        {"index": (1, slice(None, None, None)), "expected": [[J10, J11, J12]]},
     ],
 )
 def test_slicing(sample_linear_system: BlockLinearSystem, params):
@@ -449,9 +398,9 @@ def test_setitem(sample_linear_system: BlockLinearSystem, params):
 
     # Constructing modified matrices
     original_matrix = [
-        [_J00, _J01, _J02],
-        [_J10, _J11, _J12],
-        [_J20, _J21, _J22],
+        [J00, J01, J02],
+        [J10, J11, J12],
+        [J20, J21, J22],
     ]
     original_matrix = [
         [sp.csr_array(submat) for submat in row] for row in original_matrix
@@ -676,9 +625,9 @@ def test_set_zeros(sample_linear_system: BlockLinearSystem, params):
 
     # Constructing modified matrices
     original_matrix = [
-        [_J00, _J01, _J02],
-        [_J10, _J11, _J12],
-        [_J20, _J21, _J22],
+        [J00, J01, J02],
+        [J10, J11, J12],
+        [J20, J21, J22],
     ]
     original_matrix = [
         [sp.csr_array(submat) for submat in row] for row in original_matrix
