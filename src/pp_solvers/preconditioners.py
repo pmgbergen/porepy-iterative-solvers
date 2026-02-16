@@ -861,6 +861,7 @@ def momentum_balance_factory():
     ]
     return GMRES(
         preconditioner=FieldSplitSchur(
+            # For clarity, the petsc_tag and key are different concepts.
             petsc_tag="contact",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
             complement_solver=AMG(

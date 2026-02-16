@@ -336,7 +336,8 @@ def assemble_petsc_ksp_pc(
 
     Each sub-dictionary contains a required field "config_type", which determines how to
     parse the rest of the sub-dictionary. Example sub-dictionaries, which list all the
-    available keys (using example values) are:
+    available keys (using example values) are (be aware that for standard usage, the
+    user will not need to list block numbers for the solver groups, as is done below):
 
     {
         "config_type": "fieldsplit_schur",
