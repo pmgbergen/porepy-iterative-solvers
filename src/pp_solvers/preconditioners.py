@@ -527,6 +527,11 @@ class FieldSplitSchur(PetscKspPcConfiguration):
     ```
     with the Schur complement `S = D - B * A^-1 * C`.
 
+    **Note**: `petsc_tag` and `petsc_complement_tag` must be short, as PETSc has a limit
+    of 127 symbols for a prefix. They may not be equal to the `key` parameter: the tags
+    are for internal identification by PETSc, the key is for identification by
+    simulation developers.
+
     Parameters:
         subsolver: A configuration class of a solver that approximates `A^-1`.
         complement_solver: A configuration class of a solver that approximates `S^-1`.
@@ -550,11 +555,13 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         key: str = "fieldsplit",
     ) -> None:
         # petsc_tag - internal, for petsc prefix. Must be short, not necessarily unique.
-        if petsc_complement_tag is None and petsc_tag is None:
+        if petsc_complement_tag is None:
+            if petsc_tag is not None:
+                petsc_complement_tag = f"{petsc_tag}_cpl"
+            else:
+                petsc_complement_tag = "keep"
+        if petsc_tag is None:
             petsc_tag = "elim"
-            petsc_complement_tag = "elim"
-        elif petsc_complement_tag is None:
-            petsc_complement_tag = f"{petsc_tag}_cpl"
         self.subsolver: PetscKspPcConfiguration = subsolver
         self.complement_solver: PetscKspPcConfiguration = complement_solver
         self.approximate_inverter: PetscInverter = approximate_inverter
