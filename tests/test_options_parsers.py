@@ -1,399 +1,456 @@
-"""Tests below are used to check that the PETSc preconditioners are correctly assembled.
-For this, we compare the expected chunks of text with the result produced by PetscPCView
-and PetscKSPView.
+"""This module tests that the PETSc KSP and PCs are built correctly based on provided
+PETSc options and configuration dictionaries.
 
 """
-# ruff: noqa: E501
-# The line silences ruff about long lines in this file. We need long lines to describe
-# expected PETSc output.
-
-import re
 
 import numpy as np
-import porepy as pp
 import pytest
 from petsc4py import PETSc
-from porepy.applications.test_utils.models import add_mixin
+from scipy.sparse import csr_matrix
+from testing_utils import (
+    MockDofManager,
+    generate_reference_dofs_3_groups,
+    generate_reference_matrix_3_groups,
+    generate_reference_rhs_3_groups,
+    generate_reference_submatrices_3_groups,
+)
 
-import pp_solvers
-from pp_solvers.block_linear_system import BlockLinearSystem
-from pp_solvers.dof_manager import DofManager
-from pp_solvers.equation_variable_groups import ContactMechanicsGroup
+# integration tests for all the default factories (not here, in preconditioners?)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.options_parsers import (
     LinearTransformedScheme,
     PetscKSPScheme,
     assemble_petsc_ksp_pc,
 )
-from pp_solvers.petsc_utils import insert_petsc_options
-from pp_solvers.preconditioners import PetscKspPcConfiguration
-
-
-@pytest.fixture(scope="module", params=[False, True])
-def with_fractures(request) -> bool:
-    return request.param
-
-
-@pytest.fixture(scope="module", params=["flow", "mechanics", "TH", "HM", "THM"])
-def model_kind(request) -> str:
-    return request.param
-
-
-@pytest.fixture(scope="module")
-def model(model_kind, with_fractures) -> pp.PorePyModel:
-    """Instantiate a model for the test suites in this file."""
-    match model_kind:
-        case "flow":
-            model_type = pp.SinglePhaseFlow
-        case "mechanics":
-            model_type = pp.MomentumBalance
-        case "TH":
-            model_type = pp.MassAndEnergyBalance
-        case "HM":
-            model_type = pp.Poromechanics
-        case "THM":
-            model_type = pp.Thermoporomechanics
-        case default:
-            raise ValueError(default)
-
-    class TailoredClass(
-        pp_solvers.IterativeSolverMixin,
-        pp.model_geometries.SquareDomainOrthogonalFractures,
-    ):
-        """Common base class for all models in this test suite."""
-
-        def meshing_arguments(self):
-            return {"cell_size": self.params["cell_size"]}
-
-    params = {
-        "cell_size": 0.25,
-        "cartesian": True,
-        "fracture_indices": [0, 1] if with_fractures else [],
-        "linear_solver": {},  # YZ: Default is "pypardiso". Do we want this collision?
-    }
-    model_class = add_mixin(TailoredClass, model_type)
-    model = model_class(params=params)
-    model.prepare_simulation()
-    model.before_nonlinear_loop()
-    model.before_nonlinear_iteration()
-    model.assemble_linear_system()
-    return model
-
-
-@pytest.fixture(scope="module")
-def pc_factory(model_kind: str) -> list:
-    match model_kind:
-        case "flow":
-            return pp_solvers.mass_balance_factory()
-        case "mechanics":
-            return pp_solvers.momentum_balance_factory()
-        case "TH":
-            return pp_solvers.th_factory()
-        case "HM":
-            return pp_solvers.hm_factory()
-        case "THM":
-            return pp_solvers.thm_factory()
-        case default:
-            raise ValueError(default)
-
-
-@pytest.fixture(scope="module")
-def dof_manager(
-    model: pp.PorePyModel, pc_factory: PetscKspPcConfiguration
-) -> DofManager:
-    return DofManager(model=model, groups=pc_factory.groups)
+from pp_solvers.petsc_utils import (
+    clear_petsc_options,
+    csr_to_petsc,
+    insert_petsc_options,
+    petsc_to_csr,
+)
+from pp_solvers.preconditioners import GMRES, Identity
 
 
 @pytest.fixture
-def jacobian(model: pp.PorePyModel, dof_manager: DofManager) -> BlockLinearSystem:
-    bmat = model.bmat
-    try:
-        contact = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
-    except ValueError:
-        contact = None
-
-    # Given the current discretization, the contact group is singular. We simply fill
-    # the diagonal to avoid numerical issues. This does not represent realistic physics.
-    if contact is not None:
-        bmat.set_diagonal([contact], 1)
-    return bmat
+def block_linear_system() -> BlockLinearSystem:
+    dofs_row, dofs_col = generate_reference_dofs_3_groups()
+    return BlockLinearSystem(
+        mat=generate_reference_matrix_3_groups(),
+        rhs=generate_reference_rhs_3_groups(),
+        indexer=LinearSystemIndexer(
+            dofs_row=dofs_row,
+            dofs_col=dofs_col,
+        ),
+    )
 
 
 @pytest.fixture
-def ksp(jacobian: BlockLinearSystem) -> PETSc.KSP:
-    petsc_mat = pp_solvers.csr_to_petsc(jacobian.mat)
-    ksp = PETSc.KSP().create()
-    ksp.setOperators(petsc_mat, petsc_mat)
-    pp_solvers.petsc_utils.clear_petsc_options()
+def ksp(block_linear_system: BlockLinearSystem) -> PETSc.KSP:
+    petsc_mat = csr_to_petsc(block_linear_system.mat)
+    petsc_ksp = PETSc.KSP().create()
+    petsc_ksp.setOperators(petsc_mat)
+    yield petsc_ksp
 
-    yield ksp
-
-    # Teardown.
-    ksp.destroy()
+    petsc_ksp.destroy()
     petsc_mat.destroy()
 
 
-@pytest.fixture
-def petsc_stdout(
-    capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockLinearSystem,
-    ksp: PETSc.KSP,
-    dof_manager: DofManager,
-    pc_factory: PetscKspPcConfiguration,
-) -> str:
-    pp_solvers.petsc_utils.clear_petsc_options()
+class MockPythonContext:
+    def setUp(self, pc: PETSc.PC) -> None:
+        pass
 
-    petsc_options = pc_factory.petsc_options(user_options={}, prefix="")
-    insert_petsc_options(petsc_options)
-    petsc_assembly_config = pc_factory.petsc_assembly_config(
-        user_options={}, prefix="", dof_manager=dof_manager
-    )
-
-    assemble_petsc_ksp_pc(
-        ksp=ksp,
-        pc=ksp.getPC(),
-        assembly_config=petsc_assembly_config,
-        indexer=jacobian.indexer,
-        prefix="",
-    )
-
-    ksp.getPC().view()
-    out, err = capfd.readouterr()
-    return out
+    def apply(self, pc: PETSc.PC, b: PETSc.Vec, x: PETSc.Vec) -> None:
+        pass
 
 
-@pytest.fixture(scope="module")
-def patterns_to_compare(model_kind: str) -> list[str]:
-    r"""Regular expressions are used to allow for any group names, since the same
-    sub-algorithm can have different petsc prefixes depending on the model we solver.
-    E.g. the mechanics amg can be a schur complement to the contact mechanics, or to
-    the interface flow, if the latter is present in the model. The following expressions
-    are used:
-    - ".*", where "." means "any symbol" and "*" means "zero or more times";
-
-    I did not find a good way to distinguish between amg for mechanics and amg for
-    the mass balance, as group names can vary and we cannot rely on them. Therefore,
-    the tests check that the number of matches is >= 1, not exactly == 1.
-    """
-    contact = [
-        r"""PC Object: 1 MPI process
-type: fieldsplit
-FieldSplit with Schur preconditioner, factorization UPPER
-Preconditioner for the Schur complement formed from Sp, an assembled approximation to S, which uses A00's block diagonal's inverse
-""",
-        r"""PC Object: .*contact.* 1 MPI process
-type: pbjacobi
-""",
-    ]
-    interface_flow = [
-        r"""PC Object:.*1 MPI process
-type: fieldsplit
-FieldSplit with Schur preconditioner, factorization UPPER
-Preconditioner for the Schur complement formed from Sp, an assembled approximation to S, which uses A00's diagonal's inverse
-""",
-        r"""PC Object: .* 1 MPI process
-type: ilu
-out-of-place factorization
-0 levels of fill
-tolerance for zero pivot 2.22045e-14
-matrix ordering: natural
-factor fill ratio given 1., needed 1.""",
-    ]
-    fixed_stress = [
-        r"""PC Object: .* 1 MPI process
-type: fieldsplit
-FieldSplit with Schur preconditioner, factorization UPPER
-Preconditioner for the Schur complement formed from user provided matrix""",
-    ]
-    mechanics_amg = [
-        r"""PC Object: .* 1 MPI process
-type: hypre""",
-    ]
-    isothermal_flow = [
-        r"""PC Object: .* 1 MPI process
-type: hypre
-"""
-    ]
-    thermal_flow = [
-        r"""PC Object: .* 1 MPI process
-type: composite
-Composite PC type - MULTIPLICATIVE""",
-        r"""PC Object: .*sub_0_.* 1 MPI process
-type: fieldsplit
-FieldSplit with ADDITIVE composition: total splits = 2""",
-        r"""PC Object: .*mass_bal_.* 1 MPI process
-type: hypre""",
-        r"""PC Object: .*mass_bal_cpl_.* 1 MPI process
-type: none""",
-        r"""PC Object: .*sub_1_.* 1 MPI process
-type: python
-Python: pp_solvers.petsc_solvers.PcPythonPermutation""",
-        r"""PC Object: .*python_.* 1 MPI process
-type: ilu""",
-    ]
-    if model_kind == "flow":
-        return interface_flow + isothermal_flow
-    if model_kind == "mechanics":
-        return contact + mechanics_amg
-    if model_kind == "TH":
-        return interface_flow + thermal_flow
-    if model_kind == "HM":
-        return contact + fixed_stress + isothermal_flow + mechanics_amg
-    if model_kind == "THM":
-        return contact + interface_flow + fixed_stress + thermal_flow + mechanics_amg
-
-    raise NotImplementedError
+reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
 
 
-def find_in_petsc_output(pattern: str, petsc_stdout: str):
-    # \s* at the start of each new line means arbitrary number of whitespaces.
-    pattern = "\n".join(r"\s*" + line for line in pattern.splitlines())
-    return re.findall(pattern, petsc_stdout)
-
-
-def test_ksp_none(petsc_stdout: str, model_kind: str):
-    """Ensure that the default preconditioners do not involve inner Krylov solvers.
-
-    In PETSc, this is done by replacing the Krylov solver with "preonly". We also count
-    "preonly" to estimate the number of inner preconditioners.
-
-    """
-    matches = find_in_petsc_output(r"KSP Object:.*\n *type: (.+)", petsc_stdout)
-    if model_kind in ["flow", "mechanics"]:
-        assert len(matches) == 2
-    elif model_kind == "HM":
-        assert len(matches) == 6
-    elif model_kind == "TH":
-        assert len(matches) == 4
-    elif model_kind == "THM":
-        assert len(matches) == 8
-    else:
-        raise NotImplementedError(model_kind)
-
-    assert all(x == "preonly" for x in matches)
-
-
-def test_petsc_options(petsc_stdout: str, patterns_to_compare):
-    """Compare the output of `pc.view()` - PETSc report of how the preconditioner is
-    configured, to the expected values. We search for a few key lines in the report.
-
-    """
-    for pattern in patterns_to_compare:
-        found = find_in_petsc_output(pattern, petsc_stdout)
-        assert len(found) >= 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
-
-
-def test_pass_user_options(
-    capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockLinearSystem,
-    ksp: PETSc.KSP,
-    model: pp.PorePyModel,
-    dof_manager: DofManager,
-    pc_factory: PetscKspPcConfiguration,
-    model_kind: str,
-) -> str:
-    if model_kind == "mechanics":
-        expected_group_name = "mechanics"
-    else:
-        expected_group_name = "mass_balance"
-
-    user_options = {
-        expected_group_name: {
-            "pc_type": "jacobi",
-        }
-    }
-
-    petsc_options = pc_factory.petsc_options(user_options=user_options, prefix="")
-    insert_petsc_options(petsc_options)
-    petsc_assembly_config = pc_factory.petsc_assembly_config(
-        user_options=user_options, prefix="", dof_manager=dof_manager
-    )
-    assemble_petsc_ksp_pc(
-        ksp=ksp,
-        pc=ksp.getPC(),
-        assembly_config=petsc_assembly_config,
-        indexer=jacobian.indexer,
-    )
-
-    ksp.getPC().view()
-    petsc_stdout, _ = capfd.readouterr()
-
-    pattern = "PC Object: .* 1 MPI process\ntype: jacobi"
-
-    matches = find_in_petsc_output(pattern, petsc_stdout)
-    assert len(matches) == 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
-
-
-def test_petsc_ksp_scheme(
-    capfd,  # This is a pytest object to capture the os-level stdout, needed for PETSc.
-    jacobian: BlockLinearSystem,
-    dof_manager: DofManager,
-    pc_factory: PetscKspPcConfiguration,
-    patterns_to_compare: list[str],
+@pytest.mark.parametrize(
+    "params",
+    [
+        # If broken: we failed to configure the most basice PETSc commands.
+        pytest.param(
+            {
+                "petsc_options": {"ksp_type": "bcgs", "pc_type": "sor"},
+                "assembly_config": {},
+            },
+            id="monolithic petsc solver",
+        ),
+        # If broken: we failed to configure the matrix block size. Did you call
+        # mat.setFromOptions() ?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "pbjacobi",
+                    "mat_block_size": 3,
+                },
+                "assembly_config": {},
+            },
+            id="matrix block size = 3",
+        ),
+        # If broken, recursive setup of a nested ksp does not work. Did you call
+        # ksp.setFromOptions and ksp.setUp on the inner ksp?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "fgmres",
+                    # Use a krylov solver as a preconditioner, see PETSc PCKSP.
+                    "pc_type": "ksp",
+                    "ksp_ksp_type": "gmres",
+                    "ksp_pc_type": "jacobi",
+                },
+                "assembly_config": {},
+            },
+            id="fgmres with inner gmres",
+        ),
+        # If broken: Hypre is not installed?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "hypre",
+                    "pc_hypre_type": "boomeramg",
+                },
+                "assembly_config": {},
+            },
+            id="hypre boomeramg",
+        ),
+        # This is a basic fieldsplit test. If broken: check
+        # _assemble_pc_fieldsplit_schur
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "fieldsplit_aaa_pc_type": "sor",
+                    "fieldsplit_bbb_pc_type": "jacobi",
+                    # Custom matrix block sizes within fieldsplit.
+                    "fieldsplit_aaa_mat_block_size": 3,
+                    "fieldsplit_bbb_mat_block_size": 2,
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [0],
+                        "keep_groups": [1, 2],
+                        "elim_tag": "aaa",
+                        "keep_tag": "bbb",
+                    }
+                },
+            },
+            id="fieldsplit",
+        ),
+        # This is fieldsplit test, where the subsolver of a group to be eliminated is
+        # also an inner fieldsplit (not typical use case, covered for completeness).
+        # If broken: do we recursively configure the inner fieldsplit?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "fieldsplit_aaa_pc_type": "fieldsplit",
+                    "fieldsplit_aaa_fieldsplit_ccc_pc_type": "sor",
+                    "fieldsplit_aaa_fieldsplit_ddd_pc_type": "pbjacobi",
+                    "fieldsplit_bbb_pc_type": "jacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [0, 1],
+                        "keep_groups": [2],
+                        "elim_tag": "aaa",
+                        "keep_tag": "bbb",
+                    },
+                    "fieldsplit_aaa_": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [1],  # Intentionally switching order.
+                        "keep_groups": [0],
+                        "elim_tag": "ccc",
+                        "keep_tag": "ddd",
+                    },
+                },
+            },
+            id="nested fieldsplit - elim",
+        ),
+        # This is fieldsplit test, where the subsolver of Schur complement group is
+        # also an inner fieldsplit (typical use case for multiphysics). If broken: do we
+        # recursively configure the inner fieldsplit?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "fieldsplit_aaa_pc_type": "jacobi",
+                    "fieldsplit_bbb_pc_type": "fieldsplit",
+                    "fieldsplit_bbb_fieldsplit_ccc_pc_type": "sor",
+                    "fieldsplit_bbb_fieldsplit_ddd_pc_type": "pbjacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [2],
+                        "keep_groups": [0, 1],
+                        "elim_tag": "aaa",
+                        "keep_tag": "bbb",
+                    },
+                    "fieldsplit_bbb_": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [1],  # Intentionally switching order.
+                        "keep_groups": [0],
+                        "elim_tag": "ccc",
+                        "keep_tag": "ddd",
+                    },
+                },
+            },
+            id="nested fieldsplit - keep",
+        ),
+        # This is a basic test for PCComposite with 3 stages. If broken: check
+        # _assemble_pc_composite
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "composite",
+                    "sub_0_pc_type": "sor",
+                    "sub_1_pc_type": "jacobi",
+                    "sub_2_pc_type": "pbjacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "composite",
+                        "num_stages": 3,
+                    },
+                },
+            },
+            id="composite",
+        ),
+        # This test mimics the structure of the CPR preconditioner: The composite
+        # preconditioner, where one of the stages is a fieldsplit. If broken, something
+        # fails in the communication between the composite and the fieldsplit parts.
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "composite",
+                    "mat_block_size": 3,  # custom block size for composite.
+                    "sub_0_pc_type": "fieldsplit",
+                    "sub_0_fieldsplit_elim_pc_type": "gamg",
+                    "sub_0_fieldsplit_keep_pc_type": "none",
+                    "sub_1_pc_type": "jacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "composite",
+                        "num_stages": 2,
+                    },
+                    "sub_0_": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [2, 0],  # Intentionally mixed order of groups.
+                        "keep_groups": [1],
+                        "elim_tag": "elim",
+                        "keep_tag": "keep",
+                    },
+                },
+            },
+            id="cpr",  # This is not a complete setup of the CPR preconditioner.
+        ),
+        # This test covers the python callback from petsc, which we use to transform the
+        # underlying matrix. If broken, check _assemble_pc_python_permutation
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "python",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "python_permutation",
+                        "permutation_groups": [[2, 0, 1]],
+                    }
+                },
+            },
+            id="python permutation",
+        ),
+        # This test covers a user-defined invertor for the Schur complement fieldsplit,
+        # such as the fixed-stress approximation.
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "schur",
+                    "pc_fieldsplit_schur_precondition": "user",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_schur",
+                        "elim_groups": [2, 0],  # Intentionally mixed order of groups.
+                        "keep_groups": [1],
+                        "elim_tag": "elim",
+                        "keep_tag": "keep",
+                        # Constructing an inverter matrix, so S = A - C * D^-1 * B ≈ A.
+                        "inverter_additive": lambda _: csr_to_petsc(
+                            csr_matrix(
+                                (
+                                    len(reference_dofs_row[1]),
+                                    len(reference_dofs_col[1]),
+                                )
+                            )
+                        ),
+                    }
+                },
+            },
+            id="fieldsplit user inverter",
+        ),
+        # This test covers the non-Schur complement fieldsplit. If broken, check
+        # _assemble_pc_fieldsplit_additive
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "additive",
+                    "fieldsplit_sub_0_pc_type": "sor",
+                    "fieldsplit_sub_1_ksp_type": "bcgs",
+                    "fieldsplit_sub_2_pc_type": "jacobi",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2], [0], [1]],
+                    }
+                },
+            },
+            id="fieldsplit additive",
+        ),
+        # This test covers the nested additive fieldsplits. If broken, do we initialize
+        # the inner fieldsplit?
+        pytest.param(
+            {
+                "petsc_options": {
+                    "ksp_type": "preonly",
+                    "pc_type": "fieldsplit",
+                    "pc_fieldsplit_type": "additive",
+                    "fieldsplit_sub_0_pc_type": "fieldsplit",
+                    "fieldsplit_sub_0_pc_fieldsplit_type": "additive",
+                    "fieldsplit_sub_0_fieldsplit_sub_1_pc_type": "sor",
+                    "fieldsplit_sub_1_ksp_type": "bcgs",
+                },
+                "assembly_config": {
+                    "": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2, 0], [1]],
+                    },
+                    "fieldsplit_sub_0_": {
+                        "config_type": "fieldsplit_additive",
+                        "subsolver_groups": [[2], [0]],
+                    },
+                },
+            },
+            id="nested fieldsplit additive",
+        ),
+    ],
+)
+def test_assemble_petsc_ksp_pc(
+    params: dict, ksp: PETSc.KSP, block_linear_system: BlockLinearSystem
 ):
-    ksp_scheme = PetscKSPScheme(petsc_ksp_pc_configuration=pc_factory, dof_manager=dof_manager)
+    petsc_options: dict = params["petsc_options"]
+    assembly_config: dict = params["assembly_config"]
 
-    user_options = {'gmres': {"ksp_type": "bcgs", "ksp_rtol": 5e-5}}
-    solver = ksp_scheme.make_solver(mat_orig=jacobian, options=user_options)
+    # Set up petsc KSP and PC objects.
+    options = clear_petsc_options()
+    insert_petsc_options(petsc_options)
+    assemble_petsc_ksp_pc(
+        ksp=ksp,
+        pc=ksp.getPC(),
+        assembly_config=assembly_config,
+        indexer=block_linear_system.indexer,
+    )
 
-    solver.ksp.view()
-    petsc_stdout, _ = capfd.readouterr()
+    # We do not check types of inner preconditioners, but petsc would not let a nested
+    # preconditioner (e.g. fieldsplit) to set up, if there is an error in inner solvers.
+    assert ksp.type == petsc_options["ksp_type"]
+    assert ksp.getPC().type == petsc_options["pc_type"]
 
-    # Checking that the preconditioner is correctly initialized.
-    for pattern in patterns_to_compare:
-        found = find_in_petsc_output(pattern, petsc_stdout)
-        assert len(found) >= 1, f"Not found:\n{pattern}\n\n{petsc_stdout}\n\n"
+    # Check that all PETSc options are applied, which means that inner solvers
+    # initialized correctly.
+    for key in petsc_options:
+        assert options.used(key)
 
-    # Checking that the ksp is correctly initialized, including user options.
-    pattern_ksp = r"""KSP Object: 1 MPI process
-type: bcgs
-maximum iterations=120, initial guess is zero
-tolerances: relative=5e-05, absolute=1e-50, divergence=10000.
-right preconditioning
-using UNPRECONDITIONED norm type for convergence test
-"""
-    found = find_in_petsc_output(pattern_ksp, petsc_stdout)
-    assert len(found) == 1, f"Not found:\n{pattern_ksp}\n\n{petsc_stdout}\n\n"
+    # Check that the block size initialized properly.
+    expected_block_size = petsc_options.get("mat_block_size", 1)
+    petsc_mat, petsc_pmat = ksp.getOperators()
+    assert petsc_mat.getBlockSize() == expected_block_size
+    assert petsc_pmat.getBlockSize() == expected_block_size
+
+    # Solve reference linear system.
+    petsc_rhs = petsc_mat.createVecLeft()
+    petsc_rhs.setArray(block_linear_system.rhs)
+    petsc_sol = petsc_mat.createVecRight()
+    ksp.solve(petsc_rhs, petsc_sol)
+    petsc_rhs.destroy()
+    petsc_sol.destroy()
+
+    # Positive reason means PETSc treats it as success.
+    assert ksp.getConvergedReason() > 0
 
 
 @pytest.mark.parametrize("left", [True, False])
 @pytest.mark.parametrize("right", [True, False])
 def test_linear_transformed_scheme(
-    jacobian: BlockLinearSystem, left: bool, right: bool
+    block_linear_system: BlockLinearSystem,
+    left: bool,
+    right: bool,
 ):
-    # Sorting the blocks in the matrix, same as it is done in the solver code.
-    jacobian = jacobian[:]
+    # This also tests PetscKSPScheme.
 
+    # Sorting the blocks in the matrix, same as it is done in the solver code.
+    block_linear_system = block_linear_system[:]
     # Generating some transformation matrices.
     left_transformations = []
     right_transformations = []
-    expected = jacobian.mat
+    expected_matrix = block_linear_system.mat
     if left:
-        Qleft = jacobian.copy()
-        Qleft2 = jacobian.copy()
+        Qleft = block_linear_system.copy()
+        Qleft2 = block_linear_system.copy()
         Qleft2.mat *= 2
         left_transformations = [lambda _: Qleft, lambda _: Qleft2]
-        expected = Qleft.mat @ Qleft2.mat @ expected
+        expected_matrix = Qleft.mat @ Qleft2.mat @ expected_matrix
     if right:
-        Qright = jacobian.copy()
-        Qright2 = jacobian.copy()
+        Qright = block_linear_system.copy()
+        Qright2 = block_linear_system.copy()
         Qright2.mat *= 2
         right_transformations = [lambda _: Qright, lambda _: Qright2]
-        expected = expected @ Qright.mat @ Qright2.mat
-
+        expected_matrix = expected_matrix @ Qright.mat @ Qright2.mat
     # Initializing the KSP with transformations, without the preconditioner.
     solver_scheme = LinearTransformedScheme(
         inner=PetscKSPScheme(
-            preconditioner=None,
-            # Default preconditioner is ILU, it can complain for some matrices.
-            petsc_options={"pc_type": "jacobi"},
+            petsc_ksp_pc_configuration=GMRES(
+                key="custom_key", preconditioner=Identity(groups=["mock_g1"])
+            ),
+            dof_manager=MockDofManager(),
         ),
         left_transformations=left_transformations,
         right_transformations=right_transformations,
     )
-    solver = solver_scheme.make_solver(mat_orig=jacobian)
-
-    result_mat = pp_solvers.petsc_to_csr(solver.ksp.getOperators()[0])
-
+    solver = solver_scheme.make_solver(
+        mat_orig=block_linear_system, options={"custom_key": {"ksp_type": "fgmres"}}
+    )
+    result_mat = petsc_to_csr(solver.ksp.getOperators()[0])
     # They should be exactly equal, numerical error may appear due to different order of
     # matrix multiplication.
-    np.testing.assert_almost_equal(result_mat.toarray(), expected.toarray())
+    np.testing.assert_allclose(
+        result_mat.toarray(), expected_matrix.toarray(), rtol=1e-20, atol=0
+    )
+    # Check that the custom option applied.
+    assert solver.ksp.type == "fgmres"
+    solution = solver.solve(block_linear_system.rhs)
+
+    np.testing.assert_allclose(
+        block_linear_system.mat @ solution,
+        block_linear_system.rhs,
+        rtol=0,
+        atol=1e-10,
+    )

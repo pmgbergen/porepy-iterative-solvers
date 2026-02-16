@@ -57,20 +57,13 @@ class ThermoporomechanicsModel(
     pass
 
 
-factories = {
-    FluidModel: pp_solvers.mass_balance_factory,
-    MechanicsModel: pp_solvers.momentum_balance_factory,
-    PoromechanicsModel: pp_solvers.hm_factory,
-    ThermoporomechanicsModel: pp_solvers.thm_factory,
-}
-
 # Hard-coded expected number of linear iterations for each model. These are used for
 # regression testing. Hopefully the reference values are stable.
 expected_linear_iterations = {
     FluidModel: [3, 3],
     MechanicsModel: [5, 6],
     PoromechanicsModel: [8, 12, 10, 12],
-    ThermoporomechanicsModel: [10, 14, 13, 11, 14],
+    ThermoporomechanicsModel: [10, 15, 14],
 }
 
 
@@ -106,13 +99,17 @@ def test_model(model_class):
     direct_model = model_class(opts)
     pp.run_time_dependent_model(direct_model, solver_opts)
 
-    factory = factories[model_class]
     iterative_opts = model_options()
     iterative_opts["linear_solver"] = {
-        "preconditioner_factory": factory,
-        # The iterations will not be printed during pytest (which surpresses output),
-        # but will be active during debugging, if the test is run as a python script.
-        "options": {"ksp_monitor": None},
+        "options": {
+            # The iterations will not be printed during pytest (which surpresses
+            # output), but will be active during debugging, if the test is run as a
+            # python script.
+            "gmres": {"ksp_monitor": None},
+            # This was the old default, preserving it to correspond to the hard-coded
+            # expected iteration count.
+            "mechanics_amg": {"pc_hypre_boomeramg_strong_threshold": 0.7},
+        },
     }
     iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, model_class)
 

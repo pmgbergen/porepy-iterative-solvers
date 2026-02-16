@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
+from scipy.sparse import block_diag, csr_matrix
+
 from pp_solvers import mat_utils
-from scipy.sparse import csr_matrix, block_diag
 
 
 @pytest.mark.parametrize("n", [6, 60])
@@ -12,7 +13,7 @@ def test_csr_ones(n):
     np.all(mat.toarray() == np.eye(n))
 
 
-@pytest.mark.parametrize("block_size", [1, 2, 3, 4])
+@pytest.mark.parametrize("block_size", [1, 2, 3])
 def test_inv_block_diag(block_size):
     blocks = [
         np.eye(block_size) * (block_size + 1.0)

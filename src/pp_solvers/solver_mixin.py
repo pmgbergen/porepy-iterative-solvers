@@ -1,30 +1,27 @@
-"""This module contains schemes, e.g., recepies for constructing a PETSc solver."""
+"""This module contains the `IterativeSolverMixin` class, which provides the capabilitiy
+of using iterative linear solvers to a PorePy model.
+
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import count
 from time import time
 from typing import Callable
 from warnings import warn
-from itertools import count
 
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
+from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     InterfaceForceBalanceGroup,
 )
-
-from .block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-    concatenate_dof_indices,
-)
-from pp_solvers.dof_manager import DofManager
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
 from pp_solvers.preconditioners import (
@@ -35,6 +32,9 @@ from pp_solvers.preconditioners import (
     th_factory,
     thm_factory,
 )
+from pp_solvers.solver_selection.selector import SolverSelector
+
+from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
 __all__ = [
     "IterativeSolverMixin",
@@ -135,6 +135,30 @@ class LinearSolverStatistics(SolverStatistics):
 
 
 class IterativeSolverMixin(pp.PorePyModel):
+    """Intended usage:
+
+    (i) Plug in the `IterativeSolverMixin` to the PorePy model inheritance chain below
+    your methods that override `solve_linear_system` and `assemble_linear_system`, e.g.
+    for logging purposes.
+
+    (ii) Insert an additional option to the model options dictionary:
+    ```
+    model_options["linear_solver"] = {
+        "options": {
+            {
+                # Uncomment below to enable convergence logging:
+                # "gmres: {
+                #     "ksp_monitor": None,
+                # }
+            }
+        }
+    }
+    ```
+    The linear solver can be customized via the `"options"` sub-dictionary, see
+    the examples folder for details.
+
+    """
+
     def _determine_solver_options(self) -> dict:
         # The options are either provided by a used manually, or determined by
         # machine learning in the solver selector.
@@ -218,8 +242,9 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
-        # Project the solution back to the global (PorePy) ordering. For clarity, no
-        # contact reordering here, since only the equations (rows) and not the variables
+
+        # Project the solution back to the PorePy ordering. For clarity, no contact
+        # reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.nonlinear_solver_statistics.petsc_converged_reason.append(info)
@@ -250,19 +275,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # TODO: Replace this with a different type of plugin
         mat, rhs = self.linear_system
 
-        # Apply the `contact_permutation`. With this, the equations for tangential and
-        # normal fracture deformation are ordered cellwise (not with tangential and
-        # normal separately, as is the case in the PorePy ordering).
-        # mat = mat[dof_manager.eq_rows_permutation(self)]
-        # rhs = rhs[dof_manager.eq_rows_permutation(self)]
-
         # Creating the indices of DoFs for the BlockLinearSystem class.
-        # eq_dofs_by_blocks and var_dofs_by_blocks return a list of arrays, where each
-        # array corresponds to one subdomain (or interface). We concatenate them into
-        # a list of arrays, where each array corresponds to a single-physics subsolver.
-        # That is, each array will include multiple subdomains, and potentially multiple
-        # equations / variables.
-
         bmat = BlockLinearSystem(
             mat=mat,
             rhs=rhs,

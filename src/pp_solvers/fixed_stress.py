@@ -1,12 +1,16 @@
+"""This module contains routines to build the fixed-stress approximation matrix."""
+
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 
-from .block_linear_system import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
 
-def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix:
-    """Define the fixed stress stabilization matrix."""
+def get_fixed_stress_stabilization_porous_media(
+    model, l_factor: float = 0.6
+) -> sps.spmatrix:
+    """Define the fixed stress stabilization matrix for the porous media domains."""
 
     mu_lame = model.solid.shear_modulus
     lambda_lame = model.solid.lame_lambda
@@ -38,7 +42,8 @@ def get_fixed_stress_stabilization(model, l_factor: float = 0.6) -> sps.spmatrix
     return sps.diags(diagonal_approx)
 
 
-def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
+def get_fixed_stress_stabilization_fractures(model: pp.PorePyModel) -> sps.spmatrix:
+    """Define the fixed stress stabilization matrix for the fracture domains."""
     alpha_biot = model.solid.biot_coefficient  # [-]
     lame_lambda = model.solid.lame_lambda  # [Pa]
     M = 1 / model.solid.specific_storage  # [Pa]
@@ -76,17 +81,37 @@ def get_fs_fractures_analytical(model: pp.PorePyModel) -> sps.spmatrix:
     return sps.diags(val)
 
 
-def make_fs_analytical_slow_new(
-    model, J: BlockLinearSystem, p_mat_group: int, p_frac_group: int, groups: list[int]
+def construct_fixed_stress_block_matrix(
+    model: pp.PorePyModel,
+    indexer: LinearSystemIndexer,
+    p_mat_group: int,
+    p_frac_group: int,
 ) -> BlockLinearSystem:
-    index = J[groups].empty_container()
+    """Constructs a block matrix with the fixed-stress stabilization terms in the porous
+    media and fractures and zeros everywhere else.
+
+    Params:
+        model: The corresponding PorePy model.
+        indexer: The indexer that defines the shape of the constructed matrix.
+        p_mat_group: index of the mass balance group in the porous media subdomains, the
+            corresponding diagonal submatrix will be constructed using
+            `get_fixed_stress_stabilization_porous_media`.
+        p_frac_group: index of the mass balance group in the fracture subdomains, the
+            corresponding diagonal submatrix will be constructed using
+            `get_fixed_stress_stabilization_fractures`.
+
+    """
     diagonals = []
-    for group in groups:
+    for group in indexer.enabled_groups_row:
         if group == p_mat_group:
-            diagonals.append(get_fixed_stress_stabilization(model))
+            diagonals.append(get_fixed_stress_stabilization_porous_media(model))
         elif group == p_frac_group:
-            diagonals.append(get_fs_fractures_analytical(model))
+            diagonals.append(get_fixed_stress_stabilization_fractures(model))
         else:
-            diagonals.append(index[[group]].mat)
-    index.mat = sps.block_diag(diagonals, format="csr")
-    return index
+            size = sum(x.size for x in indexer[[group]].dofs_row)
+            diagonals.append(sps.csr_matrix((size, size)))
+
+    mat = sps.csr_matrix(sps.block_diag(diagonals, format="csr"))
+    return BlockLinearSystem(
+        mat=mat, rhs=np.zeros(mat.shape[0]), indexer=indexer, validate_input=False
+    )
