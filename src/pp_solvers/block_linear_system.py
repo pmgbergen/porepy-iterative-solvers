@@ -357,15 +357,9 @@ class BlockLinearSystem:
         """
         # Preparing the indices for slicing.
         groups_dofs_row, groups_dofs_col = self.indexer.get_dofs_of_groups(key)
-        rows_expanded, cols_expanded = np.meshgrid(
-            groups_dofs_row,
-            groups_dofs_col,
-            sparse=True,
-            indexing="ij",
-            copy=False,
-        )
+
         # Slicing the matrix and the rhs.
-        sliced_matrix = self.mat[rows_expanded, cols_expanded]
+        sliced_matrix = self.mat[groups_dofs_row][:, groups_dofs_col]
         rhs = self.rhs[groups_dofs_row]
 
         # Return a new block linear system object with the selected blocks. Compared to
