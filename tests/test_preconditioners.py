@@ -178,6 +178,7 @@ def test_composite_bad_groups():
         )
 
 
+@pytest.mark.filterwarnings("ignore:Both GMRES and preconditioner override options")
 @pytest.mark.parametrize(
     "configuration",
     CONFIGURATIONS_ALL,
@@ -201,6 +202,7 @@ def test_user_options_and_prefix(configuration: PetscKspPcConfiguration, prefix:
         assert petsc_options[f"{prefix}pc_type"] == "none"
 
 
+@pytest.mark.filterwarnings("ignore:Both GMRES and preconditioner override options")
 def test_gmres_and_preconditioner_override_user_params():
     configuration = GMRES(
         preconditioner=Identity(groups=["g1"], key="preconditioner"),
@@ -516,3 +518,66 @@ def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
         block_linear_system.mat @ solution,
         block_linear_system.rhs,
     )
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        # Use all defaults: "elim" and "keep".
+        {
+            "petsc_tag": None,
+            "petsc_complement_tag": None,
+            "expected_petsc_options": {
+                "fieldsplit_elim_pc_type": "none",
+                "fieldsplit_keep_pc_type": "ilu",
+            },
+        },
+        # Use default for the complement: f"{petsc_tag}_cpl".
+        {
+            "petsc_tag": "custom_tag_1",
+            "petsc_complement_tag": None,
+            "expected_petsc_options": {
+                "fieldsplit_custom_tag_1_pc_type": "none",
+                "fieldsplit_custom_tag_1_cpl_pc_type": "ilu",
+            },
+        },
+        # Use default petsc_tag: "keep".
+        {
+            "petsc_tag": None,
+            "petsc_complement_tag": "custom_tag_2",
+            "expected_petsc_options": {
+                "fieldsplit_elim_pc_type": "none",
+                "fieldsplit_custom_tag_2_pc_type": "ilu",
+            },
+        },
+        # Custom values for both.
+        {
+            "petsc_tag": "custom_tag_1",
+            "petsc_complement_tag": "custom_tag_2",
+            "expected_petsc_options": {
+                "fieldsplit_custom_tag_1_pc_type": "none",
+                "fieldsplit_custom_tag_2_pc_type": "ilu",
+            },
+        },
+    ],
+)
+def test_fieldsplit_schur_default_parameters(params: dict):
+    """Tests non-trivial logic of creating FieldSplitSchur with default parameters
+    petsc_tag and petsc_complement_tag.
+
+    """
+    petsc_tag: str = params["petsc_tag"]
+    petsc_complement_tag: str = params["petsc_complement_tag"]
+    expected_petsc_options: dict = params["expected_petsc_options"]
+    preconditioner = FieldSplitSchur(
+        subsolver=Identity(groups=["mock_g1"]),
+        complement_solver=ILU(groups=["mock_g2"]),
+        approximate_inverter=DiagonalInverter(),
+        petsc_tag=petsc_tag,
+        petsc_complement_tag=petsc_complement_tag,
+    )
+    petsc_options = preconditioner.petsc_options(
+        user_options={}, prefix="", dof_manager=MockDofManager()
+    )
+    for key, value in expected_petsc_options.items():
+        assert petsc_options[key] == value

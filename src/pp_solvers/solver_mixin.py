@@ -36,6 +36,8 @@ from pp_solvers.solver_selection.selector import SolverSelector
 
 from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
+from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
+
 __all__ = [
     "IterativeSolverMixin",
 ]
