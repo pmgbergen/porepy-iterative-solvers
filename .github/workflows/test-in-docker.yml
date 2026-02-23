@@ -1,10 +1,16 @@
 name: Test in Docker
 
 on:
+  workflow_dispatch:
+    # run jobs manually
   push:
     branches: [main, develop]
   pull_request:
     branches: [develop]
+  schedule:
+    # Do a nightly run of the tests
+    - cron: '0 1 * * *'
+
 
 jobs:
   test:
