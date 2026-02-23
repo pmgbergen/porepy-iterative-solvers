@@ -5,7 +5,7 @@ of using iterative linear solvers to a PorePy model.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
 from time import time
 from typing import Callable
@@ -112,10 +112,10 @@ class LinearSolverStatistics(SolverStatistics):
     extension to store the linear solver statistics.
     """
 
-    linsolve_construction_time: list[float] = None
-    linsolve_solve_time: list[float] = None
-    petsc_converged_reason: list[int] = None
-    num_krylov_iters: list[int] = None
+    linsolve_construction_time: list[float] = field(default_factory=list)
+    linsolve_solve_time: list[float] = field(default_factory=list)
+    petsc_converged_reason: list[int] = field(default_factory=list)
+    num_krylov_iters: list[int] = field(default_factory=list)
 
     def __post_init__(self):
         self.linsolve_construction_time = []
@@ -167,14 +167,14 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "Failed to create solver with the provided preconditioner."
             ) from e
 
-        self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
+        self.linear_solver_statistics.linsolve_construction_time.append(time() - t0)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
         t0 = time()
         x_loc = solver.solve(rhs)
-        self.nonlinear_solver_statistics.linsolve_solve_time.append(time() - t0)
+        self.linear_solver_statistics.linsolve_solve_time.append(time() - t0)
 
         info = solver.ksp.getConvergedReason()
         if info <= 0:
@@ -187,8 +187,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         # reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
         x = self.bmat.permute_right_vector_to_original(x_loc)
-        self.nonlinear_solver_statistics.petsc_converged_reason.append(info)
-        self.nonlinear_solver_statistics.num_krylov_iters.append(
+        self.linear_solver_statistics.petsc_converged_reason.append(info)
+        self.linear_solver_statistics.num_krylov_iters.append(
             len(solver.get_residuals())
         )
 
@@ -281,7 +281,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         self._solver_factory = solver_factory
 
-    def set_solver_statistics(self) -> None:
+    def set_nonlinear_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields
         for the linear solver.
 
@@ -291,8 +291,9 @@ class IterativeSolverMixin(pp.PorePyModel):
         runscripts. Instead, we do it dirty for now.
 
         """
+        super().set_nonlinear_solver_statistics()  # type: ignore[misc]
         # The name of the attribute is really not meaningful..
-        self.nonlinear_solver_statistics = LinearSolverStatistics()
+        self.linear_solver_statistics = LinearSolverStatistics()
 
 
 def default_preconditioner_factory(
