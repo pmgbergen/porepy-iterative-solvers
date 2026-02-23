@@ -129,7 +129,7 @@ def test_model(model_class):
         "Solutions do not match."
     )
 
-    linear_iterations = iterative_model.nonlinear_solver_statistics.num_krylov_iters
+    linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
     np.testing.assert_equal(
         linear_iterations,
         expected_linear_iterations[model_class],
