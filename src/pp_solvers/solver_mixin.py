@@ -228,6 +228,13 @@ class IterativeSolverMixin(pp.PorePyModel):
     def _initialize_linear_solver(self):
         # Set up preconditioner.
 
+        # Add fields for the linear solver statistics to the nonlinear solver statistics
+        # object.
+        self.nonlinear_solver_statistics.linsolve_construction_time = []
+        self.nonlinear_solver_statistics.linsolve_solve_time = []
+        self.nonlinear_solver_statistics.petsc_converged_reason = []
+        self.nonlinear_solver_statistics.num_krylov_iters = []
+
         precond_factory: Callable[[], PetscKspPcConfiguration]
         linear_solver_params = self.params.get("linear_solver", {})
         precond_factory = linear_solver_params.get("preconditioner_factory", None)
