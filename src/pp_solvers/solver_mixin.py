@@ -117,12 +117,6 @@ class LinearSolverStatistics(SolverStatistics):
     petsc_converged_reason: list[int] = field(default_factory=list)
     num_krylov_iters: list[int] = field(default_factory=list)
 
-    def __post_init__(self):
-        self.linsolve_construction_time = []
-        self.linsolve_solve_time = []
-        self.petsc_converged_reason = []
-        self.num_krylov_iters = []
-
 
 class IterativeSolverMixin(pp.PorePyModel):
     """Intended usage:
