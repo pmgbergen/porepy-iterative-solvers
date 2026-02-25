@@ -32,6 +32,11 @@ from pp_solvers.preconditioners import (
     th_factory,
     thm_factory,
 )
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 
 from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
@@ -162,6 +167,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             ) from e
 
         self.linear_solver_statistics.linsolve_construction_time.append(time() - t0)
+        logger.info("Linear solver constructed in %.2f seconds.", time() - t0)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
@@ -169,6 +175,12 @@ class IterativeSolverMixin(pp.PorePyModel):
         t0 = time()
         x_loc = solver.solve(rhs)
         self.linear_solver_statistics.linsolve_solve_time.append(time() - t0)
+        num_it = len(solver.get_residuals())
+        logger.info(
+            "Linear system solved in %.2f seconds with %d iterations.",
+            time() - t0,
+            num_it,
+        )
 
         info = solver.ksp.getConvergedReason()
         if info <= 0:
@@ -182,9 +194,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # (columns) were reordered.
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
-        self.linear_solver_statistics.num_krylov_iters.append(
-            len(solver.get_residuals())
-        )
+        self.linear_solver_statistics.num_krylov_iters.append(num_it)
 
         return np.atleast_1d(x)
 
