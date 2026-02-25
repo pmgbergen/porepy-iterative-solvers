@@ -35,7 +35,7 @@ from pp_solvers.preconditioners import (
 import logging
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logger.addHandler(logging.NullHandler())
 
 
 from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
@@ -166,8 +166,9 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "Failed to create solver with the provided preconditioner."
             ) from e
 
-        self.linear_solver_statistics.linsolve_construction_time.append(time() - t0)
-        logger.info("Linear solver constructed in %.2f seconds.", time() - t0)
+        elapsed = time() - t0
+        self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
+        logger.info("Linear solver constructed in %.2f seconds.", elapsed)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
