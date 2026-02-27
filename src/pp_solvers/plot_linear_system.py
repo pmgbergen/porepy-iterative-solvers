@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from pp_solvers.block_linear_system import BlockLinearSystem
 
 
+__all__ = ["spy", "color_spy", "matshow", "plot_max", "plot_vector"]
+
+
 def spy(
     mat: spmatrix,
     show: bool = True,
