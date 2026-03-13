@@ -5,6 +5,8 @@ of using iterative linear solvers to a PorePy model.
 
 from __future__ import annotations
 
+import gc
+import logging
 from dataclasses import dataclass, field
 from itertools import count
 from time import time
@@ -32,7 +34,6 @@ from pp_solvers.preconditioners import (
     th_factory,
     thm_factory,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -156,11 +157,9 @@ class IterativeSolverMixin(pp.PorePyModel):
             raise ValueError("RHS contains NaN or Inf values")
 
         solver_options = self.params["linear_solver"].get("options", {})
-        ksp_factory = self._solver_factory
-
         t0 = time()
         try:
-            solver = ksp_factory.make_solver(self.bmat, solver_options)
+            solver = self._solver_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
@@ -196,6 +195,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
+        del self.bmat
+        gc.collect()
 
         return np.atleast_1d(x)
 
@@ -224,6 +225,9 @@ class IterativeSolverMixin(pp.PorePyModel):
         # the blocks (and thereby the underlying matrix) to match the ordering defined
         # by the # `dof_manager`.
         self.bmat = bmat[:]
+        # Delete the original linear system to save memory.
+        del self.linear_system
+        gc.collect()  # Force garbage collection to free memory immediately.
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
