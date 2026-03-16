@@ -368,6 +368,13 @@ class BlockLinearSystem:
         sliced_matrix = self.mat[rows_expanded, cols_expanded]
         rhs = self.rhs[groups_dofs_row]
 
+        if not sliced_matrix.data.flags.owndata:
+            # Slicing of a sparse matrix sometimes produces a view with considerable
+            # higher memory consumption than the original matrix. Copy the data to
+            # reclaim ownership and reduce memory consumption. We assume that the
+            # incurred overhead is minor compared to the benefits in saving memory.
+            sliced_matrix.data = sliced_matrix.data.copy()
+
         # Return a new block linear system object with the selected blocks. Compared to
         # the current object, the new object potentially has a subset of enabled groups,
         # with a corresponding subset of local indices (dofs_row and dofs_col).
