@@ -1,6 +1,7 @@
 """This module defines the machinery to parse the configuration of the PETSc linear
 solver and build the corresponding PETSc KSP and PC objects."""
 
+import gc
 from dataclasses import dataclass
 from typing import Optional
 from warnings import warn
@@ -8,19 +9,13 @@ from warnings import warn
 import numpy as np
 from petsc4py import PETSc
 
-from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
+from pp_solvers.block_linear_system import (BlockLinearSystem,
+                                            LinearSystemIndexer)
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.petsc_solvers import (
-    LinearSolverWithTransformations,
-    PcPythonPermutation,
-    PetscKrylovSolver,
-)
-from pp_solvers.petsc_utils import (
-    clear_petsc_options,
-    construct_is,
-    csr_to_petsc,
-    insert_petsc_options,
-)
+from pp_solvers.petsc_solvers import (LinearSolverWithTransformations,
+                                      PcPythonPermutation, PetscKrylovSolver)
+from pp_solvers.petsc_utils import (clear_petsc_options, construct_is,
+                                    csr_to_petsc, insert_petsc_options)
 from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
@@ -42,8 +37,9 @@ class PetscKSPScheme:
         # gather and count all the keys.
 
         # Construct a PETSc matrix from the scipy matrix.
-        # TODO EK: Can we at this point delete the scipy matrix to save memory?
         petsc_mat = csr_to_petsc(mat_orig.mat)
+        del mat_orig.mat  # Delete the scipy matrix to save memory.
+        gc.collect()
 
         # Clear the PETSc options from a previous solve.
         petsc_options = clear_petsc_options()
