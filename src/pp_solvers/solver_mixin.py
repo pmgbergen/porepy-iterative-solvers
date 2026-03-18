@@ -196,7 +196,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
         del self.bmat
-        gc.collect()
 
         return np.atleast_1d(x)
 
@@ -227,7 +226,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.bmat = bmat[:]
         # Delete the original linear system to save memory.
         del self.linear_system
-        gc.collect()  # Force garbage collection to free memory immediately.
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.
