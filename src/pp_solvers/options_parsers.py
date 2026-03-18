@@ -9,13 +9,19 @@ from warnings import warn
 import numpy as np
 from petsc4py import PETSc
 
-from pp_solvers.block_linear_system import (BlockLinearSystem,
-                                            LinearSystemIndexer)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.petsc_solvers import (LinearSolverWithTransformations,
-                                      PcPythonPermutation, PetscKrylovSolver)
-from pp_solvers.petsc_utils import (clear_petsc_options, construct_is,
-                                    csr_to_petsc, insert_petsc_options)
+from pp_solvers.petsc_solvers import (
+    LinearSolverWithTransformations,
+    PcPythonPermutation,
+    PetscKrylovSolver,
+)
+from pp_solvers.petsc_utils import (
+    clear_petsc_options,
+    construct_is,
+    csr_to_petsc,
+    insert_petsc_options,
+)
 from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
