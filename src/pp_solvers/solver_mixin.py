@@ -5,7 +5,6 @@ of using iterative linear solvers to a PorePy model.
 
 from __future__ import annotations
 
-import gc
 import logging
 from dataclasses import dataclass, field
 from itertools import count
@@ -195,7 +194,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
-        del self.bmat
+        if self.params["linear_solver"].get("delete_matrices", True):
+            del self.bmat
 
         return np.atleast_1d(x)
 
@@ -224,8 +224,9 @@ class IterativeSolverMixin(pp.PorePyModel):
         # the blocks (and thereby the underlying matrix) to match the ordering defined
         # by the # `dof_manager`.
         self.bmat = bmat[:]
-        # Delete the original linear system to save memory.
-        del self.linear_system
+        # Delete the original linear system to save memory unless instructed not to.
+        if self.params["linear_solver"].get("delete_matrices", True):
+            del self.linear_system
 
     def _initialize_linear_solver(self):
         # Set up preconditioner.

@@ -508,7 +508,11 @@ def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
         dof_manager=MockDofManager(),
     )
     krylov_solver = ksp_scheme.make_solver(
-        mat_orig=block_linear_system, options={"gmres": {"ksp_type": "fgmres"}}
+        mat_orig=block_linear_system,
+        options={
+            "gmres": {"ksp_type": "fgmres"},
+            "delete_matrices": False,
+        },
     )
     # Check that the custom option applied.
     assert krylov_solver.ksp.type == "fgmres"
