@@ -1,7 +1,6 @@
 """This module defines the machinery to parse the configuration of the PETSc linear
 solver and build the corresponding PETSc KSP and PC objects."""
 
-import gc
 from dataclasses import dataclass
 from typing import Optional
 from warnings import warn
@@ -44,8 +43,8 @@ class PetscKSPScheme:
 
         # Construct a PETSc matrix from the scipy matrix.
         petsc_mat = csr_to_petsc(mat_orig.mat)
-        del mat_orig.mat  # Delete the scipy matrix to save memory.
-        gc.collect()
+        if options.get("delete_matrices", False):
+            del mat_orig.mat  # Delete the scipy matrix to save memory.
 
         # Clear the PETSc options from a previous solve.
         petsc_options = clear_petsc_options()
