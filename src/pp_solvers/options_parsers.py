@@ -43,7 +43,7 @@ class PetscKSPScheme:
 
         # Construct a PETSc matrix from the scipy matrix.
         petsc_mat = csr_to_petsc(mat_orig.mat)
-        if options.get("delete_matrices", False):
+        if options.get("delete_matrices", True):
             del mat_orig.mat  # Delete the scipy matrix to save memory.
 
         # Clear the PETSc options from a previous solve.
