@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from dataclasses import dataclass
 from time import time
-from typing import Callable
+from typing import Callable, TypedDict, NotRequired
 from warnings import warn
 
 import numpy as np
@@ -48,6 +48,7 @@ from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
 
 __all__ = [
     "IterativeSolverMixin",
+    "LinearSolverParams",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -129,6 +130,31 @@ class LinearSolverStatistics(SolverStatistics):
     num_krylov_iters: list[int] = field(default_factory=list)
 
 
+class LinearSolverParams(TypedDict, total=False):
+    """A dictionary of linear solver parameters, stored in
+    `model.params['linear_solver']`.
+
+    The argument `total=False` states that all entries are optional.
+
+    """
+
+    options: dict
+    """A dict of parameters to tune the solver configuration. See examples for the
+    structure."""
+    solver_selector: SolverSelector
+    """A solver selector object providing multiple linear solver configurations."""
+    delete_matrices: bool
+    """Delete the linear solver matrix when it is not needed to free the memory as early
+    as possible. Defaults to True.
+
+    """
+    preconditioner_factory: PetscKspPcConfiguration
+    """A factory to build a PETSc preconditioned linear solver from. Using the default
+    factory if not passed.
+
+    """
+
+
 class IterativeSolverMixin(pp.PorePyModel):
     """Intended usage:
 
@@ -154,39 +180,68 @@ class IterativeSolverMixin(pp.PorePyModel):
 
     """
 
-    def _determine_solver_options(self) -> dict:
-        # The options are either provided by a used manually, or determined by
-        # machine learning in the solver selector.
+    def solve_linear_system(self) -> np.ndarray:
+        """Solve the linear system.
 
-        solver_selector: SolverSelector | None = self.params["linear_solver"].get(
-            "solver_selector", None
-        )
-        solver_options: dict = self.params["linear_solver"].get("options", {})
+        Dispatches to one of two paths:
+
+        - No ML selection: calls `_solve_linear_system` directly.
+        - With ML selection: delegates to `_solve_linear_system_with_solver_selection`.
+
+        Returns:
+            Solution array of the linear system.
+        """
+        try:
+            linear_solver_params: LinearSolverParams = self.params["linear_solver"]
+        except KeyError as e:
+            logger.exception("You must specify `linear_solver` in the model params.")
+            raise e
+
+        solver_selector = linear_solver_params.get("solver_selector", None)
+        solver_options = linear_solver_params.get("options", {})
         if solver_selector is None:
-            # No solver selection. Taking manually provided options.
-            return solver_options
-
-        # Warn if both the solver selector and the options are present.
-        if len(solver_options) > 0:
-            warn(
-                'Parameters "options" and "solver_selector" are mutually exclusive. '
-                "Solver selection may override manually provided parameters."
+            return self._solve_linear_system(solver_options=solver_options)
+        else:
+            return self._solve_linear_system_with_solver_selection(
+                solver_selector=solver_selector, solver_options=solver_options
             )
 
-        characteristics = np.array([])
+    def _solve_linear_system_with_solver_selection(
+        self, solver_selector: SolverSelector, solver_options: dict
+    ) -> np.ndarray:
+        """Use ML-based solver selection to solve the linear system and update the
+        model.
 
+        Selects solver options via `solver_selector`, merging them with any manually
+        provided `solver_options` (manual options may be overridden). After solving,
+        feeds back performance metrics and updates the ML model with them.
+
+        Parameters:
+            solver_selector: Selects the solver scheme based on system characteristics.
+            solver_options: Manually provided solver options; may be overridden by the
+                selected scheme.
+
+        Returns:
+            Solution array of the linear system.
+        """
+        characteristics = np.array([])  # Not implemented yet.
+
+        # Perform the ML selection.
         solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
             characteristics=characteristics, active_solver_idx=-1
         )
 
-        return solver_options | solver_selection_opts
+        # Check that the ML model does not override the manually provided options. Warn
+        # if so and merge the options into a single dict.
+        intersecting_keys = set(solver_options).intersection(solver_selection_opts)
+        if len(intersecting_keys) > 0:
+            logger.warning(
+                "Solver selection override manually provided solver options:",
+                intersecting_keys,
+            )
+        solver_selection_opts = solver_options | solver_selection_opts
 
-    def solve_linear_system(self) -> None:
-        solver_selector: SolverSelector | None = self.params["linear_solver"].get(
-            "solver_selector", None
-        )
-        solver_options = self._determine_solver_options()
-
+        # Solve the linear system.
         try:
             solution = self._solve_linear_system(solver_options=solver_options)
         except RuntimeError as e:
@@ -195,28 +250,25 @@ class IterativeSolverMixin(pp.PorePyModel):
         else:
             success = True
         finally:
-            if solver_selector is not None:
-                # The way of accessing these values should be changed when they find a
-                # better accommodation.
-                solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
-                construct_time = (
-                    self.nonlinear_solver_statistics.linsolve_construction_time
-                )
-                solver_selector.provide_performance_feedback(
-                    solve_time=solve_time,
-                    construct_time=construct_time,
-                    success=success,
-                )
+            # No matter we succeeded or not, providing feedback to the ML model.
+
+            # The way of accessing these values should be changed when they find a
+            # better accommodation.
+            solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
+            construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
+            solver_selector.provide_performance_feedback(
+                solve_time=solve_time,
+                construct_time=construct_time,
+                success=success,
+            )
         return solution
 
-    def _solve_linear_system(self, solver_options: dict) -> None:
+    def _solve_linear_system(self, solver_options: dict) -> np.ndarray:
         # Check for NaN or Inf in the RHS.
         # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
-
-        solver_options = self.params["linear_solver"].get("options", {})
 
         t0 = time()
         try:

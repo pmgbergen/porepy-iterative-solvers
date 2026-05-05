@@ -15,12 +15,16 @@ class CategoricalChoices:
     def __or__(self: Self, value: Any) -> "CategoricalChoices":
         # This needs to be test-covered hardly.
         if not isinstance(value, dict):
-            raise ValueError("Can only do | with CategoricalChoices and dict.")
+            raise ValueError(
+                "Can only do `__or__` with CategoricalChoices, where each choice is"
+                "a dict."
+            )
         updated_choices = []
         for choice in self.choices:
             if not isinstance(choice, dict):
                 raise ValueError(
-                    "Can only do | with CategoricalChoices, where eachchoice is a dict."
+                    "Can only do `__or__` with CategoricalChoices, where each choice is"
+                    "a dict."
                 )
             updated_choices.append(choice | value)
         return CategoricalChoices(choices=updated_choices)

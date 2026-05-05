@@ -101,7 +101,7 @@ class SolverSelector:
     def provide_performance_feedback(
         self, solve_time: float, construct_time: float, success: bool
     ) -> None:
-        reward = self.performance_predictor.reward_maker.estimate_reward(
+        reward = self.performance_predictor.rewarder.estimate_reward(
             solve_time=solve_time, construct_time=construct_time, success=success
         )
 
