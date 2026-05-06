@@ -169,5 +169,5 @@ def test_ml_model_predicts_failure_and_success():
     assert chosen_idx == 0  # success solver preferred
 
     rewards = predictor.model.predict(two_solvers)
-    assert rewards[0] > FAIL_REWARD   # success solver: meaningful positive-ish reward
-    assert rewards[1] < FAIL_REWARD   # failure solver: below the fail threshold
+    assert rewards[0] > FAIL_REWARD  # success solver: meaningful positive-ish reward
+    assert rewards[1] < FAIL_REWARD  # failure solver: below the fail threshold

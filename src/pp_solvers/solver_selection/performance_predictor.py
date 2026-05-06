@@ -9,7 +9,8 @@ https://arxiv.org/abs/2510.04920
 1. **Initial exploration** - randomly samples solvers until enough data is collected
     (`num_initial_exploration` samples), then trains an initial model.
 2. **Incremental (or online) learning** - updates the model in batches as new solve
-    results arrive, optionally injecting epsilon-greedy exploration to avoid local optima.
+    results arrive, optionally injecting epsilon-greedy exploration to avoid local
+    optima.
 
 The reward signal is ``-log(construct_time + solve_time)`` for successful solves and a
 large negative constant for failures, computed by `RewardEstimator`.
