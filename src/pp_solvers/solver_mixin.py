@@ -243,7 +243,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         # Solve the linear system.
         try:
-            solution = self._solve_linear_system(solver_options=solver_options)
+            solution = self._solve_linear_system(solver_options=solver_selection_opts)
         except RuntimeError as e:
             success = False
             raise e

@@ -106,6 +106,7 @@ class TwoEstimators:
         predicted reward is a large negative constant.
 
         """
+        # FAIL_REWARD - 1 here to not think about "less or equal" edge case.
         reward_estimate = np.full(X.shape[0], FAIL_REWARD - 1, dtype=float)
         success_estimate = self.classifier.predict(X)
         if not np.any(success_estimate):
@@ -258,6 +259,7 @@ class Rewarder:
     """
 
     def __init__(self):
+        # FAIL_REWARD - 1 here to not think about "less or equal" edge case.
         self.worst_known_reward: float = FAIL_REWARD - 1
 
     def estimate_reward(self, solve_time: float, construct_time: float, success: bool):
