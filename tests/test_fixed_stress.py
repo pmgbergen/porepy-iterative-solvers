@@ -57,8 +57,10 @@ def model(with_fractures) -> pp.PorePyModel:
     u_intf = model.interface_displacement(interfaces)
     u_intf_values = model.equation_system.get_variable_values([u_intf], iterate_index=0)
     u_intf_values[:] = np.arange(u_intf_values.size)
+    # Setting the *previous time step* (initial condition) value to non-zero. It will be
+    # fetched in model.before_nonlinear_loop and passed to the current solution guess.
     model.equation_system.set_variable_values(
-        values=u_intf_values, variables=[u_intf], iterate_index=0
+        values=u_intf_values, variables=[u_intf], time_step_index=0
     )
 
     model.before_nonlinear_loop()
