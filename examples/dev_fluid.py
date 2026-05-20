@@ -53,14 +53,14 @@ model_params_2d = {
     "reference_variable_values": pp.ReferenceVariableValues(**{"pressure": 1}),
     "fracture_indices": [0, 1],
     "units": pp.Units(m=1e-4),
-    "linear_solver": {
-        "preconditioner_factory": pp_solvers.mass_balance_factory,
-        "options": {
+    "linear_solver": pp_solvers.LinearSolverParams(
+        preconditioner_factory=pp_solvers.mass_balance_factory,
+        options={
             "gmres": {
                 "ksp_monitor": None,
             }
         },
-    },
+    ),
 }
 model_2d = FullModel(model_params_2d)
 pp.run_time_dependent_model(model_2d)
