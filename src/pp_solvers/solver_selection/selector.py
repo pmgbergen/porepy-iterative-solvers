@@ -1,5 +1,7 @@
 """Entry point for solver selection via the SolverSelector class."""
 
+from __future__ import annotations
+
 from pickle import dump, load
 from time import time
 from typing import Optional
@@ -60,7 +62,7 @@ class SolverSelectorHistory:
         self.predict_time: list[float] = []
         self.fit_time: list[float] = []
 
-    def save(self, path: str):
+    def save(self, path: str) -> None:
         with open(path, "wb") as f:
             dump(
                 (
@@ -74,7 +76,7 @@ class SolverSelectorHistory:
                 f,
             )
 
-    def load(self, path: str):
+    def load(self, path: str) -> None:
         with open(path, "rb") as f:
             data = load(f)
             self.features = data[0]
@@ -106,7 +108,7 @@ class SolverSelector:
         solver_space: SolverSpace,
         performance_predictor: BaseIncrementalMLModel,
         rewarder: Optional[Rewarder] = None,
-    ):
+    ) -> None:
         self.solver_space: SolverSpace = solver_space
         """Describes the avaliable options to choose from."""
         self.performance_predictor: BaseIncrementalMLModel = performance_predictor
@@ -115,7 +117,7 @@ class SolverSelector:
             rewarder = Rewarder()
         self.rewarder: Rewarder = rewarder
         """Formula to compute reward."""
-        self.history = SolverSelectorHistory()
+        self.history: SolverSelectorHistory = SolverSelectorHistory()
         """Struct to save the decision history."""
 
     def select_linear_solver_scheme(
@@ -189,7 +191,9 @@ class SolverSelector:
         self.history.predict_time.append(self.__predict_time)
 
         # Giving feedback.
-        self.performance_predictor.partial_fit(X=self.history.features[-1], y=reward)
+        self.performance_predictor.partial_fit(
+            X=self.history.features[-1], y=np.array(reward, dtype=float)
+        )
         self.history.fit_time.append(time() - t0)
 
 
@@ -203,7 +207,9 @@ class Rewarder:
         # FAIL_REWARD - 1 here to not think about "less or equal" edge case.
         self.worst_known_reward: float = FAIL_REWARD - 1
 
-    def estimate_reward(self, solve_time: float, construct_time: float, success: bool):
+    def estimate_reward(
+        self, solve_time: float, construct_time: float, success: bool
+    ) -> float:
         if success:
             reward = -np.log(construct_time + solve_time)
         else:

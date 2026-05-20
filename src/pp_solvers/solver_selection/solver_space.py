@@ -92,11 +92,11 @@ class CategoricalChoices:
 
     """
 
-    def __init__(self, choices: list[dict | Any]):
-        self.choices = choices
+    def __init__(self, choices: list[dict | Any]) -> None:
+        self.choices: list[dict | Any] = choices
         self.id: int = -1  # Will be assigned in _build_decision_tree function.
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"CategoricalChoices({self.choices})"
 
     def __or__(self: Self, value: Any) -> CategoricalChoices:
@@ -145,7 +145,7 @@ class NumericalChoices:
         self,
         choices: Iterable,
         dtype: Optional[np.dtype] = None,
-    ):
+    ) -> None:
         self.choices: np.ndarray = np.array(choices, dtype=dtype)
         if self.choices.dtype == object:
             raise ValueError("Nested choices not supported. Use sub-dictionaries.")
@@ -154,7 +154,7 @@ class NumericalChoices:
         self.tag: str | None = None  # Will be assigned in _build_decision_tree.
         self.id: int = -1  # Will be assigned in _initialize_decision_ids function.
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"NumericalChoices({self.tag}: {self.choices})"
 
     def __str__(self) -> str:
@@ -185,12 +185,12 @@ class SolverSpace:
     def __init__(
         self,
         solver_space_scheme: dict | CategoricalChoices | NumericalChoices | Any,
-    ):
+    ) -> None:
         self._solver_space_scheme: (
             dict | CategoricalChoices | NumericalChoices | Any
         ) = solver_space_scheme
         """The original scheme of the solver space, passed by a user."""
-        self._decision_tree = _DecisionNode(solver_space_scheme)
+        self._decision_tree: _DecisionNode = _DecisionNode(solver_space_scheme)
         """An tree structure representing the solver space. Leaves are particular
         decisions, non-leaf nodes represents a choice to be made. A path from the tree
         root to a single or multiple leaves represents a solver configuration.
@@ -225,7 +225,7 @@ class SolverSpace:
         where `all_decisions_encoding[i]` is a vector encoding the i-th solver
         configuration."""
 
-    def config_from_decision(self, decision: np.ndarray):
+    def config_from_decision(self, decision: np.ndarray) -> dict | Any:
         """Constructs a human-readable solver configuration from an encoded decision.
         Config of this format should be passed to
             `pp_solvers.PetscKSPScheme.make_solver(mat_orig=..., options=this_config)`.
@@ -247,7 +247,7 @@ class SolverSpace:
         decision: np.ndarray,
         decision_tree: _DecisionNode,
         solver_space_scheme: dict | Any,
-    ):
+    ) -> dict | Any:
         """Recursively traverses `decision_tree` and `solver_space_scheme`. Replaces
         encountered `NumericalChoices` and `CategoricalChoices` by a particular decision
         encoded in `decision`.
@@ -347,7 +347,9 @@ def explain_decision(solver_space: SolverSpace, decision_idx: int, sep=" - ") ->
 
     prefix: list[str] = []
 
-    def find_child(node: _DecisionNode | _ForkNode):
+    def find_child(
+        node: _DecisionNode | _ForkNode,
+    ) -> _DecisionNode | _ForkNode | NumericalChoices | None:
         """Recursively traverse the decision tree to find the node referring to our
         decision.
 
@@ -417,13 +419,13 @@ class _FlatCompleteSolverConfig:
         self,
         categorical: Optional[list[_DecisionNode]] = None,
         numerical: Optional[list[NumericalChoices]] = None,
-    ):
+    ) -> None:
         self.categorical: list[_DecisionNode] = categorical or []
         """Categorical decisions that lead to this solver configuration."""
         self.numerical: list[NumericalChoices] = numerical or []
         """Numerical decisions that lead to this solver configuration."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"FlatSolverConfig({self.categorical}, {self.numerical})"
 
 
@@ -440,7 +442,7 @@ class _DecisionNode:
 
     def __init__(
         self, solver_space_scheme: dict | CategoricalChoices | NumericalChoices | Any
-    ):
+    ) -> None:
         self.solver_space_scheme: dict | CategoricalChoices | NumericalChoices | Any = (
             solver_space_scheme
         )
@@ -455,7 +457,7 @@ class _DecisionNode:
 
         self.id: int = -1  # This will be set in _initialize_decision_ids.
 
-    def string(self, prefix="") -> str:
+    def string(self, prefix: str = "") -> str:
         """Human-readible representation of the node and its children for debug and
         analysis.
 
@@ -524,7 +526,7 @@ class _ForkNode:
 
     def __init__(
         self, categorical_choices: CategoricalChoices, options_key: str, id: int
-    ):
+    ) -> None:
         self.options_key: str = options_key
         """The key this fork node refers to."""
         self.categorical_choices: CategoricalChoices = categorical_choices
@@ -534,13 +536,13 @@ class _ForkNode:
         self.id: int = id
         """Initialized in `_build_decision_tree` function."""
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"ForkNode({self.options_key}, id={self.id})"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.string()
 
-    def string(self, prefix="") -> str:
+    def string(self, prefix: str = "") -> str:
         num = len(self.categorical_choices.choices)
         repr = f"{prefix}{self.options_key} (fork with {num} branches):"
         child_prefix = f"{prefix}| "
@@ -574,8 +576,8 @@ def _build_decision_tree(
     solver_space_scheme: dict | CategoricalChoices | NumericalChoices | Any,
     current_decision_node: _DecisionNode,
     options_key: str,
-    id_counter: count,
-):
+    id_counter: count[int],
+) -> None:
     """Recursively traverses the `solver_space_scheme` and builds the decision tree from
     the root node.
 

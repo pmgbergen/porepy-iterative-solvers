@@ -72,19 +72,19 @@ class IncrementalRefitModel(BaseIncrementalMLModel):
 
     """
 
-    def __init__(self, model):
+    def __init__(self, model) -> None:
         self.model = model
         """A machine learning model with methods `fit` and `predict`."""
-        self.X = []
-        self.y = []
+        self.X: list[np.ndarray] = []
+        self.y: list[np.ndarray] = []
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Initially fit the model. Drops all the cached data if present."""
         self.X = X.tolist()
         self.y = y.tolist()
         self.model.fit(X, y)
 
-    def partial_fit(self, X, y):
+    def partial_fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Update the cached data with the new X and y and refit the model using all the
         cached data.
 
@@ -93,7 +93,7 @@ class IncrementalRefitModel(BaseIncrementalMLModel):
         self.y.extend(y.tolist())
         self.model.fit(self.X, self.y)
 
-    def predict(self, X):
+    def predict(self, X: np.ndarray) -> np.ndarray:
         return self.model.predict(X)
 
 
@@ -117,12 +117,12 @@ class TwoEstimators(BaseIncrementalMLModel):
         self.regressor: BaseIncrementalMLModel = regressor
         """A regression ML model with methods `fit`, `partial_fit` and `predict`."""
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         success = y >= FAIL_REWARD
         self.classifier.fit(X, success)
         self.regressor.fit(X[success], y[success])
 
-    def partial_fit(self, X, y):
+    def partial_fit(self, X: np.ndarray, y: np.ndarray) -> None:
         if len(X.shape) == 1:
             X = np.array(X).reshape(1, -1)
         y = np.atleast_1d(y)
@@ -131,7 +131,7 @@ class TwoEstimators(BaseIncrementalMLModel):
         if np.any(success):
             self.regressor.partial_fit(X[success], y[success])
 
-    def predict(self, X):
+    def predict(self, X: np.ndarray) -> np.ndarray:
         """Predicts the reward. If a sample is marked as "failure" in step 1, the
         predicted reward is a large negative constant.
 
@@ -165,13 +165,13 @@ class EpsGreedyExplorationModel(BaseIncrementalMLModel):
         self.eps1: float = eps1
         """Decay factor applied to `eps` after each exploration step."""
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         self.model.fit(X, y)
 
-    def partial_fit(self, X, y):
+    def partial_fit(self, X: np.ndarray, y: np.ndarray) -> None:
         self.model.partial_fit(X, y)
 
-    def predict(self, X):
+    def predict(self, X: np.ndarray) -> np.ndarray:
         if np.random.random() < self.eps:
             self.eps *= self.eps1
             result = np.zeros(X.shape[0])
@@ -202,7 +202,7 @@ class InitialExplorationEstimator(BaseIncrementalMLModel):
         model: BaseIncrementalMLModel,
         num_initial_exploration: int,
         batch_size: int,
-    ):
+    ) -> None:
         self.model: BaseIncrementalMLModel = model
         """A machine learning model with methods `fit`, `partial_fit` and `predict`."""
         self.num_initial_exploration: int = num_initial_exploration
@@ -220,7 +220,7 @@ class InitialExplorationEstimator(BaseIncrementalMLModel):
         """
         self.exploration_expectation = EPSGREEDY_EXPECTATION
 
-    def predict(self, X):
+    def predict(self, X: np.ndarray) -> np.ndarray:
         """Select a solver given a feature matrix of candidate solvers.
 
         Parameters:
@@ -243,27 +243,25 @@ class InitialExplorationEstimator(BaseIncrementalMLModel):
 
         return self.model.predict(X)
 
-    def fit(self, X, y):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """This does the same thing as partial_fit, implemented for completeness."""
         self.partial_fit(X, y)
 
-    def partial_fit(self, X, y):
+    def partial_fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Record the result of a solve and update the model if a batch is ready.
 
-        Converts the solve outcome into a reward and buffers it. Triggers an initial
-        `fit` once `num_initial_exploration` results are collected, and subsequent
-        `partial_fit` calls every `batch_size` results thereafter.
+        Triggers an initial `fit` once `num_initial_exploration` results are collected,
+        and subsequent `partial_fit` calls every `batch_size` results thereafter.
 
         Parameters:
-            features: `shape=(num_encoded_data_in_conf,)`, feature vector corresponding
+            X: `shape=(num_encoded_data_in_conf,)`, feature vector corresponding
                 to the chosen solver configuration.
-            solve_time: Time it took to solve the linear system, s.
-            construct_time: Time it took to construct the linear solver, s.
-            success: Whether the solution is successful.
+            y: `shape=(1,)` reward.
 
         """
+        assert y.size == 1, "Only single feedback at a time is allowed."
         self.X_history.append(X)
-        self.y_history.append(y)
+        self.y_history.append(y.item())
         if (
             not self.is_ready_to_predict
             and len(self.y_history) >= self.num_initial_exploration
