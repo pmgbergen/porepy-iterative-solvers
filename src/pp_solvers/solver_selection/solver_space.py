@@ -14,6 +14,8 @@ parameters affect solver performance.
 
 """
 
+from __future__ import annotations
+
 from itertools import count, product
 from typing import Any, Iterable, Optional, Self
 
@@ -97,7 +99,7 @@ class CategoricalChoices:
     def __repr__(self):
         return f"CategoricalChoices({self.choices})"
 
-    def __or__(self: Self, value: Any) -> "CategoricalChoices":
+    def __or__(self: Self, value: Any) -> CategoricalChoices:
         if not isinstance(value, dict):
             raise ValueError(
                 "Can only do `__or__` with CategoricalChoices and dict of constant "
@@ -113,7 +115,7 @@ class CategoricalChoices:
             updated_choices.append(choice | value)
         return CategoricalChoices(choices=updated_choices)
 
-    def __ror__(self: Self, value: Any) -> "CategoricalChoices":
+    def __ror__(self: Self, value: Any) -> CategoricalChoices:
         return self.__or__(value)
 
 
@@ -243,7 +245,7 @@ class SolverSpace:
     def _config_from_decision(
         self,
         decision: np.ndarray,
-        decision_tree: "_DecisionNode",
+        decision_tree: _DecisionNode,
         solver_space_scheme: dict | Any,
     ):
         """Recursively traverses `decision_tree` and `solver_space_scheme`. Replaces
@@ -413,7 +415,7 @@ class _FlatCompleteSolverConfig:
 
     def __init__(
         self,
-        categorical: Optional[list["_DecisionNode"]] = None,
+        categorical: Optional[list[_DecisionNode]] = None,
         numerical: Optional[list[NumericalChoices]] = None,
     ):
         self.categorical: list[_DecisionNode] = categorical or []
@@ -453,7 +455,7 @@ class _DecisionNode:
 
         self.id: int = -1  # This will be set in _initialize_decision_ids.
 
-    def _str(self, prefix="") -> str:
+    def str(self, prefix="") -> str:
         """Human-readible representation of the node and its children for debug and
         analysis.
 
@@ -470,7 +472,7 @@ class _DecisionNode:
             tmp = "\n".join(numerical_repr)
             repr = f"{repr}\n{tmp}"
         if len(self.children) > 0:
-            child_repr = [child._str(prefix=child_prefix) for child in self.children]
+            child_repr = [child.str(prefix=child_prefix) for child in self.children]
             tmp = "\n".join(child_repr)
             repr = f"{repr}\n{tmp}"
         return repr
@@ -483,7 +485,7 @@ class _DecisionNode:
         return f"DecisionNode({self.solver_space_scheme})"
 
     def __str__(self) -> str:
-        return self._str()
+        return self.str()
 
     def list_possible_solvers(self) -> list[_FlatCompleteSolverConfig]:
         """Generates a list of all complete configurations defined by this solver space.
@@ -536,14 +538,14 @@ class _ForkNode:
         return f"ForkNode({self.options_key}, id={self.id})"
 
     def __str__(self):
-        return self._str()
+        return self.str()
 
-    def _str(self, prefix="") -> str:
+    def str(self, prefix="") -> str:
         num = len(self.categorical_choices.choices)
         repr = f"{prefix}{self.options_key} (fork with {num} branches):"
         child_prefix = f"{prefix}| "
         if len(self.children) > 0:
-            child_repr = [child._str(prefix=child_prefix) for child in self.children]
+            child_repr = [child.str(prefix=child_prefix) for child in self.children]
             tmp = "\n".join(child_repr)
             repr = f"{repr}\n{tmp}"
         return repr
