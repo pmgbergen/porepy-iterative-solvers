@@ -12,21 +12,26 @@ https://arxiv.org/abs/2510.04920
     results arrive, optionally injecting epsilon-greedy exploration to avoid local
     optima.
 
-The reward signal is ``-log(construct_time + solve_time)`` for successful solves and a
-large negative constant for failures, computed by `RewardEstimator`.
+Internally the predictor composes several wrappers, each conforming to
+a BaseIncrementalMLModel protocol:
 
-Internally the predictor composes several wrappers:
-
-- `InitialExplorationEstimator` - orchestrates the two phases above.
-- `EpsGreedyExplorationModel` - wraps a model with decaying epsilon-greedy exploration.
-- `TwoEstimators` - separates success/failure classification from reward regression so
-    that failed solves do not distort the regressor.
 - `IncrementalRefitModel` - adapts scikit-learn estimators (which lack ``partial_fit``)
     to incremental updates by accumulating data and refitting from scratch each batch.
+- `TwoEstimators` - separates success/failure classification from reward regression so
+    that failed solves do not distort the regressor.
+- `EpsGreedyExplorationModel` - wraps a model with decaying epsilon-greedy exploration.
+- `InitialExplorationEstimator` - applies random initial exploration, then runs ML
+    inference for selection.
 
 """
 
+from abc import ABC, abstractmethod
+
 import numpy as np
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import RidgeClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 FAIL_REWARD = -99
 """A large negative constant reward for failed solution attempts."""
@@ -38,7 +43,29 @@ option.
 """
 
 
-class IncrementalRefitModel:
+class BaseIncrementalMLModel(ABC):
+    """This base class defines an sklearn-like interface for a machine learning model
+    with methods `fit`, `partial_fit`, and `predict`.
+
+    """
+
+    @abstractmethod
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        pass
+
+    @abstractmethod
+    def partial_fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        pass
+
+    @abstractmethod
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        pass
+
+    def save_history(self) -> None:
+        pass
+
+
+class IncrementalRefitModel(BaseIncrementalMLModel):
     """Wraps an ML model and provides a `partial_fit` method, so that:
     - all the passed for training data is cached.
     - `partial_fit` refits the model using all the previously passed data.
@@ -70,7 +97,7 @@ class IncrementalRefitModel:
         return self.model.predict(X)
 
 
-class TwoEstimators:
+class TwoEstimators(BaseIncrementalMLModel):
     """Wraps two ML models, which denote two steps:
     1. A success/failure classifier which predicts whether the reward will be above the
         fixed threshold `FAIL_REWARD`.
@@ -82,10 +109,12 @@ class TwoEstimators:
 
     """
 
-    def __init__(self, classifier, regressor):
-        self.classifier = classifier
+    def __init__(
+        self, classifier: BaseIncrementalMLModel, regressor: BaseIncrementalMLModel
+    ):
+        self.classifier: BaseIncrementalMLModel = classifier
         """A classification ML model with methods `fit`, `partial_fit` and `predict`."""
-        self.regressor = regressor
+        self.regressor: BaseIncrementalMLModel = regressor
         """A regression ML model with methods `fit`, `partial_fit` and `predict`."""
 
     def fit(self, X, y):
@@ -117,7 +146,7 @@ class TwoEstimators:
         return reward_estimate
 
 
-class EpsGreedyExplorationModel:
+class EpsGreedyExplorationModel(BaseIncrementalMLModel):
     """Wraps an ML model with decaying epsilon-greedy exploration.
 
     With probability `eps`, ignores the model and returns a large positive reward for a
@@ -128,8 +157,8 @@ class EpsGreedyExplorationModel:
 
     """
 
-    def __init__(self, model, eps: float, eps1: float) -> None:
-        self.model = model
+    def __init__(self, model: BaseIncrementalMLModel, eps: float, eps1: float) -> None:
+        self.model: BaseIncrementalMLModel = model
         """A machine learning model with methods `fit`, `partial_fit` and `predict`."""
         self.eps: float = eps
         """Current exploration probability; decays after each exploration step."""
@@ -151,7 +180,7 @@ class EpsGreedyExplorationModel:
         return self.model.predict(X)
 
 
-class InitialExplorationEstimator:
+class InitialExplorationEstimator(BaseIncrementalMLModel):
     """Orchestrates two-phase solver selection: random exploration followed by ML-guided
     selection.
 
@@ -168,8 +197,13 @@ class InitialExplorationEstimator:
 
     """
 
-    def __init__(self, model, num_initial_exploration: int, batch_size: int):
-        self.model = model
+    def __init__(
+        self,
+        model: BaseIncrementalMLModel,
+        num_initial_exploration: int,
+        batch_size: int,
+    ):
+        self.model: BaseIncrementalMLModel = model
         """A machine learning model with methods `fit`, `partial_fit` and `predict`."""
         self.num_initial_exploration: int = num_initial_exploration
         """Number of random solve results to collect before fitting the initial model.
@@ -179,48 +213,41 @@ class InitialExplorationEstimator:
         `partial_fit`."""
 
         # Buffers for the current batch; cleared after each model update.
-        self.X_history = []
-        self.y_history = []
+        self.X_history: list[np.ndarray] = []
+        self.y_history: list[float] = []
         self.is_ready_to_predict = False
         """Permanently switches to True when the initial exploration phase is complete.
         """
         self.exploration_expectation = EPSGREEDY_EXPECTATION
 
-        # Hard-coded it here with possibility to extend if a different reward formula is
-        # ever needed (e.g. penalize very large construct_time for some reason).
-        self.rewarder = Rewarder()
-
-    def select_solver(self, features: np.ndarray) -> tuple[int, float, bool]:
+    def predict(self, X):
         """Select a solver given a feature matrix of candidate solvers.
 
         Parameters:
-            features: `shape=(num_solver_configurations, num_encoded_data_in_conf)`,
-                feature matrix.
+            X: `shape=(num_solver_configurations, num_encoded_data_in_conf)`, feature
+                matrix.
 
         Returns:
-            A tuple of `(index, expected_reward, is_model_prediction)`, where the last
-            element is `False` during the initial random exploration phase.
+            `shape=(num_solver_configurations,)`, predicted reward for each solver
+            configuration. During the initial exploration phase, all values are zero
+            except one randomly chosen entry, which is set to `EPSGREEDY_EXPECTATION`
+            to force the selector to pick it. After training, returns the model's
+            predicted rewards directly.
 
         """
         if not self.is_ready_to_predict:
-            return (
-                np.random.randint(features.shape[0]),
-                self.exploration_expectation,
-                False,
-            )
+            expectations = np.zeros_like(X[:, 0])
+            random_selected = np.random.randint(X.shape[0])
+            expectations[random_selected] = self.exploration_expectation
+            return expectations
 
-        expectations = self.model.predict(features)
-        argmax = int(np.argmax(expectations))
-        expectation = float(expectations[argmax])
-        return argmax, expectation, True
+        return self.model.predict(X)
 
-    def partial_fit(
-        self,
-        features: np.ndarray,
-        solve_time: float,
-        construct_time: float,
-        success: bool,
-    ):
+    def fit(self, X, y):
+        """This does the same thing as partial_fit, implemented for completeness."""
+        self.partial_fit(X, y)
+
+    def partial_fit(self, X, y):
         """Record the result of a solve and update the model if a batch is ready.
 
         Converts the solve outcome into a reward and buffers it. Triggers an initial
@@ -235,9 +262,8 @@ class InitialExplorationEstimator:
             success: Whether the solution is successful.
 
         """
-        reward = self.rewarder.estimate_reward(solve_time, construct_time, success)
-        self.X_history.append(features)
-        self.y_history.append(reward)
+        self.X_history.append(X)
+        self.y_history.append(y)
         if (
             not self.is_ready_to_predict
             and len(self.y_history) >= self.num_initial_exploration
@@ -251,24 +277,6 @@ class InitialExplorationEstimator:
             self.model.partial_fit(np.array(self.X_history), np.array(self.y_history))
             self.X_history.clear()
             self.y_history.clear()
-
-
-class Rewarder:
-    """Transforms `solve_time` and `construct_time` into the reward for the ML
-    algorithm.
-
-    """
-
-    def __init__(self):
-        # FAIL_REWARD - 1 here to not think about "less or equal" edge case.
-        self.worst_known_reward: float = FAIL_REWARD - 1
-
-    def estimate_reward(self, solve_time: float, construct_time: float, success: bool):
-        if success:
-            reward = -np.log(construct_time + solve_time)
-        else:
-            reward = -2 * abs(self.worst_known_reward)
-        return reward
 
 
 def assemble_default_performance_predictor(
@@ -291,14 +299,6 @@ def assemble_default_performance_predictor(
         `batch_size` linear systems.
 
     """
-    try:
-        from sklearn.pipeline import make_pipeline
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.linear_model import RidgeClassifier
-        from sklearn.ensemble import GradientBoostingRegressor
-    except:
-        raise ImportError("Sklearn not installed, try `pip install scikit-learn`.")
-
     return InitialExplorationEstimator(
         num_initial_exploration=num_initial_exploration,
         batch_size=batch_size,

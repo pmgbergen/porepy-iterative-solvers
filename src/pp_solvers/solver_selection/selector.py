@@ -2,11 +2,13 @@
 
 from pickle import dump, load
 from time import time
+from typing import Optional
 
 import numpy as np
 
 from pp_solvers.solver_selection.performance_predictor import (
-    InitialExplorationEstimator,
+    FAIL_REWARD,
+    BaseIncrementalMLModel,
 )
 from pp_solvers.solver_selection.solver_space import SolverSpace
 
@@ -50,11 +52,10 @@ def concatenate_characteristics_solvers(
 class SolverSelectorHistory:
     """Stores the history of solver selection decisions. Used for statistics."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.features: list[np.ndarray] = []
         self.reward: list[float] = []
         self.decision_idx: list[int] = []
-        self.greedy: list[bool] = []
         self.expectation: list[float] = []
         self.predict_time: list[float] = []
         self.fit_time: list[float] = []
@@ -66,7 +67,6 @@ class SolverSelectorHistory:
                     self.features,
                     self.reward,
                     self.decision_idx,
-                    self.greedy,
                     self.expectation,
                     self.predict_time,
                     self.fit_time,
@@ -80,7 +80,6 @@ class SolverSelectorHistory:
             self.features = data[0]
             self.reward = data[1]
             self.decision_idx = data[2]
-            self.greedy = data[3]
             self.expectation = data[4]
             try:
                 self.predict_time = data[5]
@@ -98,18 +97,24 @@ class SolverSelector:
     Parameters:
         solver_space: Describes the avaliable options to choose from.
         performance_predictor: The underlying ML model for selection.
+        rewarder: Formula to compute reward.
 
     """
 
     def __init__(
         self,
         solver_space: SolverSpace,
-        performance_predictor: InitialExplorationEstimator,
+        performance_predictor: BaseIncrementalMLModel,
+        rewarder: Optional[Rewarder] = None,
     ):
         self.solver_space: SolverSpace = solver_space
         """Describes the avaliable options to choose from."""
-        self.performance_predictor: InitialExplorationEstimator = performance_predictor
+        self.performance_predictor: BaseIncrementalMLModel = performance_predictor
         """The underlying ML model for selection."""
+        if rewarder is None:
+            rewarder = Rewarder()
+        self.rewarder: Rewarder = rewarder
+        """Formula to compute reward."""
         self.history = SolverSelectorHistory()
         """Struct to save the decision history."""
 
@@ -142,21 +147,20 @@ class SolverSelector:
             solver_in_use_idx=active_solver_idx,
         )
         # Making the ML decision here.
-        decision_idx, expectation, greedy = self.performance_predictor.select_solver(
-            features=features
-        )
+        expectations = self.performance_predictor.predict(X=features)
+        decision_idx = int(np.argmax(expectations))
         decision = self.solver_space.all_decisions_encoding[decision_idx]
 
         # Storing the decision internally to fetch it when feedback is provided.
         self.__decision_idx = decision_idx
-        self.__expectation = expectation
-        self.__greedy = greedy
+        self.__expectation = expectations[decision_idx]
         self.__features = features[decision_idx].copy()
-        self.__predict_time = time() - t0
 
         # Build the human-readible config from the internal decision representation.
         config = self.solver_space.config_from_decision(decision=decision)
         assert isinstance(config, dict), "At this point, should be a dictionary."
+
+        self.__predict_time = time() - t0
         return config, decision_idx
 
     def provide_performance_feedback(
@@ -172,22 +176,36 @@ class SolverSelector:
 
         """
         t0 = time()
-        # Storing statistics.
-        reward = self.performance_predictor.rewarder.estimate_reward(
+        # Storing statistics. It is done here and not in select_linear_solver_scheme, to
+        # prevent a situation where select_linear_solver_scheme is called more than
+        # once, and feedback for each decision is not provided.
+        reward = self.rewarder.estimate_reward(
             solve_time=solve_time, construct_time=construct_time, success=success
         )
         self.history.decision_idx.append(self.__decision_idx)
         self.history.expectation.append(self.__expectation)
-        self.history.greedy.append(self.__greedy)
         self.history.features.append(self.__features)
         self.history.reward.append(reward)
         self.history.predict_time.append(self.__predict_time)
 
         # Giving feedback.
-        self.performance_predictor.partial_fit(
-            features=self.history.features[-1],
-            solve_time=solve_time,
-            construct_time=construct_time,
-            success=success,
-        )
+        self.performance_predictor.partial_fit(X=self.history.features[-1], y=reward)
         self.history.fit_time.append(time() - t0)
+
+
+class Rewarder:
+    """Transforms `solve_time` and `construct_time` into the reward for the ML
+    algorithm.
+
+    """
+
+    def __init__(self) -> None:
+        # FAIL_REWARD - 1 here to not think about "less or equal" edge case.
+        self.worst_known_reward: float = FAIL_REWARD - 1
+
+    def estimate_reward(self, solve_time: float, construct_time: float, success: bool):
+        if success:
+            reward = -np.log(construct_time + solve_time)
+        else:
+            reward = -2 * abs(self.worst_known_reward)
+        return reward
