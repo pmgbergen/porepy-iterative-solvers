@@ -44,8 +44,6 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
-
 __all__ = [
     "IterativeSolverMixin",
     "LinearSolverParams",
@@ -242,13 +240,12 @@ class IterativeSolverMixin(pp.PorePyModel):
         solver_selection_opts = solver_options | solver_selection_opts
 
         # Solve the linear system.
+        success = False
         try:
             solution = self._solve_linear_system(solver_options=solver_selection_opts)
-        except RuntimeError as e:
+        except Exception as e:
             success = False
             raise e
-        else:
-            success = True
         finally:
             # No matter we succeeded or not, providing feedback to the ML model.
 
@@ -277,18 +274,21 @@ class IterativeSolverMixin(pp.PorePyModel):
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
             ) from e
-        self.nonlinear_solver_statistics.linsolve_construction_time.append(time() - t0)
+        elapsed = time() - t0
+        self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
+        logger.info("Linear solver constructed in %.2f seconds.", elapsed)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
         t0 = time()
         x_loc = solver.solve(rhs)
-        self.linear_solver_statistics.linsolve_solve_time.append(time() - t0)
+        elapsed = time() - t0
+        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         num_it = len(solver.get_residuals())
         logger.info(
             "Linear system solved in %.2f seconds with %d iterations.",
-            time() - t0,
+            elapsed,
             num_it,
         )
 
