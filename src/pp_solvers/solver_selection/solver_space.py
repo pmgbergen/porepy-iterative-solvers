@@ -455,7 +455,7 @@ class _DecisionNode:
 
         self.id: int = -1  # This will be set in _initialize_decision_ids.
 
-    def str(self, prefix="") -> str:
+    def string(self, prefix="") -> str:
         """Human-readible representation of the node and its children for debug and
         analysis.
 
@@ -472,7 +472,7 @@ class _DecisionNode:
             tmp = "\n".join(numerical_repr)
             repr = f"{repr}\n{tmp}"
         if len(self.children) > 0:
-            child_repr = [child.str(prefix=child_prefix) for child in self.children]
+            child_repr = [child.string(prefix=child_prefix) for child in self.children]
             tmp = "\n".join(child_repr)
             repr = f"{repr}\n{tmp}"
         return repr
@@ -485,7 +485,7 @@ class _DecisionNode:
         return f"DecisionNode({self.solver_space_scheme})"
 
     def __str__(self) -> str:
-        return self.str()
+        return self.string()
 
     def list_possible_solvers(self) -> list[_FlatCompleteSolverConfig]:
         """Generates a list of all complete configurations defined by this solver space.
@@ -538,14 +538,14 @@ class _ForkNode:
         return f"ForkNode({self.options_key}, id={self.id})"
 
     def __str__(self):
-        return self.str()
+        return self.string()
 
-    def str(self, prefix="") -> str:
+    def string(self, prefix="") -> str:
         num = len(self.categorical_choices.choices)
         repr = f"{prefix}{self.options_key} (fork with {num} branches):"
         child_prefix = f"{prefix}| "
         if len(self.children) > 0:
-            child_repr = [child.str(prefix=child_prefix) for child in self.children]
+            child_repr = [child.string(prefix=child_prefix) for child in self.children]
             tmp = "\n".join(child_repr)
             repr = f"{repr}\n{tmp}"
         return repr
