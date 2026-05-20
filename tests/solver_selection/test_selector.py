@@ -141,7 +141,6 @@ def test_provide_performance_feedback_updates_history(n_cycles):
     history = selector.history
     assert len(history.decision_idx) == n_cycles
     assert len(history.reward) == n_cycles
-    assert len(history.greedy) == n_cycles
     assert len(history.features) == n_cycles
     assert len(history.expectation) == n_cycles
     assert len(history.predict_time) == n_cycles
@@ -162,7 +161,6 @@ def test_history_save_load(tmp_path):
 
     assert loaded.decision_idx == selector.history.decision_idx
     assert loaded.reward == selector.history.reward
-    assert loaded.greedy == selector.history.greedy
     assert loaded.expectation == selector.history.expectation
     for orig, restored in zip(selector.history.features, loaded.features):
         np.testing.assert_array_equal(orig, restored)

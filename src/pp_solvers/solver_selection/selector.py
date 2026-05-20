@@ -82,10 +82,10 @@ class SolverSelectorHistory:
             self.features = data[0]
             self.reward = data[1]
             self.decision_idx = data[2]
-            self.expectation = data[4]
+            self.expectation = data[3]
             try:
-                self.predict_time = data[5]
-                self.fit_time = data[6]
+                self.predict_time = data[4]
+                self.fit_time = data[5]
             except IndexError:
                 pass
 

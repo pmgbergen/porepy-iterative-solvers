@@ -15,11 +15,20 @@ def _partial_fit_n(predictor, n, start_i=0):
     """Feed n results to the predictor, mixing successes and failures."""
     for i in range(n):
         predictor.partial_fit(
-            features=_SOLVER_FEATURES[(start_i + i) % _N_SOLVERS],
-            solve_time=1.0,
-            construct_time=0.5,
-            success=((start_i + i) % 3 != 0),
+            X=_SOLVER_FEATURES[(start_i + i) % _N_SOLVERS],
+            y=np.array((start_i + i) % 3, dtype=float),
         )
+
+
+def _is_model_prediction(expectations):
+    """A greedy expectation, which does not use the ML model, looks like this:
+    [0, 0, 100, 0, 0, ...]
+
+    This helper function checks if the expectation was greedy.
+
+    """
+    unique = set(np.unique(expectations))
+    return unique != {0, EPSGREEDY_EXPECTATION}
 
 
 @pytest.mark.parametrize(
@@ -34,6 +43,7 @@ def test_num_initial_exploration(num_initial_exploration):
     """Tests that the predictor explores randomly for exactly `num_initial_exploration`
     solves before switching to ML-guided selection.
     """
+
     predictor = assemble_default_performance_predictor(
         num_initial_exploration=num_initial_exploration
     )
@@ -41,12 +51,12 @@ def test_num_initial_exploration(num_initial_exploration):
     assert predictor.num_initial_exploration == num_initial_exploration
 
     _partial_fit_n(predictor, num_initial_exploration - 1)
-    _, _, is_model_prediction = predictor.select_solver(_SOLVER_FEATURES)
-    assert not is_model_prediction
+    expectations = predictor.predict(_SOLVER_FEATURES)
+    assert not _is_model_prediction(expectations)
 
     _partial_fit_n(predictor, 1, start_i=num_initial_exploration - 1)
-    _, _, is_model_prediction = predictor.select_solver(_SOLVER_FEATURES)
-    assert is_model_prediction
+    expectations = predictor.predict(_SOLVER_FEATURES)
+    assert _is_model_prediction(expectations)
 
 
 @pytest.mark.parametrize(
@@ -101,12 +111,12 @@ def test_eps(params):
     assert predictor.model.eps == eps
 
     _partial_fit_n(predictor, num_initial)
-    _, expected_reward, _ = predictor.select_solver(_SOLVER_FEATURES)
+    expectations = predictor.predict(_SOLVER_FEATURES)
 
     if explores:
-        assert expected_reward == EPSGREEDY_EXPECTATION
+        assert expectations.max() == EPSGREEDY_EXPECTATION
     else:
-        assert expected_reward != EPSGREEDY_EXPECTATION
+        assert expectations.max() != EPSGREEDY_EXPECTATION
 
 
 @pytest.mark.parametrize(
@@ -132,7 +142,7 @@ def test_eps1(eps1):
     _partial_fit_n(predictor, num_initial)
 
     # eps=1.0 guarantees exploration; verify eps decays by eps1
-    predictor.select_solver(_SOLVER_FEATURES)
+    predictor.predict(_SOLVER_FEATURES)
     assert predictor.model.eps == pytest.approx(eps_initial * eps1)
 
 
@@ -153,21 +163,17 @@ def test_ml_model_predicts_failure_and_success():
     failure_features = _SOLVER_FEATURES[1]
 
     for _ in range(num_initial // 2):
-        predictor.partial_fit(
-            features=success_features, solve_time=0.5, construct_time=0.1, success=True
-        )
-        predictor.partial_fit(
-            features=failure_features, solve_time=1.0, construct_time=0.5, success=False
-        )
+        predictor.partial_fit(X=success_features, y=np.array(1.5))
+        predictor.partial_fit(X=failure_features, y=np.array(FAIL_REWARD - 1))
 
     assert predictor.is_ready_to_predict
 
-    two_solvers = np.array([success_features, failure_features])
-    chosen_idx, _, is_model_prediction = predictor.select_solver(two_solvers)
+    two_solvers = np.array([failure_features, success_features])
+    expectations = predictor.predict(two_solvers)
 
-    assert is_model_prediction
-    assert chosen_idx == 0  # success solver preferred
+    assert _is_model_prediction(expectations)
+    assert np.argmax(expectations) == 1  # success solver preferred
 
     rewards = predictor.model.predict(two_solvers)
-    assert rewards[0] > FAIL_REWARD  # success solver: meaningful positive-ish reward
-    assert rewards[1] < FAIL_REWARD  # failure solver: below the fail threshold
+    assert rewards[0] <= FAIL_REWARD  # failure solver: below the fail threshold
+    assert rewards[1] > FAIL_REWARD  # success solver: meaningful positive-ish reward
