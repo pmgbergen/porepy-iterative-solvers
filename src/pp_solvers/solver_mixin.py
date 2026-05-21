@@ -435,4 +435,4 @@ def default_preconditioner_factory(
         return hm_factory
     if isinstance(model, pp.Thermoporomechanics):
         return thm_factory
-    raise ValueError()
+    raise ValueError(f"Unknown model:", type(model))
