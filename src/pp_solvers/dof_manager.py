@@ -154,7 +154,14 @@ class DofManager:
             ValueError: If any of the groups is not found in this DofManager.
 
         """
-        return [self._groups.index(x) for x in groups]
+        indices = [self._groups.index(x) for x in groups]
+        if len(indices) != len(set(indices)):
+            # YZ does not see a situation when this can be desired behavior, but
+            # clearly sees how it can lead to bugs later on. This can be caused by
+            # comparison of custom EquationVariableGroups, when they are not equal but
+            # treated as so.
+            raise ValueError(f"Repeating group indices are produced by {self.groups}.")
+        return indices
 
     def equation_names(self) -> list[str]:
         """Get the names of equations in the DofManager. These names are not generally
@@ -357,7 +364,11 @@ class DofManager:
         # TODO EK: Added this assert just to verify that my understanding of the
         # function is correct. Delete it later.
         assert len(indices) == len(self._equation_groups)
-        assert len(equation_to_idx) == 0, "Some equations are not used."
+        if len(equation_to_idx) != 0:
+            raise ValueError(
+                "Some equations are not used on some subdomains:",
+                [k[0] for k in equation_to_idx.keys()],
+            )
 
         return indices
 
