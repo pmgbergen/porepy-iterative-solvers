@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from itertools import count
+from dataclasses import dataclass
 from time import time
-from typing import Callable
+from typing import Callable, TypedDict, NotRequired
 from warnings import warn
 
 import numpy as np
@@ -22,6 +22,12 @@ from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     InterfaceForceBalanceGroup,
+)
+from pp_solvers.solver_selection.selector import SolverSelector
+
+from pp_solvers.block_linear_system import (
+    BlockLinearSystem,
+    LinearSystemIndexer,
 )
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
@@ -38,10 +44,9 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-from .block_linear_system import BlockLinearSystem, LinearSystemIndexer
-
 __all__ = [
     "IterativeSolverMixin",
+    "LinearSolverParams",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -123,6 +128,31 @@ class LinearSolverStatistics(SolverStatistics):
     num_krylov_iters: list[int] = field(default_factory=list)
 
 
+class LinearSolverParams(TypedDict, total=False):
+    """A dictionary of linear solver parameters, stored in
+    `model.params['linear_solver']`.
+
+    The argument `total=False` states that all entries are optional.
+
+    """
+
+    options: dict
+    """A dict of parameters to tune the solver configuration. See examples for the
+    structure."""
+    solver_selector: SolverSelector
+    """A solver selector object providing multiple linear solver configurations."""
+    delete_matrices: bool
+    """Delete the linear solver matrix when it is not needed to free the memory as early
+    as possible. Defaults to True.
+
+    """
+    preconditioner_factory: PetscKspPcConfiguration
+    """A factory to build a PETSc preconditioned linear solver from. Using the default
+    factory if not passed.
+
+    """
+
+
 class IterativeSolverMixin(pp.PorePyModel):
     """Intended usage:
 
@@ -148,14 +178,95 @@ class IterativeSolverMixin(pp.PorePyModel):
 
     """
 
-    def solve_linear_system(self) -> None:
+    def solve_linear_system(self) -> np.ndarray:
+        """Solve the linear system.
+
+        Dispatches to one of two paths:
+
+        - No ML selection: calls `_solve_linear_system` directly.
+        - With ML selection: delegates to `_solve_linear_system_with_solver_selection`.
+
+        Returns:
+            Solution array of the linear system.
+        """
+        try:
+            linear_solver_params: LinearSolverParams = self.params["linear_solver"]
+        except KeyError as e:
+            logger.exception("You must specify `linear_solver` in the model params.")
+            raise e
+
+        solver_selector = linear_solver_params.get("solver_selector", None)
+        solver_options = linear_solver_params.get("options", {})
+        if solver_selector is None:
+            return self._solve_linear_system(solver_options=solver_options)
+        else:
+            return self._solve_linear_system_with_solver_selection(
+                solver_selector=solver_selector, solver_options=solver_options
+            )
+
+    def _solve_linear_system_with_solver_selection(
+        self, solver_selector: SolverSelector, solver_options: dict
+    ) -> np.ndarray:
+        """Use ML-based solver selection to solve the linear system and update the
+        model.
+
+        Selects solver options via `solver_selector`, merging them with any manually
+        provided `solver_options` (manual options may be overridden). After solving,
+        feeds back performance metrics and updates the ML model with them.
+
+        Parameters:
+            solver_selector: Selects the solver scheme based on system characteristics.
+            solver_options: Manually provided solver options; may be overridden by the
+                selected scheme.
+
+        Returns:
+            Solution array of the linear system.
+        """
+        characteristics = np.array([])  # Not implemented yet.
+
+        # Perform the ML selection.
+        solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
+            characteristics=characteristics, active_solver_idx=-1
+        )
+
+        # Check that the ML model does not override the manually provided options. Warn
+        # if so and merge the options into a single dict.
+        intersecting_keys = set(solver_options).intersection(solver_selection_opts)
+        if len(intersecting_keys) > 0:
+            logger.warning(
+                "Solver selection override manually provided solver options:",
+                intersecting_keys,
+            )
+        solver_selection_opts = solver_options | solver_selection_opts
+
+        # Solve the linear system.
+        success = False
+        try:
+            solution = self._solve_linear_system(solver_options=solver_selection_opts)
+        except Exception as e:
+            success = False
+            raise e
+        finally:
+            # No matter we succeeded or not, providing feedback to the ML model.
+
+            # The way of accessing these values should be changed when they find a
+            # better accommodation.
+            solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
+            construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
+            solver_selector.provide_performance_feedback(
+                solve_time=solve_time,
+                construct_time=construct_time,
+                success=success,
+            )
+        return solution
+
+    def _solve_linear_system(self, solver_options: dict) -> np.ndarray:
         # Check for NaN or Inf in the RHS.
         # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             raise ValueError("RHS contains NaN or Inf values")
 
-        solver_options = self.params["linear_solver"].get("options", {})
         t0 = time()
         try:
             solver = self._solver_factory.make_solver(self.bmat, solver_options)
@@ -163,9 +274,8 @@ class IterativeSolverMixin(pp.PorePyModel):
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
             ) from e
-
         elapsed = time() - t0
-        self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
+        self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
 
         # Project the right hand side to the local block matrix ordering, as was done
@@ -173,29 +283,30 @@ class IterativeSolverMixin(pp.PorePyModel):
         # vector (with contact eqs reordered).
         t0 = time()
         x_loc = solver.solve(rhs)
-        self.linear_solver_statistics.linsolve_solve_time.append(time() - t0)
+        elapsed = time() - t0
+        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         num_it = len(solver.get_residuals())
         logger.info(
             "Linear system solved in %.2f seconds with %d iterations.",
-            time() - t0,
+            elapsed,
             num_it,
         )
 
         info = solver.ksp.getConvergedReason()
-        if info <= 0:
-            raise RuntimeError(
-                f"Solver did not converge. Reason: {info}. "
-                "Check the solver options and the problem setup."
-            )
-
-        # Project the solution back to the PorePy ordering. For clarity, no contact
-        # reordering here, since only the equations (rows) and not the variables
+        # Project the solution back to the global (PorePy) ordering. For clarity, no
+        # contact reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
         if self.params["linear_solver"].get("delete_matrices", True):
             del self.bmat
+
+        if info <= 0:
+            raise RuntimeError(
+                f"Solver did not converge. Reason: {info}. "
+                "Check the solver options and the problem setup."
+            )
 
         return np.atleast_1d(x)
 

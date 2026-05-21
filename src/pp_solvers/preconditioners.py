@@ -1060,11 +1060,11 @@ def thm_factory():
                     "ksp_gmres_restart": 200,
                 },
                 "contact": {
-                    # customize the interface flow sub-solver.
-                    "pc_type": "sor",
+                    # customize the contact mechanics flow sub-solver.
+                    "pc_type": "pbjacobi",
                 },
                 "mechanics_amg": {
-                    # customize the mass-balance sub-solver.
+                    # customize the mechanics sub-solver.
                     "pc_hypre_boomeramg_strong_threshold": 0.6,
                 },
                 "interface_flow": {
@@ -1078,7 +1078,7 @@ def thm_factory():
                 "cpr0_mass": {
                     # customize the mass-balance sub-solver.
                     "pc_hypre_boomeramg_strong_threshold": 0.6,
-                }
+                },
                 "cpr1": {
                     # customize the coupled mass-energy sub-solver.
                     "pc_type": "sor",
