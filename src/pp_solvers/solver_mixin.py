@@ -146,7 +146,7 @@ class LinearSolverParams(TypedDict, total=False):
     as possible. Defaults to True.
 
     """
-    preconditioner_factory: PetscKspPcConfiguration
+    preconditioner_factory: Callable[[pp.PorePyModel], PetscKspPcConfiguration]
     """A factory to build a PETSc preconditioned linear solver from. Using the default
     factory if not passed.
 
@@ -361,13 +361,12 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.nonlinear_solver_statistics.petsc_converged_reason = []
         self.nonlinear_solver_statistics.num_krylov_iters = []
 
-        precond_factory: Callable[[], PetscKspPcConfiguration]
-        linear_solver_params = self.params.get("linear_solver", {})
+        linear_solver_params: LinearSolverParams = self.params.get("linear_solver", {})
         precond_factory = linear_solver_params.get("preconditioner_factory", None)
         if precond_factory is None:
             precond_factory = default_preconditioner_factory(self)
 
-        petsc_ksp_pc_configuration: PetscKspPcConfiguration = precond_factory()
+        petsc_ksp_pc_configuration: PetscKspPcConfiguration = precond_factory(self)
 
         dof_manager = DofManager(model=self, groups=petsc_ksp_pc_configuration.groups)
 
@@ -436,7 +435,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
 def default_preconditioner_factory(
     model: pp.PorePyModel,
-) -> Callable[[], PetscKspPcConfiguration]:
+) -> Callable[[pp.PorePyModel], PetscKspPcConfiguration]:
     if isinstance(model, pp.SinglePhaseFlow):
         return mass_balance_factory
     if isinstance(model, pp.MomentumBalance):

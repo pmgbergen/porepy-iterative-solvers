@@ -291,94 +291,8 @@ class BenchmarkWithPulseIC(
 
 # ---------- Iterative Linear Solver ----------
 from porepy.applications.test_utils.models import add_mixin
-from pp_solvers.solver_mixin import IterativeSolverMixin
-from pp_solvers.equation_variable_groups import EquationVariableGroup, EquationOnDomains
-from pp_solvers.preconditioners import (
-    GMRES,
-    ILU,
-    CompositePreconditioner,
-    AMG,
-    DiagonalInverter,
-    FieldSplitSchur,
-    Identity,
-)
-
-
-class MassBalanceReactiveTransportPressureGroup(EquationVariableGroup):
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EquationOnDomains(
-            name="mass_balance_equation_reactive_transport",
-            domains=model.mdg.subdomains(),
-        )
-
-    def variable_group(self, model: pp.PorePyModel) -> pp.MixedDimensionalVariable:
-        return model.pressure(model.mdg.subdomains())
-
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return "mass_balance_equation_reactive_transport"
-
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.pressure_variable
-
-
-class ComponentGroup(EquationVariableGroup):
-    def __init__(self, component_name: str):
-        self.component_name: str = component_name
-
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EquationOnDomains(
-            name=f"component_mass_balance_equation_{self.component_name}",
-            domains=model.mdg.subdomains(),
-        )
-
-    def variable_group(self, model: pp.PorePyModel) -> pp.MixedDimensionalVariable:
-        try:
-            component = next(
-                c for c in model.fluid.components if c.name == self.component_name
-            )
-        except StopIteration:
-            components_in_model = [c.name for c in model.fluid.components]
-            raise ValueError(
-                f"Component {self.component_name} not found among {components_in_model}"
-            )
-        return component.fraction(model.mdg.subdomains())
-
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return f"component_mass_balance_equation_{self.component_name}"
-
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return self.component_name
-
-    def __eq__(self, other):
-        if super().__eq__(other):
-            return self.component_name == other.component_name
-        return False
-
-    def __hash__(self) -> int:
-        return hash(self.__class__) * hash(self.component_name)
-
-
-def compositional_solver_factory():
-    mass_balance_groups: list[EquationVariableGroup] = [
-        MassBalanceReactiveTransportPressureGroup(),
-    ]
-    transport_group: list[EquationVariableGroup] = [
-        ComponentGroup("CO2"),
-        ComponentGroup("H2CO3"),
-    ]
-
-    return GMRES(
-        preconditioner=CompositePreconditioner(
-            subsolvers=[
-                FieldSplitSchur(
-                    subsolver=Identity(groups=transport_group, key="cpr0_transport"),
-                    complement_solver=AMG(groups=mass_balance_groups, key="cpr0_mass"),
-                    approximate_inverter=DiagonalInverter(),
-                ),
-                ILU(groups=transport_group + mass_balance_groups, key="cpr1"),
-            ]
-        ),
-    )
+from pp_solvers.solver_mixin import IterativeSolverMixin, LinearSolverParams
+from pp_solvers.preconditioners import compositional_solver_factory
 
 
 def main():
@@ -402,14 +316,14 @@ def main():
         "material_constants": {
             "solid": pp.SolidConstants(permeability=1e-4, total_porosity=0.3),
         },
-        "linear_solver": {  # You need to add this to model_params
-            "preconditioner_factory": compositional_solver_factory,
-            "options": {
+        "linear_solver": LinearSolverParams(  # You need to add this to model_params
+            preconditioner_factory=compositional_solver_factory,
+            options={
                 "gmres": {
                     # "ksp_monitor": None,
                 }
             },
-        },
+        ),
     }
 
     # You need to add this mixin to your model

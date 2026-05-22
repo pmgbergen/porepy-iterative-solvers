@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from typing import Optional, Sequence
+from typing import Optional, Sequence, TYPE_CHECKING
 
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
+    ComponentGroup,
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
@@ -26,12 +27,16 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureGroup,
     MassBalancePressureIntersectionsGroup,
     MassBalancePressureMatrixGroup,
+    MassBalanceReactiveTransportPressureGroup,
     MechanicsGroup,
     WellEnthalpyFluxGroup,
     WellFluxGroup,
 )
 from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
 from pp_solvers.petsc_utils import csr_to_petsc
+
+if TYPE_CHECKING:
+    import porepy as pp
 
 __all__ = [
     # Add all preconditioners and linear solvers here.
@@ -55,6 +60,7 @@ __all__ = [
     "hm_factory",
     "th_factory",
     "thm_factory",
+    "compositional_solver_factory",
 ]
 
 
@@ -786,7 +792,7 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
 # MARK: Factories
 
 
-def mass_balance_factory():
+def mass_balance_factory(model: pp.PorePyModel):
     """This configures an iterative linear solver for the single-phase flow model in
     fractured porous media.
 
@@ -831,7 +837,7 @@ def mass_balance_factory():
     )
 
 
-def momentum_balance_factory():
+def momentum_balance_factory(model: pp.PorePyModel):
     """This configures an iterative linear solver for the contact mechanics model in
     fractured porous media.
 
@@ -879,7 +885,7 @@ def momentum_balance_factory():
     )
 
 
-def hm_factory():
+def hm_factory(model: pp.PorePyModel):
     """This configures an iterative linear solver for the poromechanics model in
     fractured porous media.
 
@@ -968,7 +974,7 @@ def hm_factory():
     )
 
 
-def th_factory():
+def th_factory(model: pp.PorePyModel):
     """This configures an iterative linear solver for the poromechanics model in
     fractured porous media.
 
@@ -1045,7 +1051,7 @@ def th_factory():
     )
 
 
-def thm_factory():
+def thm_factory(model: pp.PorePyModel):
     """This configures an iterative linear solver for the poromechanics model in
     fractured porous media.
 
@@ -1162,4 +1168,27 @@ def thm_factory():
                 },
             ]
         )
+    )
+
+
+def compositional_solver_factory(model: pp.PorePyModel):
+    mass_balance_groups: list[EquationVariableGroup] = [
+        MassBalanceReactiveTransportPressureGroup(),
+    ]
+    transport_group: list[EquationVariableGroup] = []
+    for component in model.fluid.components:
+        if model.has_independent_fraction(component):
+            transport_group.append(ComponentGroup(component_name=component.name))
+
+    return GMRES(
+        preconditioner=CompositePreconditioner(
+            subsolvers=[
+                FieldSplitSchur(
+                    subsolver=Identity(groups=transport_group, key="cpr0_transport"),
+                    complement_solver=AMG(groups=mass_balance_groups, key="cpr0_mass"),
+                    approximate_inverter=DiagonalInverter(),
+                ),
+                ILU(groups=transport_group + mass_balance_groups, key="cpr1"),
+            ]
+        ),
     )
