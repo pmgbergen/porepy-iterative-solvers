@@ -190,7 +190,7 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "model_params['linear_solver'] must be a dictionary when used together "
                 "with the IterativeSolverMixin."
             )
-        return self.linear_solver_params
+        return linear_solver_params
 
     def solve_linear_system(self) -> np.ndarray:
         """Solve the linear system.
