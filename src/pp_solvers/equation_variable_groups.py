@@ -252,35 +252,14 @@ class EnergyBalanceTemperatureGroup(EquationVariableGroup):
 
 
 @dataclass(frozen=True)
-class MassBalanceReactiveTransportPressureGroup(EquationVariableGroup):
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EquationOnDomains(
-            name="mass_balance_equation_reactive_transport",
-            domains=model.mdg.subdomains(),
-        )
-
-    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        return model.pressure(model.mdg.subdomains())
-
-
-@dataclass(frozen=True)
-class ComponentGroup(EquationVariableGroup):
-    component_name: str
+class CustomEquationVariableGroup(EquationVariableGroup):
+    eq_name: str
+    var_name: str
 
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EquationOnDomains(
-            name=f"component_mass_balance_equation_{self.component_name}",
-            domains=model.mdg.subdomains(),
-        )
+        return EquationOnDomains(name=self.eq_name, domains=model.mdg.subdomains())
 
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        try:
-            component = next(
-                c for c in model.fluid.components if c.name == self.component_name
-            )
-        except StopIteration:
-            components_in_model = [c.name for c in model.fluid.components]
-            raise ValueError(
-                f"Component {self.component_name} not found among {components_in_model}"
-            )
-        return component.fraction(model.mdg.subdomains())
+        return model.equation_system.md_variable(
+            name=self.var_name, domains=model.mdg.subdomains()
+        )

@@ -9,13 +9,16 @@ This module also defines the default linear solver configurations for PorePy mod
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import warnings
 from abc import ABC, abstractmethod
 from typing import Optional, Sequence, TYPE_CHECKING
 
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    ComponentGroup,
+    EquationNames,
+    EquationOnDomains,
+    CustomEquationVariableGroup,
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
@@ -27,7 +30,6 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureGroup,
     MassBalancePressureIntersectionsGroup,
     MassBalancePressureMatrixGroup,
-    MassBalanceReactiveTransportPressureGroup,
     MechanicsGroup,
     WellEnthalpyFluxGroup,
     WellFluxGroup,
@@ -737,6 +739,28 @@ class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
         )
 
 
+class DiagonalPreconditioner(PetscKspPcConfiguration):
+    """PETSc jacobi preconditioner. See:
+    https://petsc.org/release/manualpages/PC/PCJACOBI/
+
+    """
+
+    def __init__(
+        self, groups: list[EquationVariableGroup], key: str = "diagonal"
+    ) -> None:
+        super().__init__(groups=groups, key=key)
+
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        default_options = {
+            "pc_type": "jacobi",
+        }
+        return append_prefix_to_options(
+            prefix=prefix, options=default_options | user_options.get(self.key, {})
+        )
+
+
 def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     """A utility function that replaces a deeply nested syntax:
     ```
@@ -1172,23 +1196,148 @@ def thm_factory(model: pp.PorePyModel):
 
 
 def compositional_solver_factory(model: pp.PorePyModel):
+    from porepy.numerics.ad.operators import MixedDimensionalVariable
+
+    @dataclass(frozen=True)
+    class EnergyBalanceGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = EquationNames.ENERGY_BALANCE.value
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=no_injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.temperature(no_injection_wells)
+
+    @dataclass(frozen=True)
+    class InjectionTemperatureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "injection_temperature_constraint"
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return EquationOnDomains(name=name, domains=injection_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            injection_wells, no_injection_wells = model._filter_wells(
+                model.mdg.subdomains(), "injection"
+            )
+            return model.temperature(injection_wells)
+
+    @dataclass(frozen=True)
+    class MassBalanceReactiveTransportPressureGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(
+                name="mass_balance_equation_reactive_transport",
+                domains=no_production_wells,
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(no_production_wells)
+
+    @dataclass(frozen=True)
+    class ProductionPressureConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            name = "production_pressure_constraint"
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return EquationOnDomains(name=name, domains=production_wells)
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            production_wells, no_production_wells = model._filter_wells(
+                model.mdg.subdomains(), "production"
+            )
+            return model.pressure(production_wells)
+
+    @dataclass(frozen=True)
+    class EnthalpyConstraintGroup(EquationVariableGroup):
+        def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+            return EquationOnDomains(
+                name="local_fluid_enthalpy_constraint", domains=model.mdg.subdomains()
+            )
+
+        def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+            return model.enthalpy(model.mdg.subdomains())
+
+    interface_groups = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+        EnthalpyConstraintGroup(),
+        CustomEquationVariableGroup(
+            eq_name="partial_fraction_equation_Na+_aqueous", var_name="x_Na+_aqueous"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="partial_fraction_equation_Li+_aqueous", var_name="x_Li+_aqueous"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="partial_fraction_equation_Cl-_aqueous", var_name="x_Cl-_aqueous"
+        ),
+    ]
+
     mass_balance_groups: list[EquationVariableGroup] = [
         MassBalanceReactiveTransportPressureGroup(),
+        ProductionPressureConstraintGroup(),
     ]
-    transport_group: list[EquationVariableGroup] = []
-    for component in model.fluid.components:
-        if model.has_independent_fraction(component):
-            transport_group.append(ComponentGroup(component_name=component.name))
+    energy_balance_groups = [
+        EnergyBalanceGroup(),
+        InjectionTemperatureConstraintGroup(),
+    ]
+
+    transport_group = [
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_LiCl", var_name="ms_LiCl"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_Na+", var_name="z_Na+"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_Li+", var_name="z_Li+"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_Cl-", var_name="z_Cl-"
+        ),
+    ]
+    # for component in model.fluid.components:
+    #     if model.has_independent_fraction(component):
+    # transport_group.append(ComponentGroup(component_name=component.name))
 
     return GMRES(
-        preconditioner=CompositePreconditioner(
-            subsolvers=[
-                FieldSplitSchur(
-                    subsolver=Identity(groups=transport_group, key="cpr0_transport"),
-                    complement_solver=AMG(groups=mass_balance_groups, key="cpr0_mass"),
-                    approximate_inverter=DiagonalInverter(),
-                ),
-                ILU(groups=transport_group + mass_balance_groups, key="cpr1"),
-            ]
-        ),
+        preconditioner=FieldSplitSchur(
+            subsolver=ILU(groups=interface_groups, key="interface_prec"),
+            approximate_inverter=DiagonalInverter(),
+            complement_solver=CompositePreconditioner(
+                subsolvers=[
+                    FieldSplitAdditive(
+                        subsolvers=[
+                            DiagonalPreconditioner(
+                                groups=energy_balance_groups + transport_group,
+                                key="cpr_stage0_diagonal",
+                            ),
+                            AMG(groups=mass_balance_groups, key="cpr_stage0_amg"),
+                        ],
+                        key="inner_fieldsplit",
+                    ),
+                    ILU(
+                        groups=energy_balance_groups
+                        + transport_group
+                        + mass_balance_groups,
+                        key="cpr_stage1_ilu",
+                    ),
+                ]
+            ),
+        )
     )
