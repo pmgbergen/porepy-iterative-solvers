@@ -29,6 +29,7 @@ from weakref import ReferenceType, ref
 import numpy as np
 import porepy as pp
 
+import pp_solvers
 from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
@@ -78,13 +79,6 @@ class DofManager:
         self._equation_names: list[str] = [g.equation_name(model) for g in groups]
         self._variable_names: list[str] = [g.variable_name(model) for g in groups]
 
-        assert len(set(self._equation_names)) == len(self._equation_names), (
-            "Equation group names should be unique."
-        )
-        assert len(set(self._variable_names)) == len(self._variable_names), (
-            "Variable group names should be unique."
-        )
-
         # Collecting and validation equation and variable groups. This ensures no
         # duplicates. More validation regarding meaningful dofs is made in
         # BlockLinearSystem constructor.
@@ -97,7 +91,7 @@ class DofManager:
         self._variable_groups: list[pp.ad.MixedDimensionalVariable] = variable_groups
         _validate_variable_groups(variable_groups=variable_groups)
 
-        # Assembling DoFs that correspond to each group.:
+        # Assembling DoFs that correspond to each group:
         # 1. PorePy provides us with a list of arrays, each array corresponds to the
         #   DoFs of a single equation/variable on a single (not mixed-dimensional)
         #   grid.
@@ -128,13 +122,13 @@ class DofManager:
         # Contact mechanics permutation.
         try:
             contact_group = self.indices_of_groups([ContactMechanicsGroup()])[0]
-        except:
+        except ValueError:
             pass  # Do nothing if no contact groups is present.
         else:
             self._eq_dofs[contact_group] = self._permute_contact_dofs(contact_group)
 
     @property
-    def model(self) -> pp.PorePyModel:
+    def model(self) -> pp_solvers.IterativeSolverMixin:
         """The PorePy model of the given problem."""
         model = self._model()
         if model is None:
@@ -151,7 +145,8 @@ class DofManager:
         """Return unique numerical identifiers of the passed groups.
 
         Raises:
-            ValueError: If any of the groups is not found in this DofManager.
+            ValueError: If any of the groups is not found in this DofManager, or if
+                repeating groups are requestsd.
 
         """
         indices = [self._groups.index(x) for x in groups]
@@ -366,8 +361,8 @@ class DofManager:
         assert len(indices) == len(self._equation_groups)
         if len(equation_to_idx) != 0:
             raise ValueError(
-                "Some equations are not used on some subdomains:",
-                [k[0] for k in equation_to_idx.keys()],
+                "Some equations are not used on some subdomains: "
+                f"{set([k[0] for k in equation_to_idx.keys()])}"
             )
 
         return indices
@@ -416,6 +411,5 @@ def _validate_variable_groups(variable_groups: list[pp.ad.MixedDimensionalVariab
     for (var_name, domain), count in variable_domain_counter.items():
         if count > 1:
             raise ValueError(
-                f"{var_name}, {domain} encountered more than once. Check the"
-                " variable groups."
+                f"Variable group encountered more than once: {var_name} on {domain}"
             )
