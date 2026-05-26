@@ -178,6 +178,20 @@ class IterativeSolverMixin(pp.PorePyModel):
 
     """
 
+    def linear_solver_params(self) -> LinearSolverParams:
+        """Access linear solver parameters dictionary."""
+        try:
+            linear_solver_params = self.params.get("linear_solver", dict())
+        except KeyError as e:
+            logger.exception("You must specify `linear_solver` in the model params.")
+            raise e
+        if not isinstance(linear_solver_params, dict):
+            raise ValueError(
+                "model_params['linear_solver'] must be a dictionary when used together "
+                "with the IterativeSolverMixin."
+            )
+        return self.linear_solver_params
+
     def solve_linear_system(self) -> np.ndarray:
         """Solve the linear system.
 
@@ -189,11 +203,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             Solution array of the linear system.
         """
-        try:
-            linear_solver_params: LinearSolverParams = self.params["linear_solver"]
-        except KeyError as e:
-            logger.exception("You must specify `linear_solver` in the model params.")
-            raise e
+        linear_solver_params = self.linear_solver_params()
 
         solver_selector = linear_solver_params.get("solver_selector", None)
         solver_options = linear_solver_params.get("options", {})
@@ -299,13 +309,15 @@ class IterativeSolverMixin(pp.PorePyModel):
         x = self.bmat.permute_right_vector_to_original(x_loc)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
-        if self.params["linear_solver"].get("delete_matrices", True):
+        if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
 
         if info <= 0:
             raise RuntimeError(
                 f"Solver did not converge. Reason: {info}. "
-                "Check the solver options and the problem setup."
+                "Check the solver options and the problem setup. "
+                "See detailed description of PETSc error codes: "
+                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"
             )
 
         return np.atleast_1d(x)
@@ -336,7 +348,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # by the # `dof_manager`.
         self.bmat = bmat[:]
         # Delete the original linear system to save memory unless instructed not to.
-        if self.params["linear_solver"].get("delete_matrices", True):
+        if self.linear_solver_params().get("delete_matrices", True):
             del self.linear_system
 
     def _initialize_linear_solver(self):
