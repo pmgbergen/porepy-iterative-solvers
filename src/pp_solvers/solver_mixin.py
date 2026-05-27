@@ -7,27 +7,23 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from dataclasses import dataclass
 from time import time
-from typing import Callable, TypedDict, NotRequired
-from warnings import warn
+from typing import Callable, TypedDict
 
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
+from pp_solvers.block_linear_system import (
+    BlockLinearSystem,
+    LinearSystemIndexer,
+)
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     InterfaceForceBalanceGroup,
-)
-from pp_solvers.solver_selection.selector import SolverSelector
-
-from pp_solvers.block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
 )
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
@@ -39,6 +35,7 @@ from pp_solvers.preconditioners import (
     th_factory,
     thm_factory,
 )
+from pp_solvers.solver_selection.selector import SolverSelector
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -54,6 +51,10 @@ Note that these consider PETSc configurations, and have no responsibility for
 taking care of equations etc. (CURRENT IMPLEMENTATION IS NOT RIGHT). This means they are
 essentially bearers of options for the solver.
 """
+
+type PETScKspConvergedReason = int
+"""A type alias for PETSc return codes. See
+https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
 
 
 def transform_contact_block(
@@ -195,6 +196,11 @@ class IterativeSolverMixin(pp.PorePyModel):
     def solve_linear_system(self) -> np.ndarray:
         """Solve the linear system.
 
+        This function returns a solution array even if the underlying linear solver did
+        not converge. A warning will be logged in this case. It may also return nans if
+        things go particularly bad. It is the caller's responsibility to validate the
+        returned values, same as for the direct linear solver counterpart.
+
         Dispatches to one of two paths:
 
         - No ML selection: calls `_solve_linear_system` directly.
@@ -208,15 +214,30 @@ class IterativeSolverMixin(pp.PorePyModel):
         solver_selector = linear_solver_params.get("solver_selector", None)
         solver_options = linear_solver_params.get("options", {})
         if solver_selector is None:
-            return self._solve_linear_system(solver_options=solver_options)
-        else:
-            return self._solve_linear_system_with_solver_selection(
-                solver_selector=solver_selector, solver_options=solver_options
+            solution, petsc_converged_reason = self._solve_linear_system(
+                solver_options=solver_options
             )
+        else:
+            solution, petsc_converged_reason = (
+                self._solve_linear_system_with_solver_selection(
+                    solver_selector=solver_selector, solver_options=solver_options
+                )
+            )
+
+        if petsc_converged_reason <= 0:
+            logger.warning(
+                f"Linear solver did not converge. Reason: %d. "
+                "Check the solver options and the problem setup. "
+                "See detailed description of PETSc error codes: "
+                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
+                petsc_converged_reason,
+            )
+
+        return solution
 
     def _solve_linear_system_with_solver_selection(
         self, solver_selector: SolverSelector, solver_options: dict
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, PETScKspConvergedReason]:
         """Use ML-based solver selection to solve the linear system and update the
         model.
 
@@ -230,7 +251,9 @@ class IterativeSolverMixin(pp.PorePyModel):
                 selected scheme.
 
         Returns:
-            Solution array of the linear system.
+            A tuple of two elements:
+                - Solution array of the linear system.
+                - PETSc KSP converged reason
         """
         characteristics = np.array([])  # Not implemented yet.
 
@@ -250,31 +273,42 @@ class IterativeSolverMixin(pp.PorePyModel):
         solver_selection_opts = solver_options | solver_selection_opts
 
         # Solve the linear system.
-        success = False
-        try:
-            solution = self._solve_linear_system(solver_options=solver_selection_opts)
-        except Exception as e:
-            success = False
-            raise e
-        finally:
-            # No matter we succeeded or not, providing feedback to the ML model.
+        solution, petscConvergedReason = self._solve_linear_system(
+            solver_options=solver_selection_opts
+        )
 
-            # The way of accessing these values should be changed when they find a
-            # better accommodation.
-            solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
-            construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
-            solver_selector.provide_performance_feedback(
-                solve_time=solve_time,
-                construct_time=construct_time,
-                success=success,
-            )
+        # The way of accessing these values should be changed when they find a
+        # better accommodation.
+        solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
+        construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
+        # Providing feedback to the ML model.
+        solver_selector.provide_performance_feedback(
+            solve_time=solve_time,
+            construct_time=construct_time,
+            success=petscConvergedReason > 0,
+        )
         return solution
 
-    def _solve_linear_system(self, solver_options: dict) -> np.ndarray:
+    def _solve_linear_system(
+        self, solver_options: dict
+    ) -> tuple[np.ndarray, PETScKspConvergedReason]:
+        """Assembles the PETSc linear solver and solves the linear system.
+
+        Parameters:
+            solver_options: Manually provided solver options.
+
+        Returns:
+            A tuple of two elements:
+                - Solution array of the linear system.
+                - PETSc KSP converged reason
+        """
         # Check for NaN or Inf in the RHS.
         # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
+            # This should never be the case, as this situation should cut off by the
+            # nonlinear convergence criterion from the earliear nonlinear iteration. We
+            # keep this safeguard until the iterative solver is in a more mature state.
             raise ValueError("RHS contains NaN or Inf values")
 
         t0 = time()
@@ -302,7 +336,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             num_it,
         )
 
-        info = solver.ksp.getConvergedReason()
+        info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         # Project the solution back to the global (PorePy) ordering. For clarity, no
         # contact reordering here, since only the equations (rows) and not the variables
         # (columns) were reordered.
@@ -312,15 +346,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
 
-        if info <= 0:
-            raise RuntimeError(
-                f"Solver did not converge. Reason: {info}. "
-                "Check the solver options and the problem setup. "
-                "See detailed description of PETSc error codes: "
-                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"
-            )
-
-        return np.atleast_1d(x)
+        return np.atleast_1d(x), info
 
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
