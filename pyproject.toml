@@ -11,7 +11,9 @@ authors = [
   { name = "Eirik Keilegavlen", email = "Eirik.Keilegavlen@uib.no"}
 ]
 # The list of dependencies is far from exhaustive, see the README for more details.
-dependencies = []
+dependencies = [
+  "scikit-learn",
+]
 license = { text = "GPL-3" }
 
 [project.urls]

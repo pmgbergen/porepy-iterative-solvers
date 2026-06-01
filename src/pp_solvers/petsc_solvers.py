@@ -2,12 +2,8 @@
 and related classes.
 """
 
-from typing import Optional
-
 import numpy as np
 from petsc4py import PETSc
-
-from pp_solvers.block_linear_system import BlockLinearSystem
 
 
 class PetscKrylovSolver:
@@ -55,40 +51,6 @@ class PetscKrylovSolver:
 
     def get_residuals(self):
         return self.ksp.getConvergenceHistory()
-
-
-class LinearSolverWithTransformations:
-    def __init__(
-        self,
-        inner: PetscKrylovSolver,
-        Qleft: Optional[BlockLinearSystem] = None,
-        Qright: Optional[BlockLinearSystem] = None,
-    ):
-        self.Qleft: BlockLinearSystem | None = Qleft
-        self.Qright: BlockLinearSystem | None = Qright
-        self.inner: PetscKrylovSolver = inner
-        self.ksp = inner.ksp
-
-    def solve(self, rhs: np.ndarray) -> np.ndarray:
-        """Transform the right-hand side, solve the linear system, and transform the
-        solution back.
-
-        """
-        rhs_Q = rhs
-        if self.Qleft is not None:
-            rhs_Q = self.Qleft.mat @ rhs_Q
-
-        sol_Q = self.inner.solve(rhs_Q)
-
-        if self.Qright is not None:
-            sol = self.Qright.mat @ sol_Q
-        else:
-            sol = sol_Q
-
-        return sol
-
-    def get_residuals(self):
-        return self.inner.get_residuals()
 
 
 class PcPythonPermutation:

@@ -7,6 +7,7 @@
 import numpy as np
 import scipy.sparse as sp
 
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.equation_variable_groups import EquationVariableGroup
 
 
@@ -97,6 +98,18 @@ def generate_reference_dofs_3_groups():
         np.array(x, dtype=int) for x in [[6, 7, 8], [2, 3, 4, 5], [0, 1], []]
     ]
     return reference_dofs_row_3_groups, reference_dofs_col_3_groups
+
+
+def generate_reference_block_linear_system():
+    dofs_row, dofs_col = generate_reference_dofs_3_groups()
+    return BlockLinearSystem(
+        mat=generate_reference_matrix_3_groups(),
+        rhs=generate_reference_rhs_3_groups(),
+        indexer=LinearSystemIndexer(
+            dofs_row=dofs_row,
+            dofs_col=dofs_col,
+        ),
+    )
 
 
 class MockModel:

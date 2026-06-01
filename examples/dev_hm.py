@@ -50,14 +50,14 @@ model_params_2d = {
     "fracture_indices": [0, 1],  # 0, 1],
     "u_north": -0.001,
     "meshing_arguments": {"cell_size": 0.1},
-    "linear_solver": {
-        "preconditioner_factory": pp_solvers.hm_factory,
-        "options": {
+    "linear_solver": pp_solvers.LinearSolverParams(
+        preconditioner_factory=pp_solvers.hm_factory,
+        options={
             "gmres": {
                 "ksp_monitor": None,
             }
         },
-    },
+    ),
 }
 model_2d = FullModel(model_params_2d)
 pp.run_time_dependent_model(

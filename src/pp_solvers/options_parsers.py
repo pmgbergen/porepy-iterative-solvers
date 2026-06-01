@@ -1,8 +1,6 @@
 """This module defines the machinery to parse the configuration of the PETSc linear
 solver and build the corresponding PETSc KSP and PC objects."""
 
-from dataclasses import dataclass
-from typing import Optional
 from warnings import warn
 
 import numpy as np
@@ -11,7 +9,6 @@ from petsc4py import PETSc
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.petsc_solvers import (
-    LinearSolverWithTransformations,
     PcPythonPermutation,
     PetscKrylovSolver,
 )
@@ -24,113 +21,53 @@ from pp_solvers.petsc_utils import (
 from pp_solvers.preconditioners import PetscKspPcConfiguration
 
 
-# TODO YZ: This class will be refactored (removed), because now it's just a wrapper to
-# create a ksp.
-@dataclass
-class PetscKSPScheme:
-    """Scheme for a KSP solver for a multiphysics problem."""
+def initialize_petsc_ksp(
+    block_linear_system: BlockLinearSystem,
+    dof_manager: DofManager,
+    petsc_ksp_pc_configuration: PetscKspPcConfiguration,
+    user_options: dict,
+):
+    # TODO YZ: Check that the user did not misspell a key in options, e.g. cpr0_mass
+    # TODO YZ: Check that all keys in solvers are unique.
+    # These two tasks would require a recursive method on PetscKspPcScheme that will
+    # gather and count all the keys.
 
-    petsc_ksp_pc_configuration: PetscKspPcConfiguration
-    """The factory object to produce the underlying KSP."""
+    # Construct a PETSc matrix from the scipy matrix.
+    petsc_mat = csr_to_petsc(block_linear_system.mat)
+    if user_options.get("delete_matrices", True):
+        del block_linear_system.mat  # Delete the scipy matrix to save memory.
 
-    dof_manager: DofManager
+    # Clear the PETSc options from a previous solve.
+    petsc_options = clear_petsc_options()
 
-    def make_solver(self, mat_orig: BlockLinearSystem, options: dict):
-        # TODO YZ: Check that the user did not misspell a key in options, e.g. cpr0_mass
-        # TODO YZ: Check that all keys in solvers are unique.
-        # These two tasks would require a recursive method on PetscKspPcScheme that will
-        # gather and count all the keys.
+    all_options_dict = petsc_ksp_pc_configuration.petsc_options(
+        user_options=user_options, prefix="", dof_manager=dof_manager
+    )
+    assembly_config = petsc_ksp_pc_configuration.petsc_assembly_config(
+        user_options=user_options, prefix="", dof_manager=dof_manager
+    )
 
-        # Construct a PETSc matrix from the scipy matrix.
-        # TODO EK: Can we at this point delete the scipy matrix to save memory?
-        petsc_mat = csr_to_petsc(mat_orig.mat)
+    insert_petsc_options(all_options_dict)
 
-        # Clear the PETSc options from a previous solve.
-        petsc_options = clear_petsc_options()
+    petsc_ksp = PETSc.KSP().create()
+    petsc_ksp.setFromOptions()
+    petsc_ksp.setOperators(petsc_mat)
+    assemble_petsc_ksp_pc(
+        ksp=petsc_ksp,
+        pc=petsc_ksp.getPC(),
+        assembly_config=assembly_config,
+        indexer=block_linear_system.indexer,
+        prefix="",
+    )
 
-        all_options_dict = self.petsc_ksp_pc_configuration.petsc_options(
-            user_options=options, prefix="", dof_manager=self.dof_manager
-        )
-        assembly_config = self.petsc_ksp_pc_configuration.petsc_assembly_config(
-            user_options=options, prefix="", dof_manager=self.dof_manager
-        )
-
-        insert_petsc_options(all_options_dict)
-
-        petsc_ksp = PETSc.KSP().create()
-        petsc_ksp.setFromOptions()
-        petsc_ksp.setOperators(petsc_mat)
-        assemble_petsc_ksp_pc(
-            ksp=petsc_ksp,
-            pc=petsc_ksp.getPC(),
-            assembly_config=assembly_config,
-            indexer=mat_orig.indexer,
-            prefix="",
-        )
-
-        for key in all_options_dict:
-            if not petsc_options.used(key):
-                raise ValueError(
-                    f"PETSc option {key}: {all_options_dict[key]} is not used. "
-                    "Check spelling."
-                )
-
-        return PetscKrylovSolver(petsc_ksp)
-
-
-# TODO YZ: This class will be refactored.
-@dataclass
-class LinearTransformedScheme:
-    inner: PetscKSPScheme
-    """The actual solver, to be applied after the transformations."""
-
-    left_transformations: Optional[list] = None
-    right_transformations: Optional[list] = None
-
-    @property
-    def dof_manager(self):
-        return self.inner.dof_manager
-
-    def make_solver(
-        self, mat_orig: BlockLinearSystem, options: dict
-    ) -> PetscKrylovSolver | LinearSolverWithTransformations:
-        bmat = mat_orig[:]
-
-        if self.left_transformations is None or len(self.left_transformations) == 0:
-            Qleft = None
-        else:
-            # The steps should be roughly the same as for the right transfor (below).
-            Qleft = self.left_transformations[0](bmat)
-            for tmp in self.left_transformations[1:]:
-                tmp = tmp(bmat)
-                Qleft.mat @= tmp.mat
-
-        if self.right_transformations is None or len(self.right_transformations) == 0:
-            Qright = None
-        else:
-            Qright = self.right_transformations[0](bmat)
-            for tmp in self.right_transformations[1:]:
-                tmp = tmp(bmat)
-                Qright.mat @= tmp.mat
-
-        bmat_Q = bmat
-        if Qleft is not None:
-            bmat_Q.mat = Qleft.mat @ bmat_Q.mat
-        if Qright is not None:
-            bmat_Q.mat = bmat_Q.mat @ Qright.mat
-
-        if self.inner is None:
-            raise ValueError("No inner solver provided.")
-
-        # Set up the inner solver.
-        solver = self.inner.make_solver(bmat_Q, options=options or {})
-
-        if Qleft is not None or Qright is not None:
-            solver = LinearSolverWithTransformations(
-                inner=solver, Qright=Qright, Qleft=Qleft
+    for key in all_options_dict:
+        if not petsc_options.used(key):
+            raise ValueError(
+                f"PETSc option {key}: {all_options_dict[key]} is not used. "
+                "Check spelling."
             )
 
-        return solver
+    return PetscKrylovSolver(petsc_ksp)
 
 
 def _assemble_pc_fieldsplit_additive(

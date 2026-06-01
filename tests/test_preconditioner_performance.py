@@ -129,9 +129,47 @@ def test_model(model_class):
         "Solutions do not match."
     )
 
-    linear_iterations = iterative_model.nonlinear_solver_statistics.num_krylov_iters
+    # Fetch the actual and expected number of iterations.
+    linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
+    expected_iterations = expected_linear_iterations[model_class]
+    # The number of non-linear iterations taken may change, e.g., due to updates in
+    # PorePy's convergence criteria. To avoid having to update the expected number of
+    # iterations, we compare the number of Krylov iterations only for those non-linear
+    # iterations that were in common between the historic and current cases. This is in
+    # a sense something of a weakening of the test, but it reduces the risk of the known
+    # values being updated mindlessly.
+    min_length = min(len(linear_iterations), len(expected_iterations))
+
     np.testing.assert_equal(
-        linear_iterations,
-        expected_linear_iterations[model_class],
+        linear_iterations[:min_length],
+        expected_iterations[:min_length],
         err_msg="Number of linear iterations does not match expected value.",
     )
+
+
+def test_linear_solver_failure():
+    """Tests a case when a linear solver fails (due to iterations limit), but nonlinear
+    iterations continue until they reach a limit."""
+    iterative_opts = model_options()
+    iterative_opts["linear_solver"] = {
+        "options": {
+            "gmres": {
+                "ksp_monitor": None,
+                # Enforcing a single gmres iteration to ensure non-convergence.
+                "ksp_max_it": 1,
+            },
+        },
+    }
+    iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, FluidModel)
+    iterative_model = iterative_class(iterative_opts)
+    max_nonlinear_iterations = 7
+    with pytest.warns(UserWarning, match="Failed to solve the nonlinear problem"):
+        pp.ModelRunner(
+            iterative_model, {"nl_max_iterations": max_nonlinear_iterations}
+        ).run()
+    linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
+    assert len(linear_iterations) == 7, (
+        f"We did {linear_iterations} Newton iterations and did not converge."
+    )
+    # No idea why PETSc reports 2 and not 1, but it should not report anything else.
+    assert np.all(np.array(linear_iterations) == 2)

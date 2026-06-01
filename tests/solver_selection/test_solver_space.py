@@ -293,8 +293,7 @@ def test_solver_space(params: dict):
         assert config_is_found, result_config
 
     # Check that this function does not raise.
-    explain_decisions(solver_space, include_ids=False)
-    explain_decisions(solver_space, include_ids=True)
+    explain_decisions(solver_space)
 
 
 def test_bad_nested_numerical_choices():

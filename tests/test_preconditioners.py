@@ -7,15 +7,10 @@ import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
-from testing_utils import (
-    MockDofManager,
-    generate_reference_dofs_3_groups,
-    generate_reference_matrix_3_groups,
-    generate_reference_rhs_3_groups,
-)
+from pp_solvers.options_parsers import initialize_petsc_ksp
+from testing_utils import MockDofManager, generate_reference_block_linear_system
 
-from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-from pp_solvers.options_parsers import PetscKSPScheme
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     csr_to_petsc,
@@ -491,24 +486,18 @@ def test_python_permutation():
 
 @pytest.fixture
 def block_linear_system() -> BlockLinearSystem:
-    dofs_row, dofs_col = generate_reference_dofs_3_groups()
-    return BlockLinearSystem(
-        mat=generate_reference_matrix_3_groups(),
-        rhs=generate_reference_rhs_3_groups(),
-        indexer=LinearSystemIndexer(
-            dofs_row=dofs_row,
-            dofs_col=dofs_col,
-        ),
-    )
+    return generate_reference_block_linear_system()
 
 
 def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
-    ksp_scheme = PetscKSPScheme(
-        petsc_ksp_pc_configuration=GMRES(preconditioner=Identity(groups=["mock_g1"])),
+    krylov_solver = initialize_petsc_ksp(
+        block_linear_system=block_linear_system,
         dof_manager=MockDofManager(),
-    )
-    krylov_solver = ksp_scheme.make_solver(
-        mat_orig=block_linear_system, options={"gmres": {"ksp_type": "fgmres"}}
+        petsc_ksp_pc_configuration=GMRES(preconditioner=Identity(groups=["mock_g1"])),
+        user_options={
+            "gmres": {"ksp_type": "fgmres"},
+            "delete_matrices": False,
+        },
     )
     # Check that the custom option applied.
     assert krylov_solver.ksp.type == "fgmres"

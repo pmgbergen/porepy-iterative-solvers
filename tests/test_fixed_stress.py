@@ -57,8 +57,10 @@ def model(with_fractures) -> pp.PorePyModel:
     u_intf = model.interface_displacement(interfaces)
     u_intf_values = model.equation_system.get_variable_values([u_intf], iterate_index=0)
     u_intf_values[:] = np.arange(u_intf_values.size)
+    # Setting the *previous time step* (initial condition) value to non-zero. It will be
+    # fetched in model.before_nonlinear_loop and passed to the current solution guess.
     model.equation_system.set_variable_values(
-        values=u_intf_values, variables=[u_intf], iterate_index=0
+        values=u_intf_values, variables=[u_intf], time_step_index=0
     )
 
     model.before_nonlinear_loop()
@@ -74,7 +76,7 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
 
     jacobian = model.bmat
 
-    dof_manager: DofManager = model._solver_factory.dof_manager
+    dof_manager: DofManager = model._dof_manager
     num_groups = len(dof_manager.groups())
     try:
         p_mat_group, p_frac_group = dof_manager.indices_of_groups(
@@ -112,10 +114,10 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
                 assert submat.nnz == 0, submat
 
 
-def test_fixed_stress_inverter(model: pp.PorePyModel):
+def test_fixed_stress_inverter(model: pp_solvers.IterativeSolverMixin):
     """Integration test that check that the configuration FixedStressInverter provides a
     correct fixed stress matrix."""
-    dof_manager: DofManager = model._solver_factory.dof_manager
+    dof_manager: DofManager = model._dof_manager
     inverter = FixedStressInverter()
     bmat: BlockLinearSystem = model.bmat
 

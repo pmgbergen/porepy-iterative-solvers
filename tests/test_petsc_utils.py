@@ -4,6 +4,8 @@ from petsc4py import PETSc
 from scipy.sparse import csr_matrix
 
 from pp_solvers import petsc_utils
+from pp_solvers.block_linear_system import BlockLinearSystem
+from testing_utils import generate_reference_block_linear_system
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 3])
@@ -32,3 +34,20 @@ def test_insert_clear_petsc_options():
         assert options.getAll() == {}
         petsc_utils.insert_petsc_options({"aaa": f"{i}{i}{i}"})
         assert options.getAll() == {"aaa": f"{i}{i}{i}"}
+
+
+@pytest.fixture
+def sample_linear_system() -> BlockLinearSystem:
+    return generate_reference_block_linear_system()
+
+
+@pytest.mark.parametrize("groups", [[1], [1, 0]])
+def test_construct_is(sample_linear_system: BlockLinearSystem, groups: list[int]):
+    indexer = sample_linear_system.indexer
+    petsc_is = petsc_utils.construct_is(indexer=indexer, groups=groups)
+
+    key = indexer.correct_validate_getitem_key(groups)
+    np.testing.assert_equal(petsc_is.array, indexer.get_dofs_of_groups(key)[0])
+
+    # Manual teardown.
+    petsc_is.destroy()
