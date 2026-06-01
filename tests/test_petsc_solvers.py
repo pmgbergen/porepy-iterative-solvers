@@ -7,7 +7,7 @@ from scipy.sparse.linalg import spsolve
 import pp_solvers
 from pp_solvers import BlockLinearSystem
 from pp_solvers.block_linear_system import LinearSystemIndexer
-from pp_solvers.petsc_solvers import LinearSolverWithTransformations, PetscKrylovSolver
+from pp_solvers.petsc_solvers import PetscKrylovSolver
 
 
 @pytest.fixture
@@ -72,53 +72,3 @@ def test_petsc_krylov_solver(
 
     expected = spsolve(sample_linear_system.mat, rhs)
     np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
-
-
-@pytest.mark.parametrize("left", [True, False])
-@pytest.mark.parametrize("right", [True, False])
-def test_linear_transformed_solver(
-    ksp: PETSc.KSP,
-    sample_linear_system: BlockLinearSystem,
-    left: bool,
-    right: bool,
-):
-    # Generating some transformation matrices.
-    Qleft = None
-    Qright = None
-    transformed_matrix = sample_linear_system.copy()
-    if left:
-        Qleft = sample_linear_system.copy()
-        transformed_matrix.mat = Qleft.mat @ transformed_matrix.mat
-    if right:
-        Qright = sample_linear_system.copy()
-        transformed_matrix.mat = transformed_matrix.mat @ Qright.mat
-
-    # Informing PETSc about the transformed matrix.
-    petsc_mat = pp_solvers.csr_to_petsc(transformed_matrix.mat)
-    ksp.setOperators(petsc_mat, petsc_mat)
-
-    # Solving the transformed linear system.
-    rhs = np.arange(12, dtype=float)
-    solver = LinearSolverWithTransformations(
-        inner=PetscKrylovSolver(ksp=ksp), Qleft=Qleft, Qright=Qright
-    )
-    result = solver.solve(rhs)
-
-    # Should return the non-transformed rhs, no matter what transformations we did.
-    expected = spsolve(sample_linear_system.mat, rhs)
-    np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
-
-    # Manual teardown.
-    petsc_mat.destroy()
-
-
-@pytest.mark.parametrize("groups", [[1], [1, 0]])
-def test_construct_is(sample_linear_system: BlockLinearSystem, groups: list[int]):
-    indexer = sample_linear_system.indexer
-    petsc_is = pp_solvers.construct_is(indexer=indexer, groups=groups)
-
-    key = indexer.correct_validate_getitem_key(groups)
-    np.testing.assert_equal(petsc_is.array, indexer.get_dofs_of_groups(key)[0])
-
-    # Manual teardown.
-    petsc_is.destroy()

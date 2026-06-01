@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
 from pp_solvers.dof_manager import DofManager
@@ -32,6 +33,11 @@ from pp_solvers.equation_variable_groups import (
 )
 from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
 from pp_solvers.petsc_utils import csr_to_petsc
+from pp_solvers.transformations import (
+    ContactLinearTransformation,
+    LinearSystemTransformation,
+    ScaleSpecificVolume,
+)
 
 __all__ = [
     # Add all preconditioners and linear solvers here.
@@ -783,6 +789,14 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     return FieldSplitSchur(complement_solver=subsolvers[1]["subsolver"], **kwargs)
 
 
+@dataclass
+class LinearSolverConfiguration:
+    solver: PetscKspPcConfiguration
+    transformations: list[LinearSystemTransformation] = field(
+        default_factory=lambda: []
+    )
+
+
 # MARK: Factories
 
 
@@ -822,13 +836,14 @@ def mass_balance_factory():
     ]
     mass_balance_groups: list[EquationVariableGroup] = [MassBalancePressureGroup()]
 
-    return GMRES(
+    solver = GMRES(
         preconditioner=FieldSplitSchur(
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
             complement_solver=AMG(groups=mass_balance_groups, key="mass_balance_amg"),
             approximate_inverter=DiagonalInverter(),
         )
     )
+    return LinearSolverConfiguration(solver=solver)
 
 
 def momentum_balance_factory():
@@ -866,7 +881,7 @@ def momentum_balance_factory():
         MechanicsGroup(),
         InterfaceForceBalanceGroup(),
     ]
-    return GMRES(
+    solver = GMRES(
         preconditioner=FieldSplitSchur(
             # For clarity, the petsc_tag and key are different concepts.
             petsc_tag="contact",
@@ -876,6 +891,12 @@ def momentum_balance_factory():
             ),
             approximate_inverter=BlockDiagonalInverter(),
         )
+    )
+    return LinearSolverConfiguration(
+        solver=solver,
+        transformations=[
+            ContactLinearTransformation(),
+        ],
     )
 
 
@@ -932,7 +953,7 @@ def hm_factory():
         MassBalancePressureIntersectionsGroup(),
     ]
 
-    return GMRES(
+    solver = GMRES(
         preconditioner=nested_schur_complements(
             [
                 {
@@ -965,6 +986,12 @@ def hm_factory():
                 },
             ]
         )
+    )
+    return LinearSolverConfiguration(
+        transformations=[
+            ContactLinearTransformation(),
+        ],
+        solver=solver,
     )
 
 
@@ -1022,7 +1049,7 @@ def th_factory():
         EnergyBalanceTemperatureGroup(),
     ]
 
-    return GMRES(
+    solver = GMRES(
         preconditioner=FieldSplitSchur(
             petsc_tag="intf_mass_energy_flx",
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
@@ -1042,6 +1069,12 @@ def th_factory():
                 ]
             ),
         )
+    )
+    return LinearSolverConfiguration(
+        transformations=[
+            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+        ],
+        solver=solver,
     )
 
 
@@ -1112,7 +1145,7 @@ def thm_factory():
         EnergyBalanceTemperatureGroup(),
     ]
 
-    return GMRES(
+    solver = GMRES(
         preconditioner=nested_schur_complements(
             [
                 {
@@ -1142,7 +1175,8 @@ def thm_factory():
                             FieldSplitAdditive(
                                 subsolvers=[
                                     Identity(
-                                        groups=energy_balance_groups, key="cpr0_energy"
+                                        groups=energy_balance_groups,
+                                        key="cpr0_energy",
                                     ),
                                     AMG(groups=mass_balance_groups, key="cpr0_mass"),
                                 ],
@@ -1162,4 +1196,12 @@ def thm_factory():
                 },
             ]
         )
+    )
+
+    return LinearSolverConfiguration(
+        transformations=[
+            ContactLinearTransformation(),
+            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+        ],
+        solver=solver,
     )

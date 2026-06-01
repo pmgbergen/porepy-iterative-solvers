@@ -20,15 +20,11 @@ from pp_solvers.block_linear_system import (
     LinearSystemIndexer,
 )
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    EnergyBalanceTemperatureGroup,
-    InterfaceForceBalanceGroup,
-)
+
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
-from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
+from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (
-    PetscKspPcConfiguration,
+    LinearSolverConfiguration,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
@@ -147,8 +143,8 @@ class LinearSolverParams(TypedDict, total=False):
     as possible. Defaults to True.
 
     """
-    preconditioner_factory: PetscKspPcConfiguration
-    """A factory to build a PETSc preconditioned linear solver from. Using the default
+    preconditioner_factory: Callable[[], LinearSolverConfiguration]
+    """A factory to build a PETSc preconditioned linear solver. Using the default
     factory if not passed.
 
     """
@@ -287,7 +283,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             construct_time=construct_time,
             success=petscConvergedReason > 0,
         )
-        return solution
+        return solution, petscConvergedReason
 
     def _solve_linear_system(
         self, solver_options: dict
@@ -313,7 +309,12 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         t0 = time()
         try:
-            solver = self._solver_factory.make_solver(self.bmat, solver_options)
+            solver = initialize_petsc_ksp(
+                block_linear_system=self.bmat,
+                dof_manager=self._dof_manager,
+                petsc_ksp_pc_configuration=self._petsc_ksp_pc_configuration,
+                user_options=solver_options,
+            )
         except Exception as e:
             raise RuntimeError(
                 "Failed to create solver with the provided preconditioner."
@@ -337,10 +338,11 @@ class IterativeSolverMixin(pp.PorePyModel):
         )
 
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
-        # Project the solution back to the global (PorePy) ordering. For clarity, no
-        # contact reordering here, since only the equations (rows) and not the variables
-        # (columns) were reordered.
+        # Transform the solution back to the global (PorePy) ordering.
+        for transformation in self._transformations:
+            x_loc = transformation.transform_solution(x_loc)
         x = self.bmat.permute_right_vector_to_original(x_loc)
+
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
         if self.linear_solver_params().get("delete_matrices", True):
@@ -351,14 +353,15 @@ class IterativeSolverMixin(pp.PorePyModel):
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
 
-        dof_manager = self._solver_factory.dof_manager
+        dof_manager = self._dof_manager
         # Get the linear system from the equation system.
 
         # TODO: Replace this with a different type of plugin
         mat, rhs = self.linear_system
+        assert mat.getformat() == "csr"
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
-        bmat = BlockLinearSystem(
+        linear_system = BlockLinearSystem(
             mat=mat,
             rhs=rhs,
             indexer=LinearSystemIndexer(
@@ -369,10 +372,19 @@ class IterativeSolverMixin(pp.PorePyModel):
             ),
         )
 
-        # Store the linear system in the solver mixin *and*, by calling [:], rearrange
-        # the blocks (and thereby the underlying matrix) to match the ordering defined
-        # by the # `dof_manager`.
-        self.bmat = bmat[:]
+        # By calling [:], rearrange the blocks (and thereby the underlying matrix) to
+        # match the ordering defined by the `dof_manager`.
+        linear_system = linear_system[:]
+
+        # Apply transformations to the linear systems before passing it to the solver.
+        # TODO: Unit tests!
+        for transformation in self._transformations:
+            linear_system = transformation.transform_matrix_rhs(
+                linear_system, dof_manager=dof_manager
+            )
+
+        self.bmat = linear_system
+
         # Delete the original linear system to save memory unless instructed not to.
         if self.linear_solver_params().get("delete_matrices", True):
             del self.linear_system
@@ -387,63 +399,16 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.nonlinear_solver_statistics.petsc_converged_reason = []
         self.nonlinear_solver_statistics.num_krylov_iters = []
 
-        precond_factory: Callable[[], PetscKspPcConfiguration]
-        linear_solver_params = self.params.get("linear_solver", {})
-        precond_factory = linear_solver_params.get("preconditioner_factory", None)
-        if precond_factory is None:
-            precond_factory = default_preconditioner_factory(self)
+        linear_solver_params = self.linear_solver_params()
+        configuration_factory = linear_solver_params.get("preconditioner_factory", None)
+        if configuration_factory is None:
+            configuration_factory = default_preconditioner_factory(self)
 
-        petsc_ksp_pc_configuration: PetscKspPcConfiguration = precond_factory()
+        configuration = configuration_factory()
 
-        dof_manager = DofManager(model=self, groups=petsc_ksp_pc_configuration.groups)
-
-        try:
-            contact_ind, u_intf_ind = dof_manager.indices_of_groups(
-                [ContactMechanicsGroup(), InterfaceForceBalanceGroup()]
-            )
-        except ValueError:
-            contact_ind, u_intf_ind = None, None
-
-        # TODO: Logic below should not be hard-coded in SolverMixin. precond_factory()
-        # should return some object that determines pre-processing before solving.
-        ksp_factory = PetscKSPScheme(
-            petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
-            dof_manager=dof_manager,
-        )
-        contact_transform, thermal_transform = None, None
-        if contact_ind is not None and u_intf_ind is not None:
-            # If there is a contact group, we need to use a linear solver that takes
-            # care of potential singularities in the contact block.
-            contact_transform = [
-                lambda bmat: transform_contact_block(
-                    bmat, contact_ind, u_intf_ind, self.nd
-                )
-            ]
-        try:
-            energy_balance_groups = dof_manager.indices_of_groups(
-                [EnergyBalanceTemperatureGroup()]
-            )
-        except ValueError:
-            energy_balance_groups = []
-        if len(energy_balance_groups) > 0:
-            thermal_transform = [
-                lambda bmat: scale_energy_transform(
-                    bmat, row_groups=energy_balance_groups, model=self
-                )
-            ]
-
-        if contact_transform is not None or thermal_transform is not None:
-            solver_factory = LinearTransformedScheme(
-                inner=ksp_factory,
-                right_transformations=contact_transform,
-                left_transformations=thermal_transform,
-            )
-
-        else:
-            # A standard KSP solver will do.
-            solver_factory = ksp_factory
-
-        self._solver_factory = solver_factory
+        self._petsc_ksp_pc_configuration = configuration.solver
+        self._transformations = configuration.transformations
+        self._dof_manager = DofManager(model=self, groups=configuration.solver.groups)
 
     def set_nonlinear_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields
@@ -462,7 +427,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
 def default_preconditioner_factory(
     model: pp.PorePyModel,
-) -> Callable[[], PetscKspPcConfiguration]:
+) -> Callable[[], LinearSolverConfiguration]:
     if isinstance(model, pp.SinglePhaseFlow):
         return mass_balance_factory
     if isinstance(model, pp.MomentumBalance):

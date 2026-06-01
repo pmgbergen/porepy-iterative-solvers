@@ -8,40 +8,23 @@ import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
 from testing_utils import (
-    MockDofManager,
+    generate_reference_block_linear_system,
     generate_reference_dofs_3_groups,
-    generate_reference_matrix_3_groups,
-    generate_reference_rhs_3_groups,
-    generate_reference_submatrices_3_groups,
 )
 
 # integration tests for all the default factories (not here, in preconditioners?)
-from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
-from pp_solvers.options_parsers import (
-    LinearTransformedScheme,
-    PetscKSPScheme,
-    assemble_petsc_ksp_pc,
-)
+from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.options_parsers import assemble_petsc_ksp_pc
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     csr_to_petsc,
     insert_petsc_options,
-    petsc_to_csr,
 )
-from pp_solvers.preconditioners import GMRES, Identity
 
 
 @pytest.fixture
 def block_linear_system() -> BlockLinearSystem:
-    dofs_row, dofs_col = generate_reference_dofs_3_groups()
-    return BlockLinearSystem(
-        mat=generate_reference_matrix_3_groups(),
-        rhs=generate_reference_rhs_3_groups(),
-        indexer=LinearSystemIndexer(
-            dofs_row=dofs_row,
-            dofs_col=dofs_col,
-        ),
-    )
+    return generate_reference_block_linear_system()
 
 
 @pytest.fixture
@@ -395,62 +378,3 @@ def test_assemble_petsc_ksp_pc(
 
     # Positive reason means PETSc treats it as success.
     assert ksp.getConvergedReason() > 0
-
-
-@pytest.mark.parametrize("left", [True, False])
-@pytest.mark.parametrize("right", [True, False])
-def test_linear_transformed_scheme(
-    block_linear_system: BlockLinearSystem,
-    left: bool,
-    right: bool,
-):
-    # This also tests PetscKSPScheme.
-
-    # Sorting the blocks in the matrix, same as it is done in the solver code.
-    block_linear_system = block_linear_system[:]
-    # Generating some transformation matrices.
-    left_transformations = []
-    right_transformations = []
-    expected_matrix = block_linear_system.mat
-    if left:
-        Qleft = block_linear_system.copy()
-        Qleft2 = block_linear_system.copy()
-        Qleft2.mat *= 2
-        left_transformations = [lambda _: Qleft, lambda _: Qleft2]
-        expected_matrix = Qleft.mat @ Qleft2.mat @ expected_matrix
-    if right:
-        Qright = block_linear_system.copy()
-        Qright2 = block_linear_system.copy()
-        Qright2.mat *= 2
-        right_transformations = [lambda _: Qright, lambda _: Qright2]
-        expected_matrix = expected_matrix @ Qright.mat @ Qright2.mat
-    # Initializing the KSP with transformations, without the preconditioner.
-    solver_scheme = LinearTransformedScheme(
-        inner=PetscKSPScheme(
-            petsc_ksp_pc_configuration=GMRES(
-                key="custom_key", preconditioner=Identity(groups=["mock_g1"])
-            ),
-            dof_manager=MockDofManager(),
-        ),
-        left_transformations=left_transformations,
-        right_transformations=right_transformations,
-    )
-    solver = solver_scheme.make_solver(
-        mat_orig=block_linear_system, options={"custom_key": {"ksp_type": "fgmres"}}
-    )
-    result_mat = petsc_to_csr(solver.ksp.getOperators()[0])
-    # They should be exactly equal, numerical error may appear due to different order of
-    # matrix multiplication.
-    np.testing.assert_allclose(
-        result_mat.toarray(), expected_matrix.toarray(), rtol=1e-20, atol=0
-    )
-    # Check that the custom option applied.
-    assert solver.ksp.type == "fgmres"
-    solution = solver.solve(block_linear_system.rhs)
-
-    np.testing.assert_allclose(
-        block_linear_system.mat @ solution,
-        block_linear_system.rhs,
-        rtol=0,
-        atol=1e-10,
-    )
