@@ -289,7 +289,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             construct_time=construct_time,
             success=petscConvergedReason > 0,
         )
-        return solution
+        return solution, petscConvergedReason
 
     def _solve_linear_system(
         self, solver_options: dict
