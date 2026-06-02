@@ -255,8 +255,10 @@ class IterativeSolverMixin(pp.PorePyModel):
                 - Solution array of the linear system.
                 - PETSc KSP converged reason
         """
-        characteristics = np.array([])  # Not implemented yet.
-
+        if hasattr(self.model, "solver_selection_characteristics"):
+            characteristics: np.ndarray = self.model.solver_selection_characteristics()
+        else:
+            characteristics = np.array([])
         # Perform the ML selection.
         solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
             characteristics=characteristics, active_solver_idx=-1
