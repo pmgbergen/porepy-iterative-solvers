@@ -346,7 +346,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
         if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
-
+        if info < 0:
+            x = np.full_like(x, np.nan)
         return np.atleast_1d(x), info
 
     def assemble_linear_system(self):
