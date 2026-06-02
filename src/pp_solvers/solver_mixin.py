@@ -317,9 +317,8 @@ class IterativeSolverMixin(pp.PorePyModel):
         try:
             solver = self._solver_factory.make_solver(self.bmat, solver_options)
         except Exception as e:
-            raise RuntimeError(
-                "Failed to create solver with the provided preconditioner."
-            ) from e
+            logger.warning("Failed to create solver with the provided preconditioner.")
+            return np.full(rhs.shape, np.nan), -9999
         elapsed = time() - t0
         self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
