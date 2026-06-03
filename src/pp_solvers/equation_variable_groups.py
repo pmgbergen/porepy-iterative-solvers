@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal, Optional
 
 import porepy as pp
 from porepy.models.energy_balance import TotalEnergyBalanceEquations
@@ -252,14 +253,46 @@ class EnergyBalanceTemperatureGroup(EquationVariableGroup):
 
 
 @dataclass(frozen=True)
+class DefinitionDomain(ABC):
+    @abstractmethod
+    def domains(self, model: pp.PorePyModel) -> pp.GridLikeSequence:
+        pass
+
+
+@dataclass(frozen=True)
+class OnWell(DefinitionDomain):
+    well_type: Literal["production", "injection"]
+
+    def domains(self, model: pp.PorePyModel) -> pp.GridLikeSequence:
+        well, not_well = model._filter_wells(model.mdg.subdomains(), self.well_type)
+        return well
+
+
+@dataclass(frozen=True)
+class NotOnWell(DefinitionDomain):
+    well_type: Literal["production", "injection"]
+
+    def domains(self, model: pp.PorePyModel) -> pp.GridLikeSequence:
+        wells, not_well = model._filter_wells(model.mdg.subdomains(), self.well_type)
+        return not_well
+
+
+@dataclass(frozen=True)
 class CustomEquationVariableGroup(EquationVariableGroup):
     eq_name: str
     var_name: str
+    defined_on: Optional[DefinitionDomain] = None
 
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EquationOnDomains(name=self.eq_name, domains=model.mdg.subdomains())
+        if self.defined_on is not None:
+            domains = self.defined_on.domains(model)
+        else:
+            domains = model.mdg.subdomains()
+        return EquationOnDomains(name=self.eq_name, domains=domains)
 
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        return model.equation_system.md_variable(
-            name=self.var_name, domains=model.mdg.subdomains()
-        )
+        if self.defined_on is not None:
+            domains = self.defined_on.domains(model)
+        else:
+            domains = model.mdg.subdomains()
+        return model.equation_system.md_variable(name=self.var_name, domains=domains)

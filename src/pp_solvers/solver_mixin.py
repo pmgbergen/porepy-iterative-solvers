@@ -341,7 +341,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         # Transform the solution back to the global (PorePy) ordering.
-        for transformation in self._transformations:
+        for transformation in reversed(self._transformations):
             x_loc = transformation.transform_solution(x_loc)
 
         _, proj_col = self._dof_manager.build_projection()

@@ -1350,22 +1350,3 @@ def cfle_factory():
         solver=solver,
         groups=secondary_groups + solver.groups,
     )
-
-    
-class DirectSolver(PetscKspPcConfiguration):
-    def __init__(self, groups, backend) -> None:
-        pass
-
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        return {}
-
-
-
-
-def make_default_linear_solver(model):  # called after prepare_simulation
-    groups: list[EquationVariableGroup] = [...]
-    return LinearSolverConfiguration(
-        solver=DirectSolver(backend="scipy", groups=groups),
-    )
