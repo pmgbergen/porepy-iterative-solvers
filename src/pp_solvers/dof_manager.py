@@ -25,10 +25,12 @@ from __future__ import annotations
 
 from itertools import count
 from collections import defaultdict
+from typing import Optional
 from weakref import ReferenceType, ref
 
 import numpy as np
 import porepy as pp
+from porepy.numerics.linalg.matrix_operations import ArraySlicer
 
 import pp_solvers
 from pp_solvers.block_linear_system import concatenate_dof_indices
@@ -187,6 +189,20 @@ class DofManager:
         """List of arrays, i-th array contains the DoFs of the i-th variable group."""
         return self._var_dofs
 
+    def build_projection(self, groups: Optional[list[EquationVariableGroup]] = None):
+        if groups is None:
+            groups = self.groups()
+        group_indices = self.indices_of_groups(groups)
+        eq_dofs = self.eq_dofs()
+        var_dofs = self.var_dofs()
+
+        projection_row = []
+        projection_col = []
+        for group_idx in group_indices:
+            projection_row.append(eq_dofs[group_idx])
+            projection_col.append(var_dofs[group_idx])
+        return projection_row, projection_col
+
     def _eq_dofs_porepy_order(self) -> list[np.ndarray]:
         """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
         they are arranged in the PorePy model).
@@ -196,24 +212,10 @@ class DofManager:
                 single equation on a single (not mixed-dimensional) grid.
 
         """
-        skip_list = {
-            "local_component_mass_constraint_CO2",
-            "isofugacity_constraint_H2O_G_L",
-            "isofugacity_constraint_CO2_G_L",
-            "semismooth_complementary_condition_L",
-            "semismooth_complementary_condition_G",
-            "local_fluid_enthalpy_constraint",
-            "local_phase_mass_constraint_G",
-        }
         eq_dofs: list[np.ndarray] = []
         model = self.model
         offset = 0
-        for (
-            eq_name,
-            data,
-        ) in model.equation_system._equation_image_space_composition.items():
-            if eq_name in skip_list:
-                continue
+        for data in model.equation_system._equation_image_space_composition.values():
             local_offset = 0
             for dofs in data.values():
                 eq_dofs.append(dofs + offset)
@@ -230,26 +232,11 @@ class DofManager:
                 single variable on a single (not mixed-dimensional) grid.
 
         """
-        skip_list = {
-            "temperature",
-            "s_G",
-            "y_G",
-            "x_H2O_L",
-            "x_CO2_L",
-            "x_H2O_G",
-            "x_CO2_G",
-        }
         model = self.model
-
-        proj = model.equation_system._Schur_complement[3].T.tocsc()
 
         var_dofs: list[np.ndarray] = []
         for var in model.equation_system.variables:
-            if var.name in skip_list:
-                continue
-            var_dofs.append(
-                proj.indices[proj.indptr[model.equation_system.dofs_of([var])]]
-            )
+            var_dofs.append(model.equation_system.dofs_of([var]))
         return var_dofs
 
     def _permute_contact_dofs(self, contact_group: int) -> np.ndarray:
@@ -320,21 +307,9 @@ class DofManager:
 
         """
         # Create a 0-based index for each variable.
-        skip_list = {
-            "temperature",
-            "s_G",
-            "y_G",
-            "x_H2O_L",
-            "x_CO2_L",
-            "x_H2O_G",
-            "x_CO2_G",
-        }
-
         counter = count(0)
         variable_to_idx = {
-            var: next(counter)
-            for var in self.model.equation_system.variables
-            if var.name not in skip_list
+            var: next(counter) for var in self.model.equation_system.variables
         }
         indices = []
         for md_var in self._variable_groups:
@@ -360,25 +335,12 @@ class DofManager:
 
         """
         # Assign a unique index to each equation-domain pair.
-
-        skip_list = {
-            "local_component_mass_constraint_CO2",
-            "isofugacity_constraint_H2O_G_L",
-            "isofugacity_constraint_CO2_G_L",
-            "semismooth_complementary_condition_L",
-            "semismooth_complementary_condition_G",
-            "local_fluid_enthalpy_constraint",
-            "local_phase_mass_constraint_G",
-        }
-
         equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
         idx: int = 0
         for (
             eq_name,
             domains,
         ) in self.model.equation_system._equation_image_space_composition.items():
-            if eq_name in skip_list:
-                continue
             for domain in domains:
                 equation_to_idx[(eq_name, domain)] = idx
                 idx += 1

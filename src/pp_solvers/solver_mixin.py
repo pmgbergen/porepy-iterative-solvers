@@ -18,6 +18,7 @@ from porepy.viz.solver_statistics import SolverStatistics
 from pp_solvers.block_linear_system import (
     BlockLinearSystem,
     LinearSystemIndexer,
+    concatenate_dof_indices,
 )
 from pp_solvers.dof_manager import DofManager
 
@@ -342,7 +343,12 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in self._transformations:
             x_loc = transformation.transform_solution(x_loc)
-        x = self.bmat.permute_right_vector_to_original(x_loc)
+
+        _, proj_col = self._dof_manager.build_projection()
+        x = np.zeros_like(x_loc)
+        x[concatenate_dof_indices(proj_col)] = x_loc
+
+        # x = self.bmat.permute_right_vector_to_original(x_loc)  # YZ: This fails 02.06
 
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
@@ -409,7 +415,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         self._petsc_ksp_pc_configuration = configuration.solver
         self._transformations = configuration.transformations
-        self._dof_manager = DofManager(model=self, groups=configuration.solver.groups)
+        self._dof_manager = DofManager(model=self, groups=configuration.groups)
 
     def set_nonlinear_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields

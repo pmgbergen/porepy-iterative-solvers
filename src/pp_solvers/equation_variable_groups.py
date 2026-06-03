@@ -38,19 +38,15 @@ class EquationOnDomains:
     """A list of domains of definition for the given equation."""
 
 
+@dataclass(frozen=True)
 class EquationVariableGroup(ABC):
     """A base class for all groups. This represents a diagonal submatrix in a block
     matrix, thus the number of DoFs for the equation and the variable should match.
 
-    Despite the group objects are instantiated (e.g. `MassBalancePressureGroup()`), they
-    are internally treated as singletones: we treat groups with equal class names as
-    equal. Therefore, the group should not have any conditional behavior, based on its
-    or model's state.
-
-    Equation and variable names defined should not necessarily match the PorePy equation
-    and variable names. They are used for debugging and diagnostics, thus should have
-    human readable names, e.g. "mass_balance on fractures" or
-    "constrained pressure on injection wells".
+    This is a dataclass, because it is: (i) comparable, (ii) hashable and (iii)
+    immutable. The subclasses may contain a state, e.g., `ComponentGroup("CO2")`. The
+    state must fully define what data generates by PorePy in `equation_group` and
+    `variable_group` methods.
 
     """
 
@@ -62,27 +58,22 @@ class EquationVariableGroup(ABC):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         pass
 
-    @abstractmethod
     def equation_name(self, model: pp.PorePyModel) -> str:
-        pass
+        """Human-readible equation name for debugging and diagnostics. Should not
+        necessarily match the PorePy name. Feel free to override.
 
-    @abstractmethod
+        """
+        return self.equation_group(model).name
+
     def variable_name(self, model: pp.PorePyModel) -> str:
-        pass
+        """Human-readible variable name for debugging and diagnostics. Should not
+        necessarily match the PorePy name. Feel free to override.
 
-    def __eq__(self, other: "EquationVariableGroup") -> bool:
-        if not isinstance(other, EquationVariableGroup):
-            return False
-        # Assuming groups are immutable!
-        return hash(self) == hash(other)
-
-    def __repr__(self) -> str:
-        return self.__class__.__name__
-
-    def __hash__(self) -> int:
-        return hash(self.__class__)
+        """
+        return self.variable_group(model).name
 
 
+@dataclass(frozen=True)
 class InterfaceDarcyFluxGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.INTERFACE_DARCY_FLUX.value
@@ -91,13 +82,8 @@ class InterfaceDarcyFluxGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.interface_darcy_flux(model.mdg.interfaces())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.INTERFACE_DARCY_FLUX.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.interface_darcy_flux_variable
-
-
+@dataclass(frozen=True)
 class InterfaceEnthalpyFluxGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.INTERFACE_ENTHALPY_FLUX.value
@@ -106,13 +92,8 @@ class InterfaceEnthalpyFluxGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.interface_enthalpy_flux(model.mdg.interfaces())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.INTERFACE_ENTHALPY_FLUX.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.interface_enthalpy_flux_variable
-
-
+@dataclass(frozen=True)
 class InterfaceFourierFluxGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.INTERFACE_FOURIER_FLUX.value
@@ -121,13 +102,8 @@ class InterfaceFourierFluxGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.interface_fourier_flux(model.mdg.interfaces())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.INTERFACE_FOURIER_FLUX.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.interface_fourier_flux_variable
-
-
+@dataclass(frozen=True)
 class WellFluxGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.WELL_FLUX.value
@@ -136,13 +112,8 @@ class WellFluxGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.well_flux(model.mdg.interfaces())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.WELL_FLUX.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.well_flux_variable
-
-
+@dataclass(frozen=True)
 class WellEnthalpyFluxGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.WELL_ENTHALPY_FLUX.value
@@ -151,13 +122,8 @@ class WellEnthalpyFluxGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.well_enthalpy_flux(model.mdg.interfaces())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.WELL_ENTHALPY_FLUX.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.well_enthalpy_flux_variable
-
-
+@dataclass(frozen=True)
 class InterfaceForceBalanceGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         name = EquationNames.INTERFACE_FORCE_BALANCE.value
@@ -169,13 +135,8 @@ class InterfaceForceBalanceGroup(EquationVariableGroup):
         interfaces = model.mdg.interfaces(dim=model.nd - 1)
         return model.interface_displacement(interfaces)
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.INTERFACE_FORCE_BALANCE.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.interface_displacement_variable
-
-
+@dataclass(frozen=True)
 class MechanicsGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         return EquationOnDomains(
@@ -187,13 +148,8 @@ class MechanicsGroup(EquationVariableGroup):
         subdomains = model.mdg.subdomains(dim=model.nd)
         return model.displacement(subdomains)
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.MECHANICS.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.displacement_variable
-
-
+@dataclass(frozen=True)
 class ContactMechanicsGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         # PorePy has no single contact mechanics equation: it has two: normal and
@@ -208,13 +164,8 @@ class ContactMechanicsGroup(EquationVariableGroup):
         subdomains = model.mdg.subdomains(dim=model.nd - 1)
         return model.contact_traction(subdomains)
 
-    def equation_name(self, model) -> str:
-        return EquationNames.CONTACT.value
 
-    def variable_name(self, model) -> str:
-        return model.contact_traction_variable
-
-
+@dataclass(frozen=True)
 class MassBalancePressureMatrixGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         return EquationOnDomains(
@@ -232,6 +183,7 @@ class MassBalancePressureMatrixGroup(EquationVariableGroup):
         return model.pressure_variable + " (matrix)"
 
 
+@dataclass(frozen=True)
 class MassBalancePressureFracturesGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         return EquationOnDomains(
@@ -249,6 +201,7 @@ class MassBalancePressureFracturesGroup(EquationVariableGroup):
         return model.pressure_variable + " (fractures)"
 
 
+@dataclass(frozen=True)
 class MassBalancePressureIntersectionsGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         intersections = [
@@ -276,6 +229,7 @@ class MassBalancePressureIntersectionsGroup(EquationVariableGroup):
         return model.pressure_variable + " (intersections)"
 
 
+@dataclass(frozen=True)
 class MassBalancePressureGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         return EquationOnDomains(
@@ -285,13 +239,8 @@ class MassBalancePressureGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.pressure(model.mdg.subdomains())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.MASS_BALANCE.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.pressure_variable
-
-
+@dataclass(frozen=True)
 class EnergyBalanceTemperatureGroup(EquationVariableGroup):
     def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
         return EquationOnDomains(
@@ -301,8 +250,16 @@ class EnergyBalanceTemperatureGroup(EquationVariableGroup):
     def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
         return model.temperature(model.mdg.subdomains())
 
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return EquationNames.ENERGY_BALANCE.value
 
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return model.temperature_variable
+@dataclass(frozen=True)
+class CustomEquationVariableGroup(EquationVariableGroup):
+    eq_name: str
+    var_name: str
+
+    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
+        return EquationOnDomains(name=self.eq_name, domains=model.mdg.subdomains())
+
+    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
+        return model.equation_system.md_variable(
+            name=self.var_name, domains=model.mdg.subdomains()
+        )

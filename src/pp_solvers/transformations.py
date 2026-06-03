@@ -3,8 +3,11 @@ from logging import getLogger
 from typing import Callable, Optional
 
 import numpy as np
+from scipy.sparse import csr_matrix
 
-from pp_solvers.block_linear_system import BlockLinearSystem
+from porepy.numerics.linalg.matrix_operations import invert_permuted_block_diag_matrix
+
+from pp_solvers.block_linear_system import BlockLinearSystem, concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
@@ -14,6 +17,8 @@ from pp_solvers.equation_variable_groups import (
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 
 logger = getLogger(__name__)
+
+# TODO: unit tests!
 
 
 class LinearSystemTransformation(ABC):
@@ -28,45 +33,77 @@ class LinearSystemTransformation(ABC):
         pass
 
 
+def rearrange_matrix_as_array_of_structures(bmat: BlockLinearSystem):
+    enabled_groups_row = bmat.indexer.enabled_groups_row
+    enabled_groups_col = bmat.indexer.enabled_groups_col
+    assert len(enabled_groups_row) == len(enabled_groups_col)
+
+    list_of_dofs_row = []
+    list_of_dofs_col = []
+    for group_row, group_col in zip(enabled_groups_row, enabled_groups_col):
+        dofs_row, dofs_col = bmat.indexer.get_dofs_of_groups((group_row, group_col))
+        assert len(dofs_row) == len(dofs_col)
+        list_of_dofs_row.append(dofs_row)
+        list_of_dofs_col.append(dofs_col)
+
+    row_permutation = np.stack(list_of_dofs_row).ravel(order="F")
+    col_permutation = np.stack(list_of_dofs_col).ravel(order="F")
+
+    return row_permutation, col_permutation
+
+
 class SchurComplementReduction(LinearSystemTransformation):
     def __init__(
         self,
         primary_groups: list[EquationVariableGroup],
-        secondary_groups: list[EquationVariableGroup],
-        invertor: Optional[Callable] = None,
+        # invertor: Optional[Callable[[csr_matrix], csr_matrix]] = None,
     ):
-        if invertor is None:
-            invertor = lambda mat: inv_block_diag(mat, nd=1)
-        self.invertor: Callable = invertor
+        # if invertor is None:
+        #     invertor = lambda mat: inv_block_diag(mat, nd=1)
+
         self.primary_groups: list[EquationVariableGroup] = primary_groups
-        self.secondary_groups: list[EquationVariableGroup] = secondary_groups
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        assert len(dof_manager.groups()) == (
-            len(self.primary_groups) + len(self.secondary_groups)
-        )
+        secondary_groups = [
+            g for g in dof_manager.groups() if g not in self.primary_groups
+        ]
+
         keep_idx = dof_manager.indices_of_groups(self.primary_groups)
-        elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
-        intersection = set(keep_idx).intersection(elim_idx)
-        assert len(intersection) == 0
+        elim_idx = dof_manager.indices_of_groups(secondary_groups)
+
+        # needed to transform solution back
+        primary_dofs_col = [block_linear_system.indexer.dofs_col[i] for i in keep_idx]
+        self.primary_dofs_col = concatenate_dof_indices(primary_dofs_col)
+        secondary_dofs_col = [block_linear_system.indexer.dofs_col[i] for i in elim_idx]
+        self.secondary_dofs_col = concatenate_dof_indices(secondary_dofs_col)
 
         # 0 - elim, 1 - keep
-        # A00 A11
-        # A01 A11    S11 = A11 - A10 * inv(A00) * A01
-
+        # A00 A01
+        # A10 A11
         A00 = block_linear_system[elim_idx, elim_idx]
         A01 = block_linear_system[elim_idx, keep_idx]
         A10 = block_linear_system[keep_idx, elim_idx]
         A11 = block_linear_system[keep_idx, keep_idx]
-        A00_inv = self.invertor(A00.mat)
-        A10_mul_A00_inv = A10 @ A00_inv
 
+        row_perm, col_perm = rearrange_matrix_as_array_of_structures(A00)
+        bs = len(secondary_groups)
+        block_sizes = np.ones(A00.shape[0] // bs, dtype=np.int64) * bs
+        A00_inv = invert_permuted_block_diag_matrix(
+            A00.mat,
+            row_permutation=row_perm,
+            col_permutation=col_perm,
+            block_sizes=block_sizes,
+        )
+
+        A10_mul_A00_inv = A10.mat @ A00_inv
+
+        # S11 = A11 - A10 * inv(A00) * A01
         S11 = A11.empty_container()
         S11.mat = A11.mat - A10_mul_A00_inv @ A01.mat
 
-        # reduced rhs: b1 - A10 * inv(A00) * b0
+        # reduced rhs = b1 - A10 * inv(A00) * b0
         S11.rhs = A11.rhs - A10_mul_A00_inv @ A00.rhs
 
         self.A00_inv = A00_inv
@@ -75,12 +112,18 @@ class SchurComplementReduction(LinearSystemTransformation):
         return S11
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
-        # x0 = solve_A00(b0 - A01 @ x1)      # second cheap A00 solve
+        # x0 = solve_A00(b0 - A01 @ x1)
         A01 = self.A01
         A00_inv = self.A00_inv
 
         x0 = A00_inv @ (A01.rhs - A01.mat @ sol)
-        return np.concatenate([x0, sol])
+        
+        result = np.zeros(
+            self.primary_dofs_col.size + self.secondary_dofs_col.size, dtype=sol.dtype
+        )
+        result[self.primary_dofs_col] = sol
+        result[self.secondary_dofs_col] = x0
+        return result
 
 
 class ContactLinearTransformation(LinearSystemTransformation):

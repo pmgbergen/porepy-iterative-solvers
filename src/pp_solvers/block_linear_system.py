@@ -151,9 +151,7 @@ class LinearSystemIndexer:
         provided groups.
 
         Parameters:
-            key: The groups of rows and columns. Does not validate input, so if key is
-            passed in arbitrary format (e.g. from `__getitem__`), it must be formatted
-            on the caller side by calling the `correct_validate_getitem_key` method.
+            key: The groups of rows and columns.
 
         Returns:
             Two arrays, corresponding to row and column indices.

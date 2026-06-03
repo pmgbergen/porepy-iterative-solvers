@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import porepy as pp
 import scipy.sparse
-import scipy.sparse.linalg
+from scipy.sparse import csr_matrix
 from numba import njit
 
 __all__ = [
@@ -75,12 +75,12 @@ def build_mechanics_near_null_space(
     return np.array(null_space)
 
 
-def csr_ones(n: int) -> scipy.sparse.csr_matrix:
+def csr_ones(n: int) -> csr_matrix:
     """Constructs a square sparse matrix with ones on the diagonal."""
     return scipy.sparse.eye(n, format="csr")
 
 
-def inv_block_diag(mat, nd: int):
+def inv_block_diag(mat: csr_matrix, nd: int) -> csr_matrix:
     """Inverses the small block matrices (nd x nd) located on the matrix diagonal.
     Ignores the nonzero entities outside the small block matrices.
 
@@ -97,7 +97,7 @@ def inv_block_diag(mat, nd: int):
     raise ValueError(f"{nd = } not supported.")
 
 
-def _extract_diag_inv(mat, eliminate_zeros=False):
+def _extract_diag_inv(mat: csr_matrix, eliminate_zeros=False) -> csr_matrix:
     diag = mat.diagonal()
     ones = scipy.sparse.eye(mat.shape[0], format="csr")
     if eliminate_zeros:
@@ -107,7 +107,7 @@ def _extract_diag_inv(mat, eliminate_zeros=False):
     return ones
 
 
-def _inv_block_diag_2x2(mat):
+def _inv_block_diag_2x2(mat: csr_matrix) -> csr_matrix:
     ad = mat.diagonal()
     a = ad[::2]
     d = ad[1::2]
@@ -126,7 +126,7 @@ def _inv_block_diag_2x2(mat):
     upper = np.zeros(ad.size - 1)
     upper[::2] = -b / det
 
-    return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1]).tocsr()
+    return scipy.sparse.diags([lower, diag, upper], offsets=[-1, 0, 1], format="csr")
 
 
 @njit
@@ -137,7 +137,7 @@ def _inv_list_of_matrices(mats):
     return results
 
 
-def _inv_block_diag_3x3(mat):
+def _inv_block_diag_3x3(mat: csr_matrix) -> csr_matrix:
     assert (mat.shape[0] % 3) == 0
     diag = mat.diagonal()
     a00 = diag[0::3]
@@ -166,4 +166,4 @@ def _inv_block_diag_3x3(mat):
         ]
     ).transpose(2, 0, 1)
     mats_3x3_inv = _inv_list_of_matrices(mats_3x3)
-    return scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)
+    result = scipy.sparse.block_diag(mats_3x3_inv, format=mat.format)

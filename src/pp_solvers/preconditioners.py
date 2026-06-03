@@ -17,6 +17,7 @@ from typing import Optional, Sequence
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
+    CustomEquationVariableGroup,
     EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
     InterfaceDarcyFluxGroup,
@@ -37,6 +38,7 @@ from pp_solvers.transformations import (
     ContactLinearTransformation,
     LinearSystemTransformation,
     ScaleSpecificVolume,
+    SchurComplementReduction,
 )
 
 __all__ = [
@@ -795,6 +797,11 @@ class LinearSolverConfiguration:
     transformations: list[LinearSystemTransformation] = field(
         default_factory=lambda: []
     )
+    groups: list[EquationVariableGroup] = field(default_factory=lambda: [])
+
+    def __post_init__(self):
+        if len(self.groups) == 0:
+            self.groups = self.solver.groups
 
 
 # MARK: Factories
@@ -1213,6 +1220,7 @@ def cfle_factory():
     import porepy as pp
     from pp_solvers.equation_variable_groups import EquationOnDomains, EquationNames
 
+    @dataclass(frozen=True)
     class ComponentMassBalanceCO2Group(EquationVariableGroup):
         def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
             name = "component_mass_balance_equation_CO2"
@@ -1221,12 +1229,7 @@ def cfle_factory():
         def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
             return model.fluid.components[1].fraction(model.mdg.subdomains())
 
-        def equation_name(self, model: pp.PorePyModel) -> str:
-            return "component_mass_balance_equation_CO2"
-
-        def variable_name(self, model: pp.PorePyModel) -> str:
-            return "z_CO2"
-
+    @dataclass(frozen=True)
     class MassBalancePressureGroup(EquationVariableGroup):
         def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
             production_wells, no_production_wells = model._filter_wells(
@@ -1242,12 +1245,7 @@ def cfle_factory():
             )
             return model.pressure(no_production_wells)
 
-        def equation_name(self, model: pp.PorePyModel) -> str:
-            return "mass_balance"
-
-        def variable_name(self, model: pp.PorePyModel) -> str:
-            return "pressure"
-
+    @dataclass(frozen=True)
     class EnergyBalanceEnthalpyGroup(EquationVariableGroup):
         def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
             name = EquationNames.ENERGY_BALANCE.value
@@ -1262,12 +1260,7 @@ def cfle_factory():
             )
             return model.enthalpy(no_injection_wells)
 
-        def equation_name(self, model: pp.PorePyModel) -> str:
-            return "energy_balance"
-
-        def variable_name(self, model: pp.PorePyModel) -> str:
-            return "entalpy"
-
+    @dataclass(frozen=True)
     class ProductionPressureConstraintGroup(EquationVariableGroup):
         def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
             name = "production_pressure_constraint"
@@ -1282,12 +1275,7 @@ def cfle_factory():
             )
             return model.pressure(production_wells)
 
-        def equation_name(self, model: pp.PorePyModel) -> str:
-            return "production_pressure_constraint"
-
-        def variable_name(self, model: pp.PorePyModel) -> str:
-            return "pressure_constraint"
-
+    @dataclass(frozen=True)
     class InjectionTemperatureConstraintGroup(EquationVariableGroup):
         def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
             name = "injection_temperature_constraint"
@@ -1301,12 +1289,6 @@ def cfle_factory():
                 model.mdg.subdomains(), "injection"
             )
             return model.enthalpy(injection_wells)
-
-        def equation_name(self, model: pp.PorePyModel) -> str:
-            return "injection_temperature_constraint"
-
-        def variable_name(self, model: pp.PorePyModel) -> str:
-            return "enthalpy_constraint"
 
     interface_groups = [
         InterfaceDarcyFluxGroup(),
@@ -1353,9 +1335,37 @@ def cfle_factory():
         )
     )
 
+    secondary_groups = [
+        CustomEquationVariableGroup("local_component_mass_constraint_CO2", "x_CO2_L"),
+        CustomEquationVariableGroup("isofugacity_constraint_H2O_G_L", "x_H2O_G"),
+        CustomEquationVariableGroup("isofugacity_constraint_CO2_G_L", "x_CO2_G"),
+        CustomEquationVariableGroup("semismooth_complementary_condition_L", "y_G"),
+        CustomEquationVariableGroup("semismooth_complementary_condition_G", "s_G"),
+        CustomEquationVariableGroup("local_fluid_enthalpy_constraint", "temperature"),
+        CustomEquationVariableGroup("local_phase_mass_constraint_G", "x_H2O_L"),
+    ]
+
     return LinearSolverConfiguration(
-        transformations=[
-            # Schur reduction
-        ],
+        transformations=[SchurComplementReduction(primary_groups=solver.groups)],
         solver=solver,
+        groups=secondary_groups + solver.groups,
+    )
+
+    
+class DirectSolver(PetscKspPcConfiguration):
+    def __init__(self, groups, backend) -> None:
+        pass
+
+    def petsc_options(
+        self, user_options: dict, prefix: str, dof_manager: DofManager
+    ) -> dict:
+        return {}
+
+
+
+
+def make_default_linear_solver(model):  # called after prepare_simulation
+    groups: list[EquationVariableGroup] = [...]
+    return LinearSolverConfiguration(
+        solver=DirectSolver(backend="scipy", groups=groups),
     )
