@@ -59,6 +59,7 @@ def cfle_factory():
         SchurComplementReduction,
         CompositePreconditioner,
         Identity,
+        BlockDiagonalPreconditioner,
     )
 
     @dataclass(frozen=True)
@@ -120,9 +121,9 @@ def cfle_factory():
             complement_solver=CompositePreconditioner(
                 subsolvers=[
                     FieldSplitSchur(
-                        subsolver=Identity(
+                        subsolver=BlockDiagonalPreconditioner(
                             groups=energy_balance_groups + component_groups,
-                            key="cpr_stage0_identity",
+                            key="cpr_stage0",
                         ),
                         approximate_inverter=DiagonalInverter(),
                         complement_solver=AMG(
