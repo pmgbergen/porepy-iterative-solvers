@@ -211,23 +211,10 @@ class IterativeSolverMixin(pp.PorePyModel):
         solver_selector = linear_solver_params.get("solver_selector", None)
         solver_options = linear_solver_params.get("options", {})
         if solver_selector is None:
-            solution, petsc_converged_reason = self._solve_linear_system(
-                solver_options=solver_options
-            )
+            solution, _ = self._solve_linear_system(solver_options=solver_options)
         else:
-            solution, petsc_converged_reason = (
-                self._solve_linear_system_with_solver_selection(
-                    solver_selector=solver_selector, solver_options=solver_options
-                )
-            )
-
-        if petsc_converged_reason <= 0:
-            logger.warning(
-                f"Linear solver did not converge. Reason: %d. "
-                "Check the solver options and the problem setup. "
-                "See detailed description of PETSc error codes: "
-                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
-                petsc_converged_reason,
+            solution, _ = self._solve_linear_system_with_solver_selection(
+                solver_selector=solver_selector, solver_options=solver_options
             )
 
         return solution
@@ -316,11 +303,13 @@ class IterativeSolverMixin(pp.PorePyModel):
                 petsc_ksp_pc_configuration=self._petsc_ksp_pc_configuration,
                 user_options=solver_options,
             )
-        except Exception as e:
-            raise RuntimeError(
-                "Failed to create solver with the provided preconditioner",
+        except Exception:
+            logger.exception(
+                "Failed to build a PETSc linear solver based on the given linear " \
+                "system.",
                 solver_options,
-            ) from e
+            )
+            return np.full_like(rhs, np.nan), -9999
         elapsed = time() - t0
         self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
@@ -340,6 +329,14 @@ class IterativeSolverMixin(pp.PorePyModel):
         )
 
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
+        if info <= 0:
+            logger.warning(
+                f"Linear solver did not converge. Reason: %d. "
+                "Check the solver options and the problem setup. "
+                "See detailed description of PETSc error codes: "
+                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
+                info,
+            )
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in reversed(self._transformations):
             x_loc = transformation.transform_solution(x_loc)
