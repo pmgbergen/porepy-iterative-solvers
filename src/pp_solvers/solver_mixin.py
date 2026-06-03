@@ -349,10 +349,17 @@ class IterativeSolverMixin(pp.PorePyModel):
         if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
 
-        return np.atleast_1d(x), info
+        x = np.atleast_1d(x)
+        if self._apply_schur_complement_reduction():
+            x = self.equation_system.expand_schur_complement_solution(x)
+
+        return x, info
 
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
+        self._dof_manager = DofManager(
+            model=self, groups=self._petsc_ksp_pc_configuration.groups
+        )
 
         dof_manager = self._dof_manager
         # Get the linear system from the equation system.
@@ -409,7 +416,6 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         self._petsc_ksp_pc_configuration = configuration.solver
         self._transformations = configuration.transformations
-        self._dof_manager = DofManager(model=self, groups=configuration.solver.groups)
 
     def set_nonlinear_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields
