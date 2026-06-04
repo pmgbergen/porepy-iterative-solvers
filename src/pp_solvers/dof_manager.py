@@ -298,7 +298,11 @@ class DofManager:
             # not call sub_vars.
             assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
             indices.append([variable_to_idx.pop(var) for var in md_var.sub_vars])
-        assert len(variable_to_idx) == 0, "Some variables are not used."
+        if len(variable_to_idx) != 0:
+            raise ValueError(
+                "Some variables are not used on some subdomains: "
+                f"{set([k.name for k in variable_to_idx.keys()])}"
+            )
         return indices
 
     def _equation_block_indices(self) -> list[list[int]]:
