@@ -30,6 +30,7 @@ from pp_solvers.preconditioners import (
     momentum_balance_factory,
     th_factory,
     thm_factory,
+    validate_all_keys_are_unique,
 )
 from pp_solvers.solver_selection.selector import SolverSelector
 
@@ -401,7 +402,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             configuration_factory = default_preconditioner_factory(self)
 
         configuration = configuration_factory()
-
+        validate_all_keys_are_unique(configuration.solver)
         self._petsc_ksp_pc_configuration = configuration.solver
         self._transformations = configuration.transformations
         self._dof_manager = DofManager(model=self, groups=configuration.solver.groups)

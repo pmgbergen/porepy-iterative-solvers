@@ -66,7 +66,7 @@ __all__ = [
 
 
 def append_prefix_to_options(prefix: str, options: dict):
-    return {f"{prefix}{key}": value for key, value in options.items()}
+    return {f"{prefix}_{key}": value for key, value in options.items()}
 
 
 # MARK: Inverters
@@ -79,18 +79,32 @@ class PetscInverter(ABC):
     """
 
     @abstractmethod
-    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
-        pass
+    def petsc_options(self, key: str, complement_key: str) -> dict:
+        """Builds the PETSc options for the approximate Schur complement inverter.
+
+        Parameters:
+            prefix: The PETSc options prefix of the owning `FieldSplitSchur` node. The
+                `pc_fieldsplit_schur_precondition` option applies to this context.
+            complement_prefix: The PETSc options prefix of the complement sub-solver
+                (the kept block ``S``). Options that configure the (non-assembled) Schur
+                complement matrix apply to this context.
+
+        TODO: Revision docstring
+
+        """
 
     def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
         return {}
 
+    def __str__(self) -> str:
+        return type(self).__name__
+
 
 class NoInverter(PetscInverter):
     # TODO: Unit test!
-    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+    def petsc_options(self, key: str, complement_key: str) -> dict:
         return append_prefix_to_options(
-            prefix=prefix,
+            prefix=key,
             options={
                 "pc_fieldsplit_schur_precondition": "a11",
             },
@@ -98,9 +112,9 @@ class NoInverter(PetscInverter):
 
 
 class DiagonalInverter(PetscInverter):
-    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+    def petsc_options(self, key: str, complement_key: str) -> dict:
         return append_prefix_to_options(
-            prefix=prefix,
+            prefix=key,
             options={
                 "pc_fieldsplit_schur_precondition": "selfp",
             },
@@ -108,33 +122,27 @@ class DiagonalInverter(PetscInverter):
 
 
 class BlockDiagonalInverter(PetscInverter):
-    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+    def petsc_options(self, key: str, complement_key: str) -> dict:
         # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
         # which represents the non-assembled Schur complement matrix. It tells it to use
         # the block-diagonal approximation when the Schur complement needs to be
         # assembled. This option applies not to the full "fieldsplit" context, but the
         # context of the complement, thus using the complement prefix.
-        key = f"fieldsplit_{complement_tag}_mat_schur_complement_ainv_type"
         return append_prefix_to_options(
-            prefix=prefix,
-            options={
-                "pc_fieldsplit_schur_precondition": "selfp",
-                key: "blockdiag",
-            },
+            prefix=key,
+            options={"pc_fieldsplit_schur_precondition": "selfp"},
+        ) | append_prefix_to_options(
+            prefix=complement_key,
+            options={"mat_schur_complement_ainv_type": "blockdiag"},
         )
         # The matrix block size should be provided by the subsolver of the group to
         # eliminate.
 
 
 class FixedStressInverter(PetscInverter):
-    def petsc_options(
-        self,
-        prefix: str,
-        tag: str,
-        complement_tag: str,
-    ) -> dict:
+    def petsc_options(self, key: str, complement_key: str) -> dict:
         return append_prefix_to_options(
-            prefix=prefix,
+            prefix=key,
             options={
                 "pc_fieldsplit_schur_precondition": "user",
             },
@@ -199,9 +207,7 @@ class PetscKspPcConfiguration(ABC):
         return f"{self.__class__.__name__}(groups={self.groups})"
 
     @abstractmethod
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         """Builds the options for PETSc command-line format. The non-leaf solvers
         include the options of their children sub-solvers, with the corresponding
         prefices.
@@ -223,7 +229,7 @@ class PetscKspPcConfiguration(ABC):
 
             prefix: PETSc prefix to use with the options. If the method is called from
                 the user code, the empty prefix should typically be used. Internally,
-                used in recursion.
+                used in recursion. (TODO)
 
             dof_manager: The `DofManager` for the problem.
 
@@ -232,7 +238,7 @@ class PetscKspPcConfiguration(ABC):
         """
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         """Builds a configuration for the `assemble_petsc_ksp_pc` function. The non-leaf
         solvers include the configurations of their children sub-solvers, with the
@@ -245,7 +251,7 @@ class PetscKspPcConfiguration(ABC):
 
             prefix: PETSc prefix to use with the options. If the method is called from
                 the user code, the empty prefix should typically be used. Internally,
-                used in recursion.
+                used in recursion.  (TODO)
 
             dof_manager: The `DofManager` for the problem.
 
@@ -270,6 +276,10 @@ class PetscKspPcConfiguration(ABC):
         """
         return {}
 
+    def get_children(self) -> list[PetscKspPcConfiguration]:
+        # TODO: Docstring, unit test
+        return []
+
 
 class ILU(PetscKspPcConfiguration):
     """PETSc implementation of ILU, see for additional options:
@@ -280,12 +290,11 @@ class ILU(PetscKspPcConfiguration):
     def __init__(self, groups: list[EquationVariableGroup], key: str = "ilu") -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         default_options = {"pc_type": "ilu"}
         return append_prefix_to_options(
-            prefix=prefix, options=default_options | user_options.get(self.key, {})
+            prefix=self.key,
+            options=default_options | user_options.get(self.key, {}),
         )
 
 
@@ -308,9 +317,7 @@ class AMG(PetscKspPcConfiguration):
         self.vector_problem: bool = vector_problem
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         # The default strong threshold is dimension-dependent.
         strong_threshold = 0.7 if dof_manager.model.nd == 3 else 0.25
         default_options = {
@@ -321,7 +328,8 @@ class AMG(PetscKspPcConfiguration):
         if self.vector_problem:
             default_options["mat_block_size"] = dof_manager.model.nd
         return append_prefix_to_options(
-            prefix=prefix, options=default_options | user_options.get(self.key, {})
+            prefix=self.key,
+            options=default_options | user_options.get(self.key, {}),
         )
 
 
@@ -333,12 +341,11 @@ class Identity(PetscKspPcConfiguration):
     ) -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         default_options = {"pc_type": "none"}
         return append_prefix_to_options(
-            prefix=prefix, options=default_options | user_options.get(self.key, {})
+            prefix=self.key,
+            options=default_options | user_options.get(self.key, {}),
         )
 
 
@@ -353,14 +360,17 @@ class GMRES(PetscKspPcConfiguration):
         self, preconditioner: PetscKspPcConfiguration, key: str = "gmres"
     ) -> None:
         self.preconditioner: PetscKspPcConfiguration = preconditioner
+        self.preconditioner.key = key
         super().__init__(groups=self.preconditioner.groups, key=key)
 
     def __repr__(self) -> str:
         return f"GMRES(preconditioner={self.preconditioner})"
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def get_children(self) -> list[PetscKspPcConfiguration]:
+        # TODO: Explain
+        return self.preconditioner.get_children()
+
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         default_options = {
             "ksp_type": "gmres",
             "ksp_pc_side": "right",
@@ -372,32 +382,32 @@ class GMRES(PetscKspPcConfiguration):
         }
         pc_options = self.preconditioner.petsc_options(
             user_options=user_options,
-            prefix="",  # Empty here on purpose, we will insert prefix of the ksp below.
             dof_manager=dof_manager,
         )
 
         this_user_options = user_options.get(self.key, {})
 
+        ksp_options = append_prefix_to_options(
+            prefix=self.key, options=default_options | this_user_options
+        )
+
         # There can be an unfortunate overlap in GMRES and preconditioner options. We
         # print a warning in this case. The current behavior is that the preconditioner
         # options are prioritized.
-        intersection_in_options = set(this_user_options).intersection(pc_options)
+        intersection_in_options = set(ksp_options).intersection(pc_options)
         if len(intersection_in_options) > 0:
             warnings.warn(
                 "Both GMRES and preconditioner override options: "
                 f"{intersection_in_options}. Preconditioner options are prioritized."
             )
 
-        return append_prefix_to_options(
-            prefix=prefix,
-            options=default_options | this_user_options | pc_options,
-        )
+        return ksp_options | pc_options
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         return self.preconditioner.petsc_assembly_config(
-            user_options=user_options, prefix=prefix, dof_manager=dof_manager
+            user_options=user_options, dof_manager=dof_manager
         )
 
 
@@ -426,40 +436,40 @@ class CompositePreconditioner(PetscKspPcConfiguration):
         super().__init__(groups_of_subsolvers[0], key=key)
         self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
 
+    def get_children(self) -> list[PetscKspPcConfiguration]:
+        return self.subsolvers
+
     def __repr__(self) -> str:
         return f"CompositePreconditioner(key={self.key}, subsolvers={self.subsolvers})"
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        result: dict = {
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
+        own_options = {
             "pc_type": "composite",
             "pc_composite_type": "multiplicative",
         }
-        for i, subsolver in enumerate(self.subsolvers):
+        result = append_prefix_to_options(
+            prefix=self.key, options=own_options | user_options.get(self.key, {})
+        )
+        for subsolver in self.subsolvers:
+            result[f"{subsolver.key}_ksp_type"] = "preonly"
             result |= subsolver.petsc_options(
                 user_options=user_options,
-                prefix=f"sub_{i}_",  # HERE
                 dof_manager=dof_manager,
             )
-        return append_prefix_to_options(
-            prefix=prefix, options=result | user_options.get(self.key, {})
-        )
+        return result
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         config = {
-            prefix: {
+            self.key: {
                 "config_type": "composite",
-                "num_stages": len(self.subsolvers),
+                "subsolver_keys": [subsolver.key for subsolver in self.subsolvers],
             },
         }
-        for i, subsolver in enumerate(self.subsolvers):
-            subsolver_prefix = f"{prefix}sub_{i}_"  # HERE
+        for subsolver in self.subsolvers:
             config |= subsolver.petsc_assembly_config(
                 user_options=user_options,
-                prefix=subsolver_prefix,
                 dof_manager=dof_manager,
             )
         return config
@@ -475,8 +485,10 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
     def __init__(
         self,
         subsolvers: Sequence[PetscKspPcConfiguration],
-        key: str = "fieldsplit_additive",
+        key: Optional[str] = None,
     ) -> None:
+        if key is None:
+            key = f"fs_{subsolvers[0].key}"
         self.subsolvers: list[PetscKspPcConfiguration] = list(subsolvers)
         super().__init__(
             groups=[g for subsolver in self.subsolvers for g in subsolver.groups],
@@ -497,46 +509,43 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
     def __repr__(self) -> str:
         return f"FieldSplitAdditive(key={self.key}, subsolvers={self.subsolvers})"
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        options = {
+    def get_children(self) -> list[PetscKspPcConfiguration]:
+        return self.subsolvers
+
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
+        own_options = {
             "pc_type": "fieldsplit",
             "pc_fieldsplit_type": "additive",
-        } | {
-            f"fieldsplit_sub_{i}_ksp_type": "preonly"  # HERE
-            for i in range(len(self.subsolvers))
         }
-        for i, subsolver in enumerate(self.subsolvers):
-            options.update(
-                subsolver.petsc_options(
-                    user_options=user_options,
-                    prefix=f"fieldsplit_sub_{i}_",  # HERE
-                    dof_manager=dof_manager,
-                )
+        result = append_prefix_to_options(
+            prefix=self.key, options=own_options | user_options.get(self.key, {})
+        )
+        for subsolver in self.subsolvers:
+            result[f"{subsolver.key}_ksp_type"] = "preonly"
+            result |= subsolver.petsc_options(
+                user_options=user_options,
+                dof_manager=dof_manager,
             )
 
-        return append_prefix_to_options(
-            prefix=prefix, options=options | user_options.get(self.key, {})
-        )
+        return result
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         result = {
-            prefix: {
+            self.key: {
                 "config_type": "fieldsplit_additive",
                 "subsolver_groups": [
                     dof_manager.indices_of_groups(subsolver.groups)
                     for subsolver in self.subsolvers
                 ],
+                "subsolver_keys": [subsolver.key for subsolver in self.subsolvers],
             }
         }
-        for i, subsolver in enumerate(self.subsolvers):
+        for subsolver in self.subsolvers:
             result.update(
                 subsolver.petsc_assembly_config(
                     user_options=user_options,
-                    prefix=f"fieldsplit_sub_{i}_",  # HERE
                     dof_manager=dof_manager,
                 )
             )
@@ -571,6 +580,8 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             `petsc_tag` is not passed, otherwise to `f"{petsc_tag}_cpl"` (complenent).
         key: A key to pass user options to the configurations.
 
+        TODO: revisit docstring
+
     """
 
     def __init__(
@@ -578,23 +589,13 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         subsolver: PetscKspPcConfiguration,
         complement_solver: PetscKspPcConfiguration,
         approximate_inverter: PetscInverter,
-        petsc_tag: Optional[str] = None,
-        petsc_complement_tag: Optional[str] = None,
-        key: str = "fieldsplit",
+        key: Optional[str] = None,
     ) -> None:
-        # petsc_tag - internal, for petsc prefix. Must be short, not necessarily unique.
-        if petsc_complement_tag is None:  # HERE
-            if petsc_tag is not None:
-                petsc_complement_tag = f"{petsc_tag}_cpl"
-            else:
-                petsc_complement_tag = "keep"
-        if petsc_tag is None:
-            petsc_tag = "elim"
+        if key is None:
+            key = f"fs_{subsolver.key}"
         self.subsolver: PetscKspPcConfiguration = subsolver
         self.complement_solver: PetscKspPcConfiguration = complement_solver
         self.approximate_inverter: PetscInverter = approximate_inverter
-        self.petsc_tag: str = petsc_tag
-        self.petsc_complement_tag: str = petsc_complement_tag
         super().__init__(
             groups=self.subsolver.groups + self.complement_solver.groups, key=key
         )
@@ -610,6 +611,9 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             current_node_repr=f"FieldSplitSchur(key={self.key})",
         )
 
+    def get_children(self) -> list[PetscKspPcConfiguration]:
+        return [self.subsolver, self.complement_solver]
+
     def __repr__(self) -> str:
         return (
             f"FieldSplit(key={self.key}, subsolver={self.subsolver}, "
@@ -617,47 +621,43 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             f"approximate_inverter={self.approximate_inverter})"
         )
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        options = (
-            {
-                "pc_type": "fieldsplit",
-                "pc_fieldsplit_type": "schur",
-                "pc_fieldsplit_schur_factorization_type": "upper",
-                # default values for the children.
-                f"fieldsplit_{self.petsc_tag}_ksp_type": "preonly",  # HERE
-                f"fieldsplit_{self.petsc_complement_tag}_ksp_type": "preonly",  # HERE
-            }
-            | self.subsolver.petsc_options(
-                user_options=user_options,
-                prefix=f"fieldsplit_{self.petsc_tag}_",  # HERE
-                dof_manager=dof_manager,
-            )
-            | self.complement_solver.petsc_options(
-                user_options=user_options,
-                prefix=f"fieldsplit_{self.petsc_complement_tag}_",  # HERE
-                dof_manager=dof_manager,
-            )
-            | self.approximate_inverter.petsc_options(
-                prefix="",
-                tag=self.petsc_tag,  # HERE
-                complement_tag=self.petsc_complement_tag,
-            )
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
+        subsolver_prefix = f"{self.subsolver.key}_"
+        complement_prefix = f"{self.complement_solver.key}_"
+        own_options = {
+            "pc_type": "fieldsplit",
+            "pc_fieldsplit_type": "schur",
+            "pc_fieldsplit_schur_factorization_type": "upper",
+        }
+        result = append_prefix_to_options(prefix=self.key, options=own_options)
+        result[f"{subsolver_prefix}ksp_type"] = "preonly"
+        result[f"{complement_prefix}ksp_type"] = "preonly"
+        result |= self.subsolver.petsc_options(
+            user_options=user_options,
+            dof_manager=dof_manager,
         )
-        return append_prefix_to_options(
-            prefix=prefix, options=options | user_options.get(self.key, {})
+        result |= self.complement_solver.petsc_options(
+            user_options=user_options,
+            dof_manager=dof_manager,
         )
+        result |= self.approximate_inverter.petsc_options(
+            key=self.key,
+            complement_key=self.complement_solver.key,
+        )
+        result |= append_prefix_to_options(
+            prefix=self.key, options=user_options.get(self.key, {})
+        )
+        return result
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         return (
             {
-                prefix: {
+                self.key: {
                     "config_type": "fieldsplit_schur",
-                    "elim_tag": self.petsc_tag,
-                    "keep_tag": self.petsc_complement_tag,
+                    "elim_key": self.subsolver.key,
+                    "keep_key": self.complement_solver.key,
                     "elim_groups": dof_manager.indices_of_groups(
                         groups=self.subsolver.groups
                     ),
@@ -671,12 +671,10 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             }
             | self.subsolver.petsc_assembly_config(
                 user_options=user_options,
-                prefix=f"{prefix}fieldsplit_{self.petsc_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
             | self.complement_solver.petsc_assembly_config(
                 user_options=user_options,
-                prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
         )
@@ -706,26 +704,24 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
         self.permutation_groups: list[list[EquationVariableGroup]] = permutation_groups
         self.inner_subsolver: PetscKspPcConfiguration = inner_subsolver
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
-        options = {"pc_type": "python"} | self.inner_subsolver.petsc_options(
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
+        result = append_prefix_to_options(
+            prefix=self.key,
+            options={"pc_type": "python"} | user_options.get(self.key, {}),
+        )
+        result |= self.inner_subsolver.petsc_options(
             user_options=user_options,
-            prefix=f"python_",
-            dof_manager=dof_manager,  # HERE
+            dof_manager=dof_manager,
         )
-        return append_prefix_to_options(
-            prefix=prefix, options=options | user_options.get(self.key, {})
-        )
+        return result
         # what if user options change pc_type? We assume it is prohibited. Somewhere it
         # should be checked.
 
     def petsc_assembly_config(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
+        self, user_options: dict, dof_manager: DofManager
     ) -> dict:
         inner_config = self.inner_subsolver.petsc_assembly_config(
             user_options=user_options,
-            prefix=f"{prefix}python_",  # HERE
             dof_manager=dof_manager,
         )
         if len(inner_config) > 0:
@@ -734,11 +730,12 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
                 "implemented."
             )
         return {
-            prefix: {
+            self.key: {
                 "config_type": "python_permutation",
                 "permutation_groups": [
                     dof_manager.indices_of_groups(g) for g in self.permutation_groups
                 ],
+                "inner_key": self.inner_subsolver.key,
             }
         }
 
@@ -754,15 +751,14 @@ class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
     ) -> None:
         super().__init__(groups=groups, key=key)
 
-    def petsc_options(
-        self, user_options: dict, prefix: str, dof_manager: DofManager
-    ) -> dict:
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         default_options = {
             "pc_type": "pbjacobi",
             "mat_block_size": dof_manager.model.nd,
         }
         return append_prefix_to_options(
-            prefix=prefix, options=default_options | user_options.get(self.key, {})
+            prefix=self.key,
+            options=default_options | user_options.get(self.key, {}),
         )
 
 
@@ -803,10 +799,6 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     }
     if "key" in subsolvers[0]:
         kwargs["key"] = subsolvers[0]["key"]
-    if "petsc_tag" in subsolvers[0]:  # HERE
-        kwargs["petsc_tag"] = subsolvers[0]["petsc_tag"]
-    if "petsc_complement_tag" in subsolvers[0]:  # HERE
-        kwargs["petsc_complement_tag"] = subsolvers[0]["petsc_complement_tag"]
 
     if len(subsolvers) > 2:
         # Recursion.
@@ -826,6 +818,9 @@ class LinearSolverConfiguration:
     )
 
 
+# MARK: Validation
+
+
 def validate_subsolvers_keys_are_unique(
     subsolvers: list[PetscKspPcConfiguration], current_node_repr: str
 ):
@@ -837,6 +832,24 @@ def validate_subsolvers_keys_are_unique(
         if count > 1:
             raise ValueError(
                 f"{current_node_repr} subsolver key is non-unique: {subsolver_key}"
+            )
+
+
+def validate_all_keys_are_unique(head: PetscKspPcConfiguration):
+    keys_nodes: dict[str, list[PetscKspPcConfiguration]] = defaultdict(lambda: [])
+
+    def traverse_subtree(node: PetscKspPcConfiguration):
+        keys_nodes[node.key].append(node)
+        for child in node.get_children():
+            traverse_subtree(child)
+
+    traverse_subtree(head)
+
+    for key, nodes in keys_nodes.items():
+        if len(nodes) > 1:
+            raise ValueError(
+                f"Linear solver configuration {key = } must be unique. Currently used "
+                f"in nodes:\n\n{'\n\n'.join(map(str, nodes))}."
             )
 
 
@@ -926,8 +939,6 @@ def momentum_balance_factory():
     ]
     solver = GMRES(
         preconditioner=FieldSplitSchur(
-            # For clarity, the petsc_tag and key are different concepts.
-            petsc_tag="contact",
             subsolver=BlockDiagonalPreconditioner(groups=contact_groups, key="contact"),
             complement_solver=AMG(
                 groups=mechanics_groups, key="mechanics_amg", vector_problem=True
@@ -1004,14 +1015,12 @@ def hm_factory():
                         groups=contact_groups, key="contact"
                     ),
                     "approximate_inverter": BlockDiagonalInverter(),
-                    "petsc_tag": "contact",
                 },
                 {
                     "subsolver": ILU(
                         groups=interface_flux_groups, key="interface_flow"
                     ),
                     "approximate_inverter": DiagonalInverter(),
-                    "petsc_tag": "intf_darcy_flux",
                 },
                 {
                     "subsolver": AMG(
@@ -1020,7 +1029,6 @@ def hm_factory():
                         vector_problem=True,
                     ),
                     "approximate_inverter": FixedStressInverter(),
-                    "petsc_tag": "mechanics",
                 },
                 {
                     "subsolver": AMG(
@@ -1094,7 +1102,6 @@ def th_factory():
 
     solver = GMRES(
         preconditioner=FieldSplitSchur(
-            petsc_tag="intf_mass_energy_flx",
             subsolver=ILU(groups=interface_groups, key="interface_flow"),
             approximate_inverter=DiagonalInverter(),
             complement_solver=CompositePreconditioner(
@@ -1196,12 +1203,10 @@ def thm_factory():
                         groups=contact_groups, key="contact"
                     ),
                     "approximate_inverter": BlockDiagonalInverter(),
-                    "petsc_tag": "contact",
                 },
                 {
                     "subsolver": ILU(groups=interface_groups, key="interface_flow"),
                     "approximate_inverter": DiagonalInverter(),
-                    "petsc_tag": "intf_mass_energy_flx",
                 },
                 {
                     "subsolver": AMG(
@@ -1210,7 +1215,6 @@ def thm_factory():
                         vector_problem=True,
                     ),
                     "approximate_inverter": FixedStressInverter(),
-                    "petsc_tag": "mech",
                 },
                 {
                     "subsolver": CompositePreconditioner(

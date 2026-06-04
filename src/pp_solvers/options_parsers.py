@@ -30,9 +30,8 @@ def initialize_petsc_ksp(
     user_options: dict,
 ):
     # TODO YZ: Check that the user did not misspell a key in options, e.g. cpr0_mass
-    # TODO YZ: Check that all keys in solvers are unique.
-    # These two tasks would require a recursive method on PetscKspPcScheme that will
-    # gather and count all the keys.
+
+    # We validated that all the solver keys are unique in SolverMixin.
 
     # Construct a PETSc matrix from the scipy matrix.
     petsc_mat = csr_to_petsc(block_linear_system.mat)
@@ -43,10 +42,10 @@ def initialize_petsc_ksp(
     petsc_options = clear_petsc_options()
 
     all_options_dict = petsc_ksp_pc_configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=dof_manager
+        user_options=user_options, dof_manager=dof_manager
     )
     assembly_config = petsc_ksp_pc_configuration.petsc_assembly_config(
-        user_options=user_options, prefix="", dof_manager=dof_manager
+        user_options=user_options, dof_manager=dof_manager
     )
 
     insert_petsc_options(all_options_dict)
@@ -59,7 +58,7 @@ def initialize_petsc_ksp(
         pc=petsc_ksp.getPC(),
         assembly_config=assembly_config,
         indexer=block_linear_system.indexer,
-        prefix="",
+        key=petsc_ksp_pc_configuration.key,
     )
 
     for key in all_options_dict:
@@ -77,32 +76,35 @@ def _assemble_pc_fieldsplit_additive(
     pc: PETSc.PC,
     assembly_config: dict,
     indexer: LinearSystemIndexer,
-    prefix: str,
+    key: str,
 ):
     assert pc.type == "fieldsplit"
 
-    prefix_config = assembly_config[prefix]
+    prefix_config = assembly_config[key]
     subsolver_groups = prefix_config["subsolver_groups"]
+    subsolver_keys = prefix_config["subsolver_keys"]
 
-    for i, groups in enumerate(subsolver_groups):
+    for subsolver_key, groups in zip(subsolver_keys, subsolver_groups):
         is_subsolver = construct_is(indexer, groups)
-        pc.setFieldSplitIS((f"sub_{i}", is_subsolver))
+        pc.setFieldSplitIS((subsolver_key, is_subsolver))
 
     try:
         pc.setUp()
         ksp.setUp()
     except:
-        print(f"failed on {prefix = }")
+        print(f"failed on {key = }")
         raise
 
     sub_ksp_list = pc.getFieldSplitSubKSP()
-    for sub_ksp, groups in zip(sub_ksp_list, subsolver_groups):
+    for sub_ksp, groups, subsolver_key in zip(
+        sub_ksp_list, subsolver_groups, subsolver_keys
+    ):
         assemble_petsc_ksp_pc(
             ksp=sub_ksp,
             pc=sub_ksp.getPC(),
             assembly_config=assembly_config,
             indexer=indexer[groups],
-            prefix=sub_ksp.prefix,
+            key=subsolver_key,
         )
 
 
@@ -111,24 +113,26 @@ def _assemble_pc_fieldsplit_schur(
     pc: PETSc.PC,
     assembly_config: dict,
     indexer: LinearSystemIndexer,
-    prefix: str,
+    key: str,
 ):
     # calls: pc.setUp, ksp.setUp
     assert pc.type == "fieldsplit"
 
-    prefix_config = assembly_config[prefix]
+    prefix_config = assembly_config[key]
     elim_groups = prefix_config["elim_groups"]
     keep_groups = prefix_config["keep_groups"]
-    elim_tag = prefix_config["elim_tag"]
-    keep_tag = prefix_config["keep_tag"]
+    elim_key = prefix_config["elim_key"]
+    keep_key = prefix_config["keep_key"]
 
     is_elim = construct_is(indexer, elim_groups)
     is_keep = construct_is(indexer, keep_groups)
 
     keep_groups_indexer = indexer[keep_groups]
 
-    pc.setFieldSplitIS((elim_tag, is_elim))
-    pc.setFieldSplitIS((keep_tag, is_keep))
+    # We initialize two splitting groups. PETSc gives each group a temporary prefix
+    # e.g., {parent_prefix}_fieldsplit_{elim_key}. The right prefix will be set later.
+    pc.setFieldSplitIS((elim_key, is_elim))
+    pc.setFieldSplitIS((keep_key, is_keep))
 
     # For a matrix [[A, B], [C, D]], Schur complement S = D - B * A^-1 * C, here D
     # corresponds to the index set "is_keep". An additive inverter is a matrix X to
@@ -152,7 +156,7 @@ def _assemble_pc_fieldsplit_schur(
         pc.setUp()
         ksp.setUp()
     except:
-        print(f"failed on {prefix = }")
+        print(f"failed on {key = }")
         raise
 
     sub_ksp_list = pc.getFieldSplitSubKSP()
@@ -166,7 +170,7 @@ def _assemble_pc_fieldsplit_schur(
         pc=pc_elim,
         assembly_config=assembly_config,
         indexer=indexer[elim_groups],
-        prefix=f"{prefix}fieldsplit_{elim_tag}_",
+        key=elim_key,
     )
 
     pc_keep = ksp_keep.getPC()
@@ -175,7 +179,7 @@ def _assemble_pc_fieldsplit_schur(
         pc=pc_keep,
         assembly_config=assembly_config,
         indexer=indexer[keep_groups],
-        prefix=f"{prefix}fieldsplit_{keep_tag}_",
+        key=keep_key,
     )
 
 
@@ -184,35 +188,41 @@ def _assemble_pc_composite(
     pc: PETSc.PC,
     assembly_config: dict,
     indexer: LinearSystemIndexer,
-    prefix: str,
+    key: str,
 ):
     assert pc.type == "composite"
-    num_stages = assembly_config[prefix]["num_stages"]
+    stage_keys = assembly_config[key]["subsolver_keys"]
 
-    for i in range(num_stages):
+    for i, stage_key in enumerate(stage_keys):
         # We need to access each sub-preconditioner. We need to create them using
         # pc.addCompositePCType(type). We do not know the type here, as it is provided
         # in petsc options. So we create them with a placeholder type "none".
-        pc_type = assembly_config.get(f"{prefix}sub_{i}_", {}).get("pc_type", "none")
-        pc.addCompositePCType(pc_type)
-        # Access the newly created sub-preconditioner.
-        sub_pc = pc.getCompositePC(i)
+        # TODO: Revisit comments
+        pc.addCompositePCType("ksp")
+        # Access the newly created sub-preconditioner. PETSc assigns it a temporary
+        # prefix: {parent_prefix}_sub_{i}. The right prefix will be set later.
+        child_pc = pc.getCompositePC(i)
         # Each sub-pc of a composite preconditioner works with the same Amat and Pmat.
-        sub_pc.setOperators(*pc.getOperators())
+        child_pc.setOperators(*pc.getOperators())
+
+        sub_ksp = child_pc.getKSP()
+        sub_ksp.setOperators(*pc.getOperators())  # Should it be a copy? The prefix on
+        # the matrix will be overriden! TODO: Safeguard!
+        sub_pc = sub_ksp.getPC()
         # The actual type of each sub_pc will be fetched here from PETSc options.
         assemble_petsc_ksp_pc(
-            ksp=ksp,
+            ksp=sub_ksp,
             pc=sub_pc,
             assembly_config=assembly_config,
             indexer=indexer,
-            prefix=f"{prefix}sub_{i}_",
+            key=stage_key,
         )
 
     try:
         ksp.setUp()
         pc.setUp()
     except:
-        print(f"Failed on {prefix = }")
+        print(f"Failed on {key = }")
         raise
 
 
@@ -221,17 +231,18 @@ def _assemble_pc_python_permutation(
     pc: PETSc.PC,
     assembly_config: dict,
     indexer: LinearSystemIndexer,
-    prefix: str,
+    key: str,
 ):
-    permutation_groups: list[list[int]] = assembly_config[prefix]["permutation_groups"]
+    config = assembly_config[key]
+    permutation_groups: list[list[int]] = config["permutation_groups"]
+    inner_key: str = config["inner_key"]
 
     perm = [indexer.get_dofs_of_groups(g)[0] for g in permutation_groups]
     perm = np.vstack(perm).ravel("F")
 
     python_context = PcPythonPermutation(
-        perm=perm, block_size=len(permutation_groups), prefix=prefix
+        perm=perm, block_size=len(permutation_groups), inner_key=inner_key
     )
-    python_context.setOptionsPrefix(prefix)
     python_context.setFromOptions(pc=pc)
 
     # YZ: Nested initialization of python_context.petsc_pc can be here. However, we
@@ -244,7 +255,7 @@ def _assemble_pc_python_permutation(
     #     prefix=f"{prefix}_python_",
     # )
     # Another NotImplementedError for this case is raised in PythonPermutationWrapper.
-    if python_context.petsc_pc.type in ["fieldsplit", "composite"]:
+    if python_context.petsc_pc.type in ["fieldsplit", "composite", "python"]:
         raise NotImplementedError(
             "Nested initialization inside PythonPermutationWrapper is not implemented."
         )
@@ -254,7 +265,7 @@ def _assemble_pc_python_permutation(
         ksp.setUp()
         pc.setUp()
     except:
-        print(f"Failed on {prefix = }")
+        print(f"Failed on {key = }")
         raise
 
 
@@ -263,7 +274,7 @@ def assemble_petsc_ksp_pc(
     pc: PETSc.PC,
     assembly_config: dict,
     indexer: LinearSystemIndexer,
-    prefix: str = "",
+    key: str,
 ):
     """This is a recursive parser that initializes the PETSc KSP and PC objects based on
     the provided assembly config. The assembly config contains sub-dictionaries, each
@@ -303,7 +314,10 @@ def assemble_petsc_ksp_pc(
         "permutation_groups": [[1, 2], [3, 4]],  # Groups to permute.
     }
 
+    TODO: Revisit docstrings
+
     """
+    prefix = f"{key}_"
     if len(prefix) > 126:
         # PETSc has a limit on the prefix length, which seems to be 127
         # characters. If the prefix is too long, we raise a warning.
@@ -317,7 +331,7 @@ def assemble_petsc_ksp_pc(
     pc.setOptionsPrefix(prefix)
     pc.setFromOptions()
 
-    current_config: dict = assembly_config.get(prefix, {})
+    current_config: dict = assembly_config.get(key, {})
 
     petsc_amat, petsc_pmat = ksp.getOperators()
     # The command-line options for a matrix include mat_block_size (integer) and
@@ -328,6 +342,17 @@ def assemble_petsc_ksp_pc(
     petsc_pmat.setOptionsPrefix(prefix)
     petsc_pmat.setFromOptions()
 
+    # Sanity check that ksp and pc point to the same matrix. If not, it could be that
+    # you messed with the prefixes and calling .setFromOptions deleted an old matrix and
+    # created a new empty one.
+    pc_petsc_amat, pc_petsc_pmat = pc.getOperators()
+    assert (
+        pc_petsc_amat.prefix
+        == petsc_amat.prefix
+        == petsc_pmat.prefix
+        == pc_petsc_pmat.prefix
+    )
+
     config_type: str = current_config.get("config_type", "default")
 
     if config_type == "fieldsplit_schur":
@@ -336,7 +361,7 @@ def assemble_petsc_ksp_pc(
             pc=pc,
             assembly_config=assembly_config,
             indexer=indexer,
-            prefix=prefix,
+            key=key,
         )
     elif config_type == "fieldsplit_additive":
         _assemble_pc_fieldsplit_additive(
@@ -344,7 +369,7 @@ def assemble_petsc_ksp_pc(
             pc=pc,
             assembly_config=assembly_config,
             indexer=indexer,
-            prefix=prefix,
+            key=key,
         )
     elif config_type == "composite":
         _assemble_pc_composite(
@@ -352,7 +377,7 @@ def assemble_petsc_ksp_pc(
             pc=pc,
             assembly_config=assembly_config,
             indexer=indexer,
-            prefix=prefix,
+            key=key,
         )
     elif config_type == "python_permutation":
         _assemble_pc_python_permutation(
@@ -360,7 +385,7 @@ def assemble_petsc_ksp_pc(
             pc=pc,
             assembly_config=assembly_config,
             indexer=indexer,
-            prefix=prefix,
+            key=key,
         )
     else:
         # Anything else does not need a special initialization from python.
