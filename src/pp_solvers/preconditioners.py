@@ -1310,6 +1310,7 @@ def compositional_solver_factory(model: pp.PorePyModel):
         CustomEquationVariableGroup(
             eq_name="component_mass_balance_equation_Cl-", var_name="z_Cl-"
         ),
+        # new variables and equations here
     ]
     # for component in model.fluid.components:
     #     if model.has_independent_fraction(component):

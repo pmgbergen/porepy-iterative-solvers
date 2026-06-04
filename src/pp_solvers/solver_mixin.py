@@ -203,6 +203,9 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             Solution array of the linear system.
         """
+        self._linear_solve_failed = False
+        self._linear_solve_failure_reason = None
+
         linear_solver_params = self.linear_solver_params()
 
         solver_selector = linear_solver_params.get("solver_selector", None)
@@ -313,13 +316,15 @@ class IterativeSolverMixin(pp.PorePyModel):
             del self.bmat
 
         if info <= 0:
-            raise RuntimeError(
+            self._linear_solve_failed = True
+            self._linear_solve_failure_reason = info
+            logger.warning(
                 f"Solver did not converge. Reason: {info}. "
                 "Check the solver options and the problem setup. "
                 "See detailed description of PETSc error codes: "
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"
             )
-
+            x = np.full_like(np.atleast_1d(x), np.nan, dtype=float)
         return np.atleast_1d(x)
 
     def assemble_linear_system(self):
