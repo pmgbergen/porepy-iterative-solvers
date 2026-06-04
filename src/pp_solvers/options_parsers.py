@@ -1,7 +1,7 @@
 """This module defines the machinery to parse the configuration of the PETSc linear
 solver and build the corresponding PETSc KSP and PC objects."""
 
-from warnings import warn
+import logging
 
 import numpy as np
 from petsc4py import PETSc
@@ -19,6 +19,8 @@ from pp_solvers.petsc_utils import (
     insert_petsc_options,
 )
 from pp_solvers.preconditioners import PetscKspPcConfiguration
+
+logger = logging.getLogger(__name__)
 
 
 def initialize_petsc_ksp(
@@ -50,7 +52,7 @@ def initialize_petsc_ksp(
     insert_petsc_options(all_options_dict)
 
     petsc_ksp = PETSc.KSP().create()
-    petsc_ksp.setFromOptions()
+
     petsc_ksp.setOperators(petsc_mat)
     assemble_petsc_ksp_pc(
         ksp=petsc_ksp,
@@ -229,6 +231,7 @@ def _assemble_pc_python_permutation(
     python_context = PcPythonPermutation(
         perm=perm, block_size=len(permutation_groups), prefix=prefix
     )
+    python_context.setOptionsPrefix(prefix)
     python_context.setFromOptions(pc=pc)
 
     # YZ: Nested initialization of python_context.petsc_pc can be here. However, we
@@ -306,10 +309,12 @@ def assemble_petsc_ksp_pc(
         # characters. If the prefix is too long, we raise a warning.
         msg = "The prefix for the PETSc preconditioner is too long. "
         msg += "Check the configuration of the preconditioner."
-        warn(msg)
+        logger.warning(msg)
 
     # This is where the ksp and pc objects fetch options in PETSc command-line format.
+    ksp.setOptionsPrefix(prefix)
     ksp.setFromOptions()
+    pc.setOptionsPrefix(prefix)
     pc.setFromOptions()
 
     current_config: dict = assembly_config.get(prefix, {})
@@ -318,7 +323,9 @@ def assemble_petsc_ksp_pc(
     # The command-line options for a matrix include mat_block_size (integer) and
     # mat_type including "aij" or "baij", corresponding to csr and bsr sparse formats,
     # respectively. Matrices share the prefix of the ksp and the pc.
+    petsc_amat.setOptionsPrefix(prefix)
     petsc_amat.setFromOptions()
+    petsc_pmat.setOptionsPrefix(prefix)
     petsc_pmat.setFromOptions()
 
     config_type: str = current_config.get("config_type", "default")

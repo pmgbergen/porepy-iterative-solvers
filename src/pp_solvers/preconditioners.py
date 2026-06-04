@@ -9,6 +9,7 @@ This module also defines the default linear solver configurations for PorePy mod
 
 from __future__ import annotations
 
+from collections import defaultdict
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -83,6 +84,17 @@ class PetscInverter(ABC):
 
     def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
         return {}
+
+
+class NoInverter(PetscInverter):
+    # TODO: Unit test!
+    def petsc_options(self, prefix: str, tag: str, complement_tag: str) -> dict:
+        return append_prefix_to_options(
+            prefix=prefix,
+            options={
+                "pc_fieldsplit_schur_precondition": "a11",
+            },
+        )
 
 
 class DiagonalInverter(PetscInverter):
@@ -360,7 +372,7 @@ class GMRES(PetscKspPcConfiguration):
         }
         pc_options = self.preconditioner.petsc_options(
             user_options=user_options,
-            prefix="",
+            prefix="",  # Empty here on purpose, we will insert prefix of the ksp below.
             dof_manager=dof_manager,
         )
 
@@ -406,11 +418,16 @@ class CompositePreconditioner(PetscKspPcConfiguration):
                     "CompositePreconditioner subsolvers must operate on identical"
                     " groups."
                 )
+        validate_subsolvers_keys_are_unique(
+            subsolvers=subsolvers,
+            current_node_repr=f"CompositePreconditioner({key = })",
+        )
+
         super().__init__(groups_of_subsolvers[0], key=key)
         self.subsolvers: list[PetscKspPcConfiguration] = subsolvers
 
     def __repr__(self) -> str:
-        return f"CompositePreconditioner(subsolvers={self.subsolvers})"
+        return f"CompositePreconditioner(key={self.key}, subsolvers={self.subsolvers})"
 
     def petsc_options(
         self, user_options: dict, prefix: str, dof_manager: DofManager
@@ -422,7 +439,7 @@ class CompositePreconditioner(PetscKspPcConfiguration):
         for i, subsolver in enumerate(self.subsolvers):
             result |= subsolver.petsc_options(
                 user_options=user_options,
-                prefix=f"sub_{i}_",
+                prefix=f"sub_{i}_",  # HERE
                 dof_manager=dof_manager,
             )
         return append_prefix_to_options(
@@ -439,7 +456,7 @@ class CompositePreconditioner(PetscKspPcConfiguration):
             },
         }
         for i, subsolver in enumerate(self.subsolvers):
-            subsolver_prefix = f"{prefix}sub_{i}_"
+            subsolver_prefix = f"{prefix}sub_{i}_"  # HERE
             config |= subsolver.petsc_assembly_config(
                 user_options=user_options,
                 prefix=subsolver_prefix,
@@ -472,8 +489,13 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
                 f"Groups in FielSplitAdditive should not overlap:", self.groups
             )
 
+        validate_subsolvers_keys_are_unique(
+            subsolvers=self.subsolvers,
+            current_node_repr=f"FieldSplitAdditive({key = })",
+        )
+
     def __repr__(self) -> str:
-        return f"FieldSplitAdditive(subsolvers={self.subsolvers})"
+        return f"FieldSplitAdditive(key={self.key}, subsolvers={self.subsolvers})"
 
     def petsc_options(
         self, user_options: dict, prefix: str, dof_manager: DofManager
@@ -482,14 +504,14 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
             "pc_type": "fieldsplit",
             "pc_fieldsplit_type": "additive",
         } | {
-            f"fieldsplit_sub_{i}_ksp_type": "preonly"
+            f"fieldsplit_sub_{i}_ksp_type": "preonly"  # HERE
             for i in range(len(self.subsolvers))
         }
         for i, subsolver in enumerate(self.subsolvers):
             options.update(
                 subsolver.petsc_options(
                     user_options=user_options,
-                    prefix=f"fieldsplit_sub_{i}_",
+                    prefix=f"fieldsplit_sub_{i}_",  # HERE
                     dof_manager=dof_manager,
                 )
             )
@@ -514,7 +536,7 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
             result.update(
                 subsolver.petsc_assembly_config(
                     user_options=user_options,
-                    prefix=f"fieldsplit_sub_{i}_",
+                    prefix=f"fieldsplit_sub_{i}_",  # HERE
                     dof_manager=dof_manager,
                 )
             )
@@ -561,7 +583,7 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         key: str = "fieldsplit",
     ) -> None:
         # petsc_tag - internal, for petsc prefix. Must be short, not necessarily unique.
-        if petsc_complement_tag is None:
+        if petsc_complement_tag is None:  # HERE
             if petsc_tag is not None:
                 petsc_complement_tag = f"{petsc_tag}_cpl"
             else:
@@ -583,9 +605,14 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         if len(intersection) > 0:
             raise ValueError(f"Groups in FielSplit should not overlap: {intersection}")
 
+        validate_subsolvers_keys_are_unique(
+            subsolvers=[self.subsolver, self.complement_solver],
+            current_node_repr=f"FieldSplitSchur(key={self.key})",
+        )
+
     def __repr__(self) -> str:
         return (
-            f"FieldSplit(subsolver={self.subsolver}, "
+            f"FieldSplit(key={self.key}, subsolver={self.subsolver}, "
             f"complement_solver={self.complement_solver}, "
             f"approximate_inverter={self.approximate_inverter})"
         )
@@ -599,22 +626,22 @@ class FieldSplitSchur(PetscKspPcConfiguration):
                 "pc_fieldsplit_type": "schur",
                 "pc_fieldsplit_schur_factorization_type": "upper",
                 # default values for the children.
-                f"fieldsplit_{self.petsc_tag}_ksp_type": "preonly",
-                f"fieldsplit_{self.petsc_complement_tag}_ksp_type": "preonly",
+                f"fieldsplit_{self.petsc_tag}_ksp_type": "preonly",  # HERE
+                f"fieldsplit_{self.petsc_complement_tag}_ksp_type": "preonly",  # HERE
             }
             | self.subsolver.petsc_options(
                 user_options=user_options,
-                prefix=f"fieldsplit_{self.petsc_tag}_",
+                prefix=f"fieldsplit_{self.petsc_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
             | self.complement_solver.petsc_options(
                 user_options=user_options,
-                prefix=f"fieldsplit_{self.petsc_complement_tag}_",
+                prefix=f"fieldsplit_{self.petsc_complement_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
             | self.approximate_inverter.petsc_options(
                 prefix="",
-                tag=self.petsc_tag,
+                tag=self.petsc_tag,  # HERE
                 complement_tag=self.petsc_complement_tag,
             )
         )
@@ -644,12 +671,12 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             }
             | self.subsolver.petsc_assembly_config(
                 user_options=user_options,
-                prefix=f"{prefix}fieldsplit_{self.petsc_tag}_",
+                prefix=f"{prefix}fieldsplit_{self.petsc_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
             | self.complement_solver.petsc_assembly_config(
                 user_options=user_options,
-                prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",
+                prefix=f"{prefix}fieldsplit_{self.petsc_complement_tag}_",  # HERE
                 dof_manager=dof_manager,
             )
         )
@@ -683,7 +710,9 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
         self, user_options: dict, prefix: str, dof_manager: DofManager
     ) -> dict:
         options = {"pc_type": "python"} | self.inner_subsolver.petsc_options(
-            user_options=user_options, prefix=f"python_", dof_manager=dof_manager
+            user_options=user_options,
+            prefix=f"python_",
+            dof_manager=dof_manager,  # HERE
         )
         return append_prefix_to_options(
             prefix=prefix, options=options | user_options.get(self.key, {})
@@ -696,7 +725,7 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
     ) -> dict:
         inner_config = self.inner_subsolver.petsc_assembly_config(
             user_options=user_options,
-            prefix=f"{prefix}python_",
+            prefix=f"{prefix}python_",  # HERE
             dof_manager=dof_manager,
         )
         if len(inner_config) > 0:
@@ -774,9 +803,9 @@ def nested_schur_complements(subsolvers: list[dict]) -> FieldSplitSchur:
     }
     if "key" in subsolvers[0]:
         kwargs["key"] = subsolvers[0]["key"]
-    if "petsc_tag" in subsolvers[0]:
+    if "petsc_tag" in subsolvers[0]:  # HERE
         kwargs["petsc_tag"] = subsolvers[0]["petsc_tag"]
-    if "petsc_complement_tag" in subsolvers[0]:
+    if "petsc_complement_tag" in subsolvers[0]:  # HERE
         kwargs["petsc_complement_tag"] = subsolvers[0]["petsc_complement_tag"]
 
     if len(subsolvers) > 2:
@@ -795,6 +824,20 @@ class LinearSolverConfiguration:
     transformations: list[LinearSystemTransformation] = field(
         default_factory=lambda: []
     )
+
+
+def validate_subsolvers_keys_are_unique(
+    subsolvers: list[PetscKspPcConfiguration], current_node_repr: str
+):
+    # TODO: Unit test!
+    count_subsolver_keys = defaultdict(lambda: 0)
+    for subsolver in subsolvers:
+        count_subsolver_keys[subsolver.key] += 1
+    for subsolver_key, count in count_subsolver_keys.items():
+        if count > 1:
+            raise ValueError(
+                f"{current_node_repr} subsolver key is non-unique: {subsolver_key}"
+            )
 
 
 # MARK: Factories
