@@ -40,6 +40,7 @@ from pp_solvers.transformations import (
     ContactLinearTransformation,
     LinearSystemTransformation,
     ScaleSpecificVolume,
+    SchurComplementReduction,
 )
 
 logger = logging.getLogger(__name__)
@@ -836,6 +837,11 @@ class LinearSolverConfiguration:
     transformations: list[LinearSystemTransformation] = field(
         default_factory=lambda: []
     )
+    groups: list[EquationVariableGroup] = field(default_factory=[])
+
+    def __post_init__(self):
+        if len(self.groups) == 0:
+            self.groups = self.solver.groups
 
 
 # MARK: Validation
@@ -1312,12 +1318,12 @@ def thm_tpsa_factory():
                     "subsolver": ILU(groups=interface_groups, key="interface_flow"),
                     "approximate_inverter": DiagonalInverter(),
                 },
-                {
-                    "subsolver": BlockDiagonalPreconditioner(
-                        groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
-                    ),
-                    "approximate_inverter": DiagonalInverter(),
-                },
+                # {
+                #     "subsolver": BlockDiagonalPreconditioner(
+                #         groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
+                #     ),
+                #     "approximate_inverter": DiagonalInverter(),
+                # },
                 {
                     "subsolver": FieldSplit(
                         key="tpsa_fieldsplit",
@@ -1373,7 +1379,9 @@ def thm_tpsa_factory():
     return LinearSolverConfiguration(
         transformations=[
             ContactLinearTransformation(),
+            SchurComplementReduction(primary_groups=solver.groups),
             ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
         ],
         solver=solver,
+        groups=[InterfaceForceBalanceGroup()] + solver.groups,
     )

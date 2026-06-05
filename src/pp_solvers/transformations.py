@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from logging import getLogger
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
@@ -32,23 +32,21 @@ class SchurComplementReduction(LinearSystemTransformation):
     def __init__(
         self,
         primary_groups: list[EquationVariableGroup],
-        secondary_groups: list[EquationVariableGroup],
-        invertor: Optional[Callable] = None,
+        invertor: Optional[Callable[[Any], Any]] = None,
     ):
         if invertor is None:
             invertor = lambda mat: inv_block_diag(mat, nd=1)
-        self.invertor: Callable = invertor
+        self.invertor = invertor
         self.primary_groups: list[EquationVariableGroup] = primary_groups
-        self.secondary_groups: list[EquationVariableGroup] = secondary_groups
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        assert len(dof_manager.groups()) == (
-            len(self.primary_groups) + len(self.secondary_groups)
-        )
+        secondary_groups = [
+            g for g in dof_manager.groups() if g not in self.primary_groups
+        ]
         keep_idx = dof_manager.indices_of_groups(self.primary_groups)
-        elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
+        elim_idx = dof_manager.indices_of_groups(secondary_groups)
         intersection = set(keep_idx).intersection(elim_idx)
         assert len(intersection) == 0
 
@@ -61,7 +59,7 @@ class SchurComplementReduction(LinearSystemTransformation):
         A10 = block_linear_system[keep_idx, elim_idx]
         A11 = block_linear_system[keep_idx, keep_idx]
         A00_inv = self.invertor(A00.mat)
-        A10_mul_A00_inv = A10 @ A00_inv
+        A10_mul_A00_inv = A10.mat @ A00_inv
 
         S11 = A11.empty_container()
         S11.mat = A11.mat - A10_mul_A00_inv @ A01.mat

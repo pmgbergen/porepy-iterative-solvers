@@ -474,6 +474,7 @@ class BlockLinearSystem:
     def _permute_vec_to_original(
         self, vec: np.ndarray, side: Literal["left", "right"]
     ) -> np.ndarray:
+        # TODO: If build_projection introduced in dof_manager, should this be removed?
         """See `permute_left_vector_to_original` and `permute_right_vector_to_original`
         methods.
 
