@@ -298,7 +298,7 @@ def assemble_petsc_ksp_pc(
         "keep_tag": "tag2",  # tag to build the petsc prefix for the kept groups.
     }
     {
-        "config_type": "fieldsplit_additive",
+        "config_type": "fieldsplit_common",
         "subsolver_groups": [
             [0, 1],
             [2, 3],
@@ -363,7 +363,7 @@ def assemble_petsc_ksp_pc(
             indexer=indexer,
             key=key,
         )
-    elif config_type == "fieldsplit_additive":
+    elif config_type == "fieldsplit_common":
         _assemble_pc_fieldsplit_additive(
             ksp=ksp,
             pc=pc,

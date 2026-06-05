@@ -301,7 +301,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit_additive",
+                        "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2], [0], [1]],
                     }
                 },
@@ -323,11 +323,11 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 },
                 "assembly_config": {
                     "": {
-                        "config_type": "fieldsplit_additive",
+                        "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2, 0], [1]],
                     },
                     "fieldsplit_sub_0_": {
-                        "config_type": "fieldsplit_additive",
+                        "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2], [0]],
                     },
                 },

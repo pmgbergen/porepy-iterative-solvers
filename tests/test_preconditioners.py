@@ -24,7 +24,7 @@ from pp_solvers.preconditioners import (
     BlockDiagonalPreconditioner,
     CompositePreconditioner,
     DiagonalInverter,
-    FieldSplitAdditive,
+    FieldSplit,
     FieldSplitSchur,
     FixedStressInverter,
     Identity,
@@ -76,7 +76,7 @@ CONFIGURATIONS_ALL = CONFIGURATIONS_FOR_PETSC + [
         approximate_inverter=DiagonalInverter(),
         key="custom_key",
     ),
-    FieldSplitAdditive(
+    FieldSplit(
         subsolvers=[
             Identity(groups=["g1"]),
             Identity(groups=["g2"]),
@@ -145,7 +145,7 @@ def test_fieldsplit_bad_groups():
         )
 
     with pytest.raises(ValueError):
-        FieldSplitAdditive(
+        FieldSplit(
             subsolvers=[
                 Identity(groups=["g2"]),
                 AMG(groups=["g2"]),
@@ -298,10 +298,10 @@ def test_nested_fieldsplits_schur():
 
 
 def test_nested_additive_fieldsplits():
-    configuration = FieldSplitAdditive(
+    configuration = FieldSplit(
         key="fs1",
         subsolvers=[
-            FieldSplitAdditive(
+            FieldSplit(
                 key="fs2",
                 subsolvers=[
                     Identity(groups=["g1"], key="i1"),
@@ -309,7 +309,7 @@ def test_nested_additive_fieldsplits():
                 ],
             ),
             Identity(groups=["g3"], key="i3"),
-            FieldSplitAdditive(
+            FieldSplit(
                 key="fs3",
                 subsolvers=[
                     Identity(groups=["g4"], key="i4"),
@@ -355,15 +355,15 @@ def test_nested_additive_fieldsplits():
     )
     assert petsc_assembly_config == {
         "": {
-            "config_type": "fieldsplit_additive",
+            "config_type": "fieldsplit_common",
             "subsolver_groups": [[0, 1], [2], [3, 4]],
         },
         "fieldsplit_sub_0_": {
-            "config_type": "fieldsplit_additive",
+            "config_type": "fieldsplit_common",
             "subsolver_groups": [[0], [1]],
         },
         "fieldsplit_sub_2_": {
-            "config_type": "fieldsplit_additive",
+            "config_type": "fieldsplit_common",
             "subsolver_groups": [[3], [4]],
         },
     }
@@ -434,7 +434,7 @@ def test_nested_composites():
 @pytest.mark.parametrize("prefix", ["", "custom_prefix"])
 def test_approximate_inverters_petsc_options(inverter: PetscInverter, prefix: str):
     petsc_options = inverter.petsc_options(
-        prefix=prefix, tag="elim", complement_tag="keep"
+        key=prefix, tag="elim", complement_tag="keep"
     )
     assert isinstance(petsc_options, dict)
     for key in petsc_options.keys():

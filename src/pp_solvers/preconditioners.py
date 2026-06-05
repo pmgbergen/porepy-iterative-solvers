@@ -10,14 +10,16 @@ This module also defines the default linear solver configurations for PorePy mod
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Literal, Optional, Sequence
 
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
+    CustomEquationVariableGroup,
     EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
     InterfaceDarcyFluxGroup,
@@ -40,6 +42,8 @@ from pp_solvers.transformations import (
     ScaleSpecificVolume,
 )
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     # Add all preconditioners and linear solvers here.
     "PetscKspPcConfiguration",
@@ -52,7 +56,7 @@ __all__ = [
     "Identity",
     "GMRES",
     "CompositePreconditioner",
-    "FieldSplitAdditive",
+    "FieldSplit",
     "FieldSplitSchur",
     "PythonPermutationWrapper",
     "BlockDiagonalPreconditioner",
@@ -62,6 +66,7 @@ __all__ = [
     "hm_factory",
     "th_factory",
     "thm_factory",
+    "thm_tpsa_factory",
 ]
 
 
@@ -475,7 +480,7 @@ class CompositePreconditioner(PetscKspPcConfiguration):
         return config
 
 
-class FieldSplitAdditive(PetscKspPcConfiguration):
+class FieldSplit(PetscKspPcConfiguration):
     """A preconditioner that splits the problem into n sub-problems and treats each
     separately with a sub-solver. See:
     https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/
@@ -486,7 +491,19 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
         self,
         subsolvers: Sequence[PetscKspPcConfiguration],
         key: Optional[str] = None,
+        fieldsplit_type: Literal[
+            "additive", "multiplicative", "symmetric_multiplicative"
+        ] = "additive",  # TODO: Unit tests!
     ) -> None:
+        # PETSc accepts more fieldsplit types than this class supports.
+        if fieldsplit_type == "schur":
+            raise ValueError("Use class FieldSplitSchur instead.")
+        if fieldsplit_type == "gkb":
+            logger.warning("FieldSplit type gkb not tested, use on your own risk.")
+        self.fieldsplit_type: Literal[
+            "additive", "multiplicative", "symmetric_multiplicative"
+        ] = fieldsplit_type
+
         if key is None:
             key = f"fs_{subsolvers[0].key}"
         self.subsolvers: list[PetscKspPcConfiguration] = list(subsolvers)
@@ -507,7 +524,10 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
         )
 
     def __repr__(self) -> str:
-        return f"FieldSplitAdditive(key={self.key}, subsolvers={self.subsolvers})"
+        return (
+            f"FieldSplit(fieldsplit_type={self.fieldsplit_type}, key={self.key}, "
+            f"subsolvers={self.subsolvers})"
+        )
 
     def get_children(self) -> list[PetscKspPcConfiguration]:
         return self.subsolvers
@@ -515,7 +535,7 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
     def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         own_options = {
             "pc_type": "fieldsplit",
-            "pc_fieldsplit_type": "additive",
+            "pc_fieldsplit_type": self.fieldsplit_type,
         }
         result = append_prefix_to_options(
             prefix=self.key, options=own_options | user_options.get(self.key, {})
@@ -534,7 +554,7 @@ class FieldSplitAdditive(PetscKspPcConfiguration):
     ) -> dict:
         result = {
             self.key: {
-                "config_type": "fieldsplit_additive",
+                "config_type": "fieldsplit_common",
                 "subsolver_groups": [
                     dof_manager.indices_of_groups(subsolver.groups)
                     for subsolver in self.subsolvers
@@ -1219,7 +1239,112 @@ def thm_factory():
                 {
                     "subsolver": CompositePreconditioner(
                         subsolvers=[
-                            FieldSplitAdditive(
+                            FieldSplit(
+                                subsolvers=[
+                                    Identity(
+                                        groups=energy_balance_groups,
+                                        key="cpr0_energy",
+                                    ),
+                                    AMG(groups=mass_balance_groups, key="cpr0_mass"),
+                                ],
+                            ),
+                            PythonPermutationWrapper(
+                                permutation_groups=[
+                                    energy_balance_groups,
+                                    mass_balance_groups,
+                                ],
+                                inner_subsolver=ILU(
+                                    groups=energy_balance_groups + mass_balance_groups,
+                                    key="cpr1",
+                                ),
+                            ),
+                        ]
+                    )
+                },
+            ]
+        )
+    )
+
+    return LinearSolverConfiguration(
+        transformations=[
+            ContactLinearTransformation(),
+            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+        ],
+        solver=solver,
+    )
+
+
+def thm_tpsa_factory():
+    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    interface_groups: list[EquationVariableGroup] = [
+        InterfaceDarcyFluxGroup(),
+        InterfaceEnthalpyFluxGroup(),
+        InterfaceFourierFluxGroup(),
+        WellFluxGroup(),
+        WellEnthalpyFluxGroup(),
+    ]
+    mass_balance_groups: list[EquationVariableGroup] = [
+        MassBalancePressureMatrixGroup(),
+        MassBalancePressureFracturesGroup(),
+        MassBalancePressureIntersectionsGroup(),
+    ]
+    energy_balance_groups: list[EquationVariableGroup] = [
+        EnergyBalanceTemperatureGroup(),
+    ]
+
+    solid_mass_pressure_group = CustomEquationVariableGroup(
+        "Solid_mass_equation_poromechanics", "total_pressure"
+    )
+    angular_momentum_rotation_group = CustomEquationVariableGroup(
+        "angular_momentum_balance_equation", "rotation_stress"
+    )
+
+    solver = GMRES(
+        preconditioner=nested_schur_complements(
+            [
+                {
+                    "subsolver": BlockDiagonalPreconditioner(
+                        groups=contact_groups, key="contact"
+                    ),
+                    "approximate_inverter": BlockDiagonalInverter(),
+                },
+                {
+                    "subsolver": ILU(groups=interface_groups, key="interface_flow"),
+                    "approximate_inverter": DiagonalInverter(),
+                },
+                {
+                    "subsolver": BlockDiagonalPreconditioner(
+                        groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
+                    ),
+                    "approximate_inverter": DiagonalInverter(),
+                },
+                {
+                    "subsolver": FieldSplit(
+                        key="tpsa_fieldsplit",
+                        fieldsplit_type="multiplicative",
+                        subsolvers=[
+                            AMG(
+                                groups=[solid_mass_pressure_group],
+                                key="solid_mass_pressure_amg",
+                                vector_problem=True,
+                            ),
+                            BlockDiagonalPreconditioner(
+                                groups=[angular_momentum_rotation_group],
+                                key="angular_momentum_rotation",
+                            ),
+                            AMG(
+                                groups=[MechanicsGroup()],
+                                key="mechanics_amg",
+                                vector_problem=True,
+                            ),
+                        ],
+                    ),
+                    "approximate_inverter": FixedStressInverter(),
+                },
+                {
+                    "subsolver": CompositePreconditioner(
+                        subsolvers=[
+                            FieldSplit(
                                 subsolvers=[
                                     Identity(
                                         groups=energy_balance_groups,
