@@ -451,6 +451,7 @@ def test_approximate_inverters_petsc_options(inverter: PetscInverter, prefix: st
     ],
 )
 def test_approximate_inverters_assembly_config(inverter: PetscInverter):
+    # TODO: Test that invertor produces correct Schur complement
     assert inverter.petsc_assembly_config(dof_manager=None) == {}
 
 

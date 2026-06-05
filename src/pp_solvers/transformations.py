@@ -32,21 +32,20 @@ class SchurComplementReduction(LinearSystemTransformation):
     def __init__(
         self,
         primary_groups: list[EquationVariableGroup],
+        secondary_groups: list[EquationVariableGroup],
         invertor: Optional[Callable[[Any], Any]] = None,
     ):
         if invertor is None:
             invertor = lambda mat: inv_block_diag(mat, nd=1)
         self.invertor = invertor
         self.primary_groups: list[EquationVariableGroup] = primary_groups
+        self.secondary_groups: list[EquationVariableGroup] = secondary_groups
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        secondary_groups = [
-            g for g in dof_manager.groups() if g not in self.primary_groups
-        ]
         keep_idx = dof_manager.indices_of_groups(self.primary_groups)
-        elim_idx = dof_manager.indices_of_groups(secondary_groups)
+        elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
         intersection = set(keep_idx).intersection(elim_idx)
         assert len(intersection) == 0
 

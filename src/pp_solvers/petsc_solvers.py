@@ -2,6 +2,8 @@
 and related classes.
 """
 
+from typing import Optional
+
 import numpy as np
 from petsc4py import PETSc
 
@@ -11,19 +13,27 @@ class PetscKrylovSolver:
 
     def __init__(
         self,
-        ksp,
+        ksp: PETSc.KSP,
+        assembly_config: Optional[dict] = None,
+        petsc_options: Optional[dict] = None,
     ) -> None:
         """Initialize the solver with a PETSc KSP object.
 
         Parameters:
             ksp: A PETSc KSP object.
 
-        """
-        self.ksp = ksp
-        petsc_mat = ksp.getOperators()[0]
+        TODO: Revisit docstring
 
-        self.petsc_x = petsc_mat.createVecRight()
-        self.petsc_b = petsc_mat.createVecLeft()
+        """
+        self.ksp: PETSc.KSP = ksp
+        self.assembly_config: Optional[dict] = assembly_config
+        """TODO"""
+        self.petsc_options: Optional[dict] = petsc_options
+        """TODO"""
+
+        petsc_mat = ksp.getOperators()[0]
+        self.petsc_x: PETSc.Vec = petsc_mat.createVecRight()
+        self.petsc_b: PETSc.Vec = petsc_mat.createVecLeft()
         # self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
 

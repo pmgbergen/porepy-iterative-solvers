@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 import logging
-import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Literal, Optional, Sequence
@@ -60,6 +59,7 @@ __all__ = [
     "FieldSplit",
     "FieldSplitSchur",
     "PythonPermutationWrapper",
+    "DiagonalPreconditioner",
     "BlockDiagonalPreconditioner",
     # Add all the factory functions here.
     "mass_balance_factory",
@@ -85,7 +85,9 @@ class PetscInverter(ABC):
     """
 
     @abstractmethod
-    def petsc_options(self, key: str, complement_key: str) -> dict:
+    def petsc_options(
+        self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
+    ) -> dict:
         """Builds the PETSc options for the approximate Schur complement inverter.
 
         Parameters:
@@ -108,7 +110,9 @@ class PetscInverter(ABC):
 
 class NoInverter(PetscInverter):
     # TODO: Unit test!
-    def petsc_options(self, key: str, complement_key: str) -> dict:
+    def petsc_options(
+        self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
+    ) -> dict:
         return append_prefix_to_options(
             prefix=key,
             options={
@@ -118,7 +122,9 @@ class NoInverter(PetscInverter):
 
 
 class DiagonalInverter(PetscInverter):
-    def petsc_options(self, key: str, complement_key: str) -> dict:
+    def petsc_options(
+        self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
+    ) -> dict:
         return append_prefix_to_options(
             prefix=key,
             options={
@@ -128,25 +134,46 @@ class DiagonalInverter(PetscInverter):
 
 
 class BlockDiagonalInverter(PetscInverter):
-    def petsc_options(self, key: str, complement_key: str) -> dict:
+    def petsc_options(
+        self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
+    ) -> dict:
         # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
         # which represents the non-assembled Schur complement matrix. It tells it to use
         # the block-diagonal approximation when the Schur complement needs to be
         # assembled. This option applies not to the full "fieldsplit" context, but the
         # context of the complement, thus using the complement prefix.
-        return append_prefix_to_options(
-            prefix=key,
-            options={"pc_fieldsplit_schur_precondition": "selfp"},
-        ) | append_prefix_to_options(
-            prefix=complement_key,
-            options={"mat_schur_complement_ainv_type": "blockdiag"},
+
+        # TODO: Explain
+        keep_options = {
+            "mat_schur_complement_ainv_type": "blockdiag",
+        }
+        elim_options = {
+            "mat_block_size": dof_manager.model.nd,
+        }
+        return (
+            append_prefix_to_options(
+                prefix=key,
+                options={"pc_fieldsplit_schur_precondition": "selfp"},
+            )
+            | append_prefix_to_options(
+                prefix=complement_key,
+                options=keep_options,
+            )
+            | append_prefix_to_options(
+                prefix=f"{key}_fieldsplit_{complement_key}", options=keep_options
+            )
+            | append_prefix_to_options(
+                prefix=f"{key}_fieldsplit_{elim_key}", options=elim_options
+            )
         )
         # The matrix block size should be provided by the subsolver of the group to
         # eliminate.
 
 
 class FixedStressInverter(PetscInverter):
-    def petsc_options(self, key: str, complement_key: str) -> dict:
+    def petsc_options(
+        self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
+    ) -> dict:
         return append_prefix_to_options(
             prefix=key,
             options={
@@ -396,16 +423,6 @@ class GMRES(PetscKspPcConfiguration):
         ksp_options = append_prefix_to_options(
             prefix=self.key, options=default_options | this_user_options
         )
-
-        # There can be an unfortunate overlap in GMRES and preconditioner options. We
-        # print a warning in this case. The current behavior is that the preconditioner
-        # options are prioritized.
-        intersection_in_options = set(ksp_options).intersection(pc_options)
-        if len(intersection_in_options) > 0:
-            warnings.warn(
-                "Both GMRES and preconditioner override options: "
-                f"{intersection_in_options}. Preconditioner options are prioritized."
-            )
 
         return ksp_options | pc_options
 
@@ -663,7 +680,9 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         )
         result |= self.approximate_inverter.petsc_options(
             key=self.key,
+            elim_key=self.subsolver.key,
             complement_key=self.complement_solver.key,
+            dof_manager=dof_manager,
         )
         result |= append_prefix_to_options(
             prefix=self.key, options=user_options.get(self.key, {})
@@ -761,21 +780,50 @@ class PythonPermutationWrapper(PetscKspPcConfiguration):
         }
 
 
-class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
-    """PETSc point-block jacobi preconditioner. See:
-    https://petsc.org/release/manualpages/PC/PCBJACOBI/
+class DiagonalPreconditioner(PetscKspPcConfiguration):
+    """PETSc Jacobi (diagonal) preconditioner. See:
+    https://petsc.org/release/manualpages/PC/PCJACOBI/
 
     """
 
     def __init__(
-        self, groups: list[EquationVariableGroup], key: str = "block_diagonal"
+        self, groups: list[EquationVariableGroup], key: str = "diagonal"
     ) -> None:
         super().__init__(groups=groups, key=key)
 
     def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         default_options = {
+            "pc_type": "jacobi",
+        }
+        return append_prefix_to_options(
+            prefix=self.key,
+            options=default_options | user_options.get(self.key, {}),
+        )
+
+
+class BlockDiagonalPreconditioner(PetscKspPcConfiguration):
+    """PETSc point-block jacobi preconditioner. See:
+    https://petsc.org/release/manualpages/PC/PCBJACOBI/
+
+    By default, sets ``mat_block_size`` to the model's ambient dimension
+    (``model.nd``, e.g., 2 for 2D or 3 for 3D).
+
+    """
+
+    def __init__(
+        self,
+        groups: list[EquationVariableGroup],
+        key: str = "block_diagonal",
+        block_size: Optional[int] = None,
+    ) -> None:
+        self.block_size: Optional[int] = block_size
+        super().__init__(groups=groups, key=key)
+
+    def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
+        bs = dof_manager.model.nd if self.block_size is None else self.block_size
+        default_options = {
             "pc_type": "pbjacobi",
-            "mat_block_size": dof_manager.model.nd,
+            "mat_block_size": bs,
         }
         return append_prefix_to_options(
             prefix=self.key,
@@ -837,7 +885,7 @@ class LinearSolverConfiguration:
     transformations: list[LinearSystemTransformation] = field(
         default_factory=lambda: []
     )
-    groups: list[EquationVariableGroup] = field(default_factory=[])
+    groups: list[EquationVariableGroup] = field(default_factory=lambda: [])
 
     def __post_init__(self):
         if len(self.groups) == 0:
@@ -1318,12 +1366,12 @@ def thm_tpsa_factory():
                     "subsolver": ILU(groups=interface_groups, key="interface_flow"),
                     "approximate_inverter": DiagonalInverter(),
                 },
-                # {
-                #     "subsolver": BlockDiagonalPreconditioner(
-                #         groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
-                #     ),
-                #     "approximate_inverter": DiagonalInverter(),
-                # },
+                {
+                    "subsolver": DiagonalPreconditioner(
+                        groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
+                    ),
+                    "approximate_inverter": DiagonalInverter(),
+                },
                 {
                     "subsolver": FieldSplit(
                         key="tpsa_fieldsplit",
@@ -1332,9 +1380,9 @@ def thm_tpsa_factory():
                             AMG(
                                 groups=[solid_mass_pressure_group],
                                 key="solid_mass_pressure_amg",
-                                vector_problem=True,
+                                vector_problem=False,
                             ),
-                            BlockDiagonalPreconditioner(
+                            DiagonalPreconditioner(
                                 groups=[angular_momentum_rotation_group],
                                 key="angular_momentum_rotation",
                             ),
@@ -1352,7 +1400,7 @@ def thm_tpsa_factory():
                         subsolvers=[
                             FieldSplit(
                                 subsolvers=[
-                                    Identity(
+                                    DiagonalPreconditioner(
                                         groups=energy_balance_groups,
                                         key="cpr0_energy",
                                     ),
@@ -1366,8 +1414,8 @@ def thm_tpsa_factory():
                                 ],
                                 inner_subsolver=ILU(
                                     groups=energy_balance_groups + mass_balance_groups,
-                                    key="cpr1",
                                 ),
+                                key="cpr1",
                             ),
                         ]
                     )
@@ -1379,9 +1427,9 @@ def thm_tpsa_factory():
     return LinearSolverConfiguration(
         transformations=[
             ContactLinearTransformation(),
-            SchurComplementReduction(primary_groups=solver.groups),
+            # SchurComplementReduction(primary_groups=solver.groups),
             ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
         ],
         solver=solver,
-        groups=[InterfaceForceBalanceGroup()] + solver.groups,
+        groups=solver.groups,
     )
