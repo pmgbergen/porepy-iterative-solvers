@@ -145,6 +145,10 @@ class DiagonalInverter(PetscInverter):
 
 
 class BlockDiagonalInverter(PetscInverter):
+    def __init__(self, block_size: Optional[int] = None) -> None:
+        # TODO: Docstring
+        self.block_size: Optional[int] = block_size
+
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:
@@ -154,12 +158,14 @@ class BlockDiagonalInverter(PetscInverter):
         # assembled. This option applies not to the full "fieldsplit" context, but the
         # context of the complement, thus using the complement prefix.
 
+        bs = dof_manager.model.nd if self.block_size is None else self.block_size
+
         # TODO: Explain
         keep_options = {
             "mat_schur_complement_ainv_type": "blockdiag",
         }
         elim_options = {
-            "mat_block_size": dof_manager.model.nd,
+            "mat_block_size": bs,
         }
         return (
             append_prefix_to_options(

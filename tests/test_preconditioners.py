@@ -479,10 +479,10 @@ def test_python_permutation():
         assert petsc_options[expected_key] == expected_value
 
     assembly_config = configuration.petsc_assembly_config(
-        user_options={}, prefix="custom_prefix_", dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager()
     )
-    assert assembly_config["custom_prefix_"]["config_type"] == "python_permutation"
-    assert assembly_config["custom_prefix_"]["permutation_groups"] == [[0], [1]]
+    assert assembly_config["p1"]["config_type"] == "python_permutation"
+    assert assembly_config["p1"]["permutation_groups"] == [[0], [1]]
 
 
 @pytest.fixture

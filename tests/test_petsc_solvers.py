@@ -7,7 +7,10 @@ from scipy.sparse.linalg import spsolve
 import pp_solvers
 from pp_solvers import BlockLinearSystem
 from pp_solvers.block_linear_system import LinearSystemIndexer
+from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.petsc_solvers import PetscKrylovSolver
+
+from .testing_utils import MockDofManager, generate_reference_block_linear_system
 
 
 @pytest.fixture
@@ -72,3 +75,15 @@ def test_petsc_krylov_solver(
 
     expected = spsolve(sample_linear_system.mat, rhs)
     np.testing.assert_allclose(result, expected, rtol=1e-10, atol=1e-10)
+
+
+def test_python_permutation():
+    A = generate_reference_block_linear_system()
+    dof_manager = MockDofManager()
+
+    initialize_petsc_ksp(
+        block_linear_system=A,
+        dof_manager=dof_manager,
+        petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
+        user_options={},
+    )

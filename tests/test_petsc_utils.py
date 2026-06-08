@@ -5,7 +5,8 @@ from scipy.sparse import csr_matrix
 
 from pp_solvers import petsc_utils
 from pp_solvers.block_linear_system import BlockLinearSystem
-from testing_utils import generate_reference_block_linear_system
+
+from .testing_utils import generate_reference_block_linear_system
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 3])

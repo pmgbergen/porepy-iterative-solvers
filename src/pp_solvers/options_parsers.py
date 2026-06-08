@@ -35,9 +35,6 @@ def initialize_petsc_ksp(
     petsc_matrices: Optional[dict] = None,
 ):
     """TODO: Docstring. Unit test?"""
-
-    # TODO YZ: Check that the user did not misspell a key in options, e.g. cpr0_mass
-
     # We validated that all the solver keys are unique in SolverMixin.
 
     # Construct a PETSc matrix from the scipy matrix.

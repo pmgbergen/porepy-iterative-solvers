@@ -339,7 +339,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in reversed(self._transformations):
             x_loc = transformation.transform_solution(x_loc)
-        # x = self.bmat.permute_right_vector_to_original(x_loc)
 
         _, proj_col = self._dof_manager.build_projection()
         x = np.zeros_like(x_loc)
