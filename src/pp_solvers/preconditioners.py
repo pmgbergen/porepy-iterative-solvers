@@ -70,9 +70,20 @@ __all__ = [
     "thm_tpsa_factory",
 ]
 
+PETSC_OPTIONS_MAX_SYMBOLS = 126
+
 
 def append_prefix_to_options(prefix: str, options: dict):
-    return {f"{prefix}_{key}": value for key, value in options.items()}
+    results = {}
+    for key, value in options.items():
+        new_key = f"{prefix}_{key}"
+        if len(new_key) > PETSC_OPTIONS_MAX_SYMBOLS:
+            raise ValueError(
+                f"PETSc options key {new_key} is larger than "
+                f"{PETSC_OPTIONS_MAX_SYMBOLS} symbols."
+            )
+        results[new_key] = value
+    return results
 
 
 # MARK: Inverters
@@ -235,6 +246,11 @@ class PetscKspPcConfiguration(ABC):
         there can be several instances of "amg".
 
         """
+        if len(key) > PETSC_OPTIONS_MAX_SYMBOLS:
+            raise ValueError(
+                f"Key {key} is used as PETSc prefix and must be smaller than "
+                f"{PETSC_OPTIONS_MAX_SYMBOLS} symbols."
+            )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(groups={self.groups})"
@@ -1329,6 +1345,16 @@ def thm_factory():
 
 
 def thm_tpsa_factory():
+    """
+    Based on https://doi.org/10.1007/s10596-026-10419-4. Differences:
+    - It does not split the elastiticy equation and displacement variables into 3
+    components (in 3D) and does not solve these 3 subproblems separately. Instead, a
+    single AMG instance is applied. Testing on small problems showed no performance
+    difference. The difference may become notable for larger or heavily anisotropic
+    problems.
+    - We do not scale variables in the preconditioner. We rely on PorePy scaling.
+
+    """
     contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
     interface_groups: list[EquationVariableGroup] = [
         InterfaceDarcyFluxGroup(),
@@ -1397,6 +1423,7 @@ def thm_tpsa_factory():
                 },
                 {
                     "subsolver": CompositePreconditioner(
+                        key="mass_energy_cpr",
                         subsolvers=[
                             FieldSplit(
                                 subsolvers=[
@@ -1414,10 +1441,11 @@ def thm_tpsa_factory():
                                 ],
                                 inner_subsolver=ILU(
                                     groups=energy_balance_groups + mass_balance_groups,
+                                    key="cpr1_ilu",
                                 ),
-                                key="cpr1",
+                                key="cpr1_permutation",
                             ),
-                        ]
+                        ],
                     )
                 },
             ]

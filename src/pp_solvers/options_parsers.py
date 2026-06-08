@@ -2,6 +2,7 @@
 solver and build the corresponding PETSc KSP and PC objects."""
 
 import logging
+from typing import Optional
 
 import numpy as np
 from petsc4py import PETSc
@@ -18,7 +19,10 @@ from pp_solvers.petsc_utils import (
     csr_to_petsc,
     insert_petsc_options,
 )
-from pp_solvers.preconditioners import PetscKspPcConfiguration
+from pp_solvers.preconditioners import (
+    PetscKspPcConfiguration,
+    PETSC_OPTIONS_MAX_SYMBOLS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,7 @@ def initialize_petsc_ksp(
     dof_manager: DofManager,
     petsc_ksp_pc_configuration: PetscKspPcConfiguration,
     user_options: dict,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     """TODO: Docstring. Unit test?"""
 
@@ -64,13 +68,13 @@ def initialize_petsc_ksp(
         assembly_config=assembly_config,
         indexer=block_linear_system.indexer,
         key=petsc_ksp_pc_configuration.key,
-        collect_petsc_matrices=collect_petsc_matrices,
+        petsc_matrices=petsc_matrices,
     )
 
     # Ensure that all PETSc CLI options are acknowledged.
     for key in all_options_dict:
         if not petsc_options.used(key):
-            raise ValueError(
+            logger.warning(
                 f"PETSc option {key}: {all_options_dict[key]} is not used. "
                 "Check spelling."
             )
@@ -88,7 +92,7 @@ def _assemble_pc_fieldsplit_additive(
     assembly_config: dict,
     indexer: LinearSystemIndexer,
     key: str,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     assert pc.type == "fieldsplit"
 
@@ -117,7 +121,7 @@ def _assemble_pc_fieldsplit_additive(
             assembly_config=assembly_config,
             indexer=indexer[groups],
             key=subsolver_key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
 
 
@@ -127,7 +131,7 @@ def _assemble_pc_fieldsplit_schur(
     assembly_config: dict,
     indexer: LinearSystemIndexer,
     key: str,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     # calls: pc.setUp, ksp.setUp
     assert pc.type == "fieldsplit"
@@ -184,7 +188,7 @@ def _assemble_pc_fieldsplit_schur(
         assembly_config=assembly_config,
         indexer=indexer[elim_groups],
         key=elim_key,
-        collect_petsc_matrices=collect_petsc_matrices,
+        petsc_matrices=petsc_matrices,
     )
 
     pc_keep = ksp_keep.getPC()
@@ -194,7 +198,7 @@ def _assemble_pc_fieldsplit_schur(
         assembly_config=assembly_config,
         indexer=indexer[keep_groups],
         key=keep_key,
-        collect_petsc_matrices=collect_petsc_matrices,
+        petsc_matrices=petsc_matrices,
     )
 
 
@@ -204,7 +208,7 @@ def _assemble_pc_composite(
     assembly_config: dict,
     indexer: LinearSystemIndexer,
     key: str,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     assert pc.type == "composite"
     stage_keys = assembly_config[key]["subsolver_keys"]
@@ -232,7 +236,7 @@ def _assemble_pc_composite(
             assembly_config=assembly_config,
             indexer=indexer,
             key=stage_key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
 
     try:
@@ -249,7 +253,7 @@ def _assemble_pc_python_permutation(
     assembly_config: dict,
     indexer: LinearSystemIndexer,
     key: str,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     config = assembly_config[key]
     permutation_groups: list[list[int]] = config["permutation_groups"]
@@ -293,7 +297,7 @@ def assemble_petsc_ksp_pc(
     assembly_config: dict,
     indexer: LinearSystemIndexer,
     key: str,
-    collect_petsc_matrices: bool = False,
+    petsc_matrices: Optional[dict] = None,
 ):
     """This is a recursive parser that initializes the PETSc KSP and PC objects based on
     the provided assembly config. The assembly config contains sub-dictionaries, each
@@ -337,7 +341,7 @@ def assemble_petsc_ksp_pc(
 
     """
     prefix = f"{key}_"
-    if len(prefix) > 126:
+    if len(prefix) > PETSC_OPTIONS_MAX_SYMBOLS:
         # PETSc has a limit on the prefix length, which seems to be 127
         # characters. If the prefix is too long, we raise a warning.
         msg = "The prefix for the PETSc preconditioner is too long. "
@@ -351,8 +355,6 @@ def assemble_petsc_ksp_pc(
     pc.setFromOptions()
 
     # TODO: Explain
-    if collect_petsc_matrices and key not in assembly_config:
-        assembly_config[key] = {}
     current_config: dict = assembly_config.get(key, {})
 
     petsc_amat, petsc_pmat = ksp.getOperators()
@@ -376,9 +378,11 @@ def assemble_petsc_ksp_pc(
     )
 
     # TODO: Explain
-    if collect_petsc_matrices:
-        current_config["petsc_pmat"] = pc_petsc_pmat
-        current_config["petsc_amat"] = pc_petsc_amat
+    if petsc_matrices is not None:
+        petsc_matrices[key] = {
+            "petsc_pmat": pc_petsc_pmat,
+            "petsc_amat": pc_petsc_amat,
+        }
 
     config_type: str = current_config.get("config_type", "default")
 
@@ -389,7 +393,7 @@ def assemble_petsc_ksp_pc(
             assembly_config=assembly_config,
             indexer=indexer,
             key=key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
     elif config_type == "fieldsplit_common":
         _assemble_pc_fieldsplit_additive(
@@ -398,7 +402,7 @@ def assemble_petsc_ksp_pc(
             assembly_config=assembly_config,
             indexer=indexer,
             key=key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
     elif config_type == "composite":
         _assemble_pc_composite(
@@ -407,7 +411,7 @@ def assemble_petsc_ksp_pc(
             assembly_config=assembly_config,
             indexer=indexer,
             key=key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
     elif config_type == "python_permutation":
         _assemble_pc_python_permutation(
@@ -416,7 +420,7 @@ def assemble_petsc_ksp_pc(
             assembly_config=assembly_config,
             indexer=indexer,
             key=key,
-            collect_petsc_matrices=collect_petsc_matrices,
+            petsc_matrices=petsc_matrices,
         )
     else:
         # Anything else does not need a special initialization from python.
