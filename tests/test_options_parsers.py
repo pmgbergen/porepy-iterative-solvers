@@ -3,10 +3,20 @@ PETSc options and configuration dictionaries.
 
 """
 
+from typing import Optional
+
 import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
+from pp_solvers.mat_utils import inv_block_diag
+from pp_solvers.preconditioners import (
+    BlockDiagonalInverter,
+    BlockDiagonalPreconditioner,
+    FieldSplitSchur,
+    Identity,
+)
+from pp_solvers.transformations import SchurComplementReduction
 from testing_utils import (
     generate_reference_block_linear_system,
     generate_reference_dofs_3_groups,
@@ -14,12 +24,14 @@ from testing_utils import (
 
 # integration tests for all the default factories (not here, in preconditioners?)
 from pp_solvers.block_linear_system import BlockLinearSystem
-from pp_solvers.options_parsers import assemble_petsc_ksp_pc
+from pp_solvers.options_parsers import assemble_petsc_ksp_pc, initialize_petsc_ksp
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     csr_to_petsc,
     insert_petsc_options,
+    petsc_to_csr,
 )
+from tmp1 import MockDofManager
 
 
 @pytest.fixture
@@ -378,3 +390,73 @@ def test_assemble_petsc_ksp_pc(
 
     # Positive reason means PETSc treats it as success.
     assert ksp.getConvergedReason() > 0
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        # Block size deduced from model.nd = 3. G1 has 3 rows, so it inverts exactly.
+        {
+            "block_size": None,
+            "groups_elim": ["g1"],
+            "groups_keep": ["g2", "g3"],
+        },
+        # Custom block size.
+        {
+            "block_size": 1,
+            "groups_elim": ["g1"],
+            "groups_keep": ["g2", "g3"],
+        },
+        # Different groups. G2 and g3 have 6 rows, so it inverts approximately.
+        {
+            "block_size": 2,
+            "groups_elim": ["g2", "g3"],
+            "groups_keep": ["g1"],
+        },
+    ],
+)
+def test_block_diagonal_invertor(params: dict):
+    block_size: Optional[int] = params["block_size"]
+    groups_elim: list[str] = params["groups_elim"]
+    groups_keep: list[str] = params["groups_keep"]
+
+    # The block matrix consists of 3 groups: g1, g2, g3.
+    A = generate_reference_block_linear_system()[:3]
+    dof_manager = MockDofManager()
+    assert dof_manager.model.nd == 3, "The test assumes a 3D model."
+
+    # Our petsc configuration is a field split with a block-diagonal invertor.
+    schur_complement_key = "keep"
+    petsc_ksp_pc_configuration = FieldSplitSchur(
+        subsolver=Identity(groups=groups_elim, key="elim"),
+        complement_solver=Identity(groups=groups_keep, key=schur_complement_key),
+        approximate_inverter=BlockDiagonalInverter(block_size=block_size),
+    )
+
+    # The petsc matrices will be saved here.
+    petsc_matrices = {}
+    # Initializing the solver and saving petsc matrices.
+    _ = initialize_petsc_ksp(
+        block_linear_system=A,
+        dof_manager=dof_manager,
+        petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
+        user_options={"delete_matrices": False},
+        petsc_matrices=petsc_matrices,
+    )
+
+    # Doing the same procedure from Python to get the expected result.
+    bs = dof_manager.model.nd if block_size is None else block_size
+    reduction = SchurComplementReduction(
+        primary_groups=groups_keep,
+        secondary_groups=groups_elim,
+        invertor=lambda mat: inv_block_diag(mat, nd=bs),
+    )
+    S = reduction.transform_matrix_rhs(A, dof_manager)
+
+    expected_mat = S.mat
+    # PETSc stores two matrices - one for ksp (amat) and one for pc (pmat). Only pmat is
+    # assembled with the block diagonal approximation applied.
+    result_pmat = petsc_to_csr(petsc_matrices[schur_complement_key]["petsc_pmat"])
+    np.testing.assert_allclose((expected_mat - result_pmat).data, 0, atol=1e-15)
+    # Amat is not assembled.
+    assert petsc_matrices[schur_complement_key]["petsc_amat"].type == "schurcomplement"
