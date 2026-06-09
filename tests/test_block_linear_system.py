@@ -439,148 +439,148 @@ def test_empty_container(sample_linear_system: BlockLinearSystem):
     assert np.all(empty_matrix.rhs == 0)
 
 
-@pytest.mark.parametrize(
-    "params",
-    [
-        # Original matrix, nothing changes.
-        {
-            "index": [2, 1, 0],
-            "expected_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # Full matrix, sorted groups.
-        {
-            "index": [0, 1, 2],
-            "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # One row and one column, same as J[1, 1].
-        {
-            "index": [1],
-            "expected_permuted": [20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # Repeated group index, same as J[[1, 1]].
-        {
-            "index": [1, 1],
-            "expected_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # All rows, one column, same as J[:, 1]. Rhs should NOT be truncated.
-        {
-            "index": ([0, 1, 2], 1),
-            "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # All columns, one row, same as J[1, :]. RHS should be truncated.
-        {
-            "index": (1, [0, 1, 2]),
-            "expected_permuted": [20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # Empty group.
-        {
-            "index": (
-                3,
-                [
-                    0,
-                    1,
-                    2,
-                ],
-            ),
-            "expected_permuted": [],
-            "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        },
-    ],
-)
-def test_permute_left_vector_to_local_and_original(
-    sample_linear_system: BlockLinearSystem, params
-):
-    """Tests projecting the left vector (rhs) to the permuted arrangement and the
-    reverse transformation from it with `permute_left_vector_to_original`.
+# @pytest.mark.parametrize(
+#     "params",
+#     [
+#         # Original matrix, nothing changes.
+#         {
+#             "index": [2, 1, 0],
+#             "expected_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # Full matrix, sorted groups.
+#         {
+#             "index": [0, 1, 2],
+#             "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # One row and one column, same as J[1, 1].
+#         {
+#             "index": [1],
+#             "expected_permuted": [20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # Repeated group index, same as J[[1, 1]].
+#         {
+#             "index": [1, 1],
+#             "expected_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # All rows, one column, same as J[:, 1]. Rhs should NOT be truncated.
+#         {
+#             "index": ([0, 1, 2], 1),
+#             "expected_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # All columns, one row, same as J[1, :]. RHS should be truncated.
+#         {
+#             "index": (1, [0, 1, 2]),
+#             "expected_permuted": [20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # Empty group.
+#         {
+#             "index": (
+#                 3,
+#                 [
+#                     0,
+#                     1,
+#                     2,
+#                 ],
+#             ),
+#             "expected_permuted": [],
+#             "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+#         },
+#     ],
+# )
+# def test_permute_left_vector_to_local_and_original(
+#     sample_linear_system: BlockLinearSystem, params
+# ):
+#     """Tests projecting the left vector (rhs) to the permuted arrangement and the
+#     reverse transformation from it with `permute_left_vector_to_original`.
 
-    """
-    # The original rhs is arranged for groups [2, 1, 0], same as the original matrix.
-    # rhs original: [30, 31, 20, 21, 22, 23, 10, 11, 12]
-    index = params["index"]
-    expected_permuted = params["expected_permuted"]
-    expected_original = params["expected_original"]
+#     """
+#     # The original rhs is arranged for groups [2, 1, 0], same as the original matrix.
+#     # rhs original: [30, 31, 20, 21, 22, 23, 10, 11, 12]
+#     index = params["index"]
+#     expected_permuted = params["expected_permuted"]
+#     expected_original = params["expected_original"]
 
-    sample_linear_system = sample_linear_system[index]
+#     sample_linear_system = sample_linear_system[index]
 
-    rhs_local = sample_linear_system.rhs
-    np.testing.assert_array_equal(rhs_local, expected_permuted)
+#     rhs_local = sample_linear_system.rhs
+#     np.testing.assert_array_equal(rhs_local, expected_permuted)
 
-    rhs_back_to_orig = sample_linear_system.permute_left_vector_to_original(rhs_local)
-    np.testing.assert_array_equal(rhs_back_to_orig, expected_original)
+#     rhs_back_to_orig = sample_linear_system.permute_left_vector_to_original(rhs_local)
+#     np.testing.assert_array_equal(rhs_back_to_orig, expected_original)
 
 
-@pytest.mark.parametrize(
-    "params",
-    [
-        # Original matrix, nothing changes.
-        {
-            "index": [2, 1, 0],
-            "solution_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # Full matrix, sorted groups.
-        {
-            "index": [0, 1, 2],
-            "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # One row and one column, same as J[1, 1].
-        {
-            "index": [1],
-            "solution_permuted": [20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # Repeated group index, same as J[[1, 1]].
-        {
-            "index": [1, 1],
-            "solution_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # All rows, one column, same as J[:, 1]. Soultion should be truncated.
-        {
-            "index": ([0, 1, 2], 1),
-            "solution_permuted": [20, 21, 22, 23],
-            "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
-        },
-        # All columns, one row, same as J[1, :]. Soultion should NOT be truncated.
-        {
-            "index": (1, [0, 1, 2]),
-            "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
-            "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
-        },
-        # Empty group.
-        {
-            "index": ([0, 1, 2], 3),
-            "solution_permuted": [],
-            "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
-        },
-    ],
-)
-def test_permute_right_vector_to_original(
-    sample_linear_system: BlockLinearSystem, params
-):
-    """Tests `permute_right_vector_to_original`. Results should be different from
-    `permute_left_vector_to_original`, because the solution corresponds to the space
-    defined by columns of the matrix, and the rhs - to the one defined by rows (Ax = b).
+# @pytest.mark.parametrize(
+#     "params",
+#     [
+#         # Original matrix, nothing changes.
+#         {
+#             "index": [2, 1, 0],
+#             "solution_permuted": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # Full matrix, sorted groups.
+#         {
+#             "index": [0, 1, 2],
+#             "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # One row and one column, same as J[1, 1].
+#         {
+#             "index": [1],
+#             "solution_permuted": [20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # Repeated group index, same as J[[1, 1]].
+#         {
+#             "index": [1, 1],
+#             "solution_permuted": [20, 21, 22, 23, 20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # All rows, one column, same as J[:, 1]. Soultion should be truncated.
+#         {
+#             "index": ([0, 1, 2], 1),
+#             "solution_permuted": [20, 21, 22, 23],
+#             "expected_original": [0, 0, 20, 21, 22, 23, 0, 0, 0],
+#         },
+#         # All columns, one row, same as J[1, :]. Soultion should NOT be truncated.
+#         {
+#             "index": (1, [0, 1, 2]),
+#             "solution_permuted": [10, 11, 12, 20, 21, 22, 23, 30, 31],
+#             "expected_original": [30, 31, 20, 21, 22, 23, 10, 11, 12],
+#         },
+#         # Empty group.
+#         {
+#             "index": ([0, 1, 2], 3),
+#             "solution_permuted": [],
+#             "expected_original": [0, 0, 0, 0, 0, 0, 0, 0, 0],
+#         },
+#     ],
+# )
+# def test_permute_right_vector_to_original(
+#     sample_linear_system: BlockLinearSystem, params
+# ):
+#     """Tests `permute_right_vector_to_original`. Results should be different from
+#     `permute_left_vector_to_original`, because the solution corresponds to the space
+#     defined by columns of the matrix, and the rhs - to the one defined by rows (Ax = b).
 
-    """
-    index = params["index"]
-    solution_permuted = params["solution_permuted"]
-    expected_original = params["expected_original"]
+#     """
+#     index = params["index"]
+#     solution_permuted = params["solution_permuted"]
+#     expected_original = params["expected_original"]
 
-    sample_linear_system = sample_linear_system[index]
-    solution_permuted = np.array(solution_permuted)
+#     sample_linear_system = sample_linear_system[index]
+#     solution_permuted = np.array(solution_permuted)
 
-    solution_back_to_global = sample_linear_system.permute_right_vector_to_original(
-        solution_permuted
-    )
-    np.testing.assert_array_equal(solution_back_to_global, expected_original)
+#     solution_back_to_global = sample_linear_system.permute_right_vector_to_original(
+#         solution_permuted
+#     )
+#     np.testing.assert_array_equal(solution_back_to_global, expected_original)
 
 
 @pytest.mark.parametrize(

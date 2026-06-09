@@ -63,7 +63,7 @@ class PetscKrylovSolver:
         return self.ksp.getConvergenceHistory()
 
 
-class PcPyцthonPermutation:
+class PcPythonPermutation:
     def __init__(self, perm: np.ndarray, block_size: int, inner_key: str):
         # TODO: Test that petsc matrix is actually permuted
         self.petsc_pc = PETSc.PC().create()

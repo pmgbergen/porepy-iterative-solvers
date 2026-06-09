@@ -3,8 +3,9 @@ from logging import getLogger
 from typing import Any, Callable, Optional
 
 import numpy as np
+from scipy.sparse import csr_matrix
 
-from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.block_linear_system import BlockLinearSystem, concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
@@ -28,6 +29,27 @@ class LinearSystemTransformation(ABC):
         pass
 
 
+class PorePyArrangementTransformation(LinearSystemTransformation):
+    def __init__(self) -> None:
+        self.projection_columns: Optional[np.ndarray] = None
+
+    def transform_matrix_rhs(
+        self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
+    ) -> BlockLinearSystem:
+        if self.projection_columns is None:
+            self.projection_columns = concatenate_dof_indices(dof_manager.var_dofs())
+        # By calling [:], rearrange the blocks (and thereby the underlying matrix) to
+        # match the ordering defined by the `dof_manager`.
+        return block_linear_system[:]
+
+    def transform_solution(self, sol: np.ndarray) -> np.ndarray:
+        if self.projection_columns is None:
+            raise ValueError("Must call transform_matrix_rhs first.")
+        result = np.zeros_like(sol)
+        result[self.projection_columns] = sol
+        return result
+
+
 class SchurComplementReduction(LinearSystemTransformation):
     def __init__(
         self,
@@ -40,6 +62,10 @@ class SchurComplementReduction(LinearSystemTransformation):
         self.invertor = invertor
         self.primary_groups: list[EquationVariableGroup] = primary_groups
         self.secondary_groups: list[EquationVariableGroup] = secondary_groups
+        self.primary_dofs: Optional[np.ndarray] = None
+        self.secondary_dofs: Optional[np.ndarray] = None
+        self.A01: Optional[BlockLinearSystem] = None
+        self.A00_inv: Optional[csr_matrix] = None
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
@@ -48,6 +74,13 @@ class SchurComplementReduction(LinearSystemTransformation):
         elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
         intersection = set(keep_idx).intersection(elim_idx)
         assert len(intersection) == 0
+
+        if self.primary_dofs is None or self.secondary_dofs is None:
+            eq_dofs = dof_manager.eq_dofs()
+            self.primary_dofs = concatenate_dof_indices([eq_dofs[i] for i in keep_idx])
+            self.secondary_dofs = concatenate_dof_indices(
+                [eq_dofs[i] for i in elim_idx]
+            )
 
         # 0 - elim, 1 - keep
         # A00 A11
@@ -72,15 +105,31 @@ class SchurComplementReduction(LinearSystemTransformation):
         return S11
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
+        if (
+            self.primary_dofs is None
+            or self.secondary_dofs is None
+            or self.A01 is None
+            or self.A00_inv is None
+        ):
+            raise ValueError("Must call transform_matrix_rhs first.")
+
         # x0 = solve_A00(b0 - A01 @ x1)      # second cheap A00 solve
         A01 = self.A01
         A00_inv = self.A00_inv
-
         x0 = A00_inv @ (A01.rhs - A01.mat @ sol)
-        return np.concatenate([x0, sol])
+
+        result = np.zeros(
+            len(self.primary_dofs) + len(self.secondary_dofs), dtype=sol.dtype
+        )
+        result[self.primary_dofs] = sol
+        result[self.secondary_dofs] = x0
+        return result
 
 
 class ContactLinearTransformation(LinearSystemTransformation):
+    def __init__(self) -> None:
+        self.transformation_matrix: Optional[csr_matrix] = None
+
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
@@ -151,6 +200,10 @@ class ContactLinearTransformation(LinearSystemTransformation):
         return block_linear_system
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
+        if self.transformation_matrix is None:
+            # Transformation matrix may be not set if transform_matrix_rhs return early
+            # due to no transformation.
+            return sol
         return self.transformation_matrix @ sol
 
 

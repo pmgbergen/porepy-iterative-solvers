@@ -3,10 +3,13 @@ combinations of configuration classes, defined in `preconditioners.py`.
 
 """
 
+from typing import Optional
+
 import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
+from pp_solvers import dof_manager
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from testing_utils import MockDofManager, generate_reference_block_linear_system
 
@@ -55,14 +58,11 @@ CONFIGURATIONS_FOR_PETSC = [
     AMG(groups=["g1"], key="custom_key"),
     Identity(groups=["g1"], key="custom_key"),
     BlockDiagonalPreconditioner(groups=["g1"], key="custom_key"),
-    GMRES(
-        preconditioner=Identity(groups=["g1"]),
-        key="custom_key",
-    ),
+    GMRES(preconditioner=Identity(groups=["g1"]), key="custom_key"),
     CompositePreconditioner(
         subsolvers=[
-            Identity(groups=["g1", "g2"]),
-            Identity(groups=["g1", "g2"]),
+            Identity(groups=["g1", "g2"], key="identity_0"),
+            Identity(groups=["g1", "g2"], key="identity_1"),
         ],
         key="custom_key",
     ),
@@ -71,16 +71,16 @@ CONFIGURATIONS_FOR_PETSC = [
 
 CONFIGURATIONS_ALL = CONFIGURATIONS_FOR_PETSC + [
     FieldSplitSchur(
-        subsolver=Identity(groups=["g1"]),
-        complement_solver=Identity(groups=["g2"]),
+        subsolver=Identity(groups=["g1"], key="identity_g1"),
+        complement_solver=Identity(groups=["g2"], key="identity_g2"),
         approximate_inverter=DiagonalInverter(),
         key="custom_key",
     ),
     FieldSplit(
         subsolvers=[
-            Identity(groups=["g1"]),
-            Identity(groups=["g2"]),
-            Identity(groups=["g3"]),
+            Identity(groups=["g1"], key="identity_g1"),
+            Identity(groups=["g2"], key="identity_g2"),
+            Identity(groups=["g3"], key="identity_g3"),
         ],
         key="custom_key",
     ),
@@ -99,7 +99,7 @@ def test_default_petsc_options(configuration: PetscKspPcConfiguration, ksp: PETS
     options."""
     clear_petsc_options()
     petsc_options = configuration.petsc_options(
-        user_options={}, prefix="", dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager()
     )
     assert isinstance(petsc_options, dict)
     insert_petsc_options(petsc_options)
@@ -109,11 +109,13 @@ def test_default_petsc_options(configuration: PetscKspPcConfiguration, ksp: PETS
     ksp.setUp()
 
     # It should either set up a ksp or a pc.
-    assert "ksp_type" in petsc_options or "pc_type" in petsc_options
+    assert (
+        "custom_key_ksp_type" in petsc_options or "custom_key_pc_type" in petsc_options
+    )
     if "ksp_type" in petsc_options:
-        assert ksp.type == petsc_options["ksp_type"]
+        assert ksp.type == petsc_options["custom_key_ksp_type"]
     if "pc_type" in petsc_options:
-        assert ksp.getPC().type == petsc_options["pc_type"]
+        assert ksp.getPC().type == petsc_options["custom_key_pc_type"]
 
 
 @pytest.mark.parametrize(
@@ -125,12 +127,12 @@ def test_configurations_sanity_checks(configuration: PetscKspPcConfiguration):
     assert configuration.key == "custom_key"
     # 2. petsc_options should return something and it should be a dict.
     petsc_options = configuration.petsc_options(
-        user_options={}, prefix="", dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager()
     )
     assert isinstance(petsc_options, dict)
     # 3. petsc_assembly_config should return something and it should be a dict.
     config = configuration.petsc_assembly_config(
-        user_options={}, prefix="", dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager()
     )
     assert isinstance(config, dict)
 
@@ -147,9 +149,9 @@ def test_fieldsplit_bad_groups():
     with pytest.raises(ValueError):
         FieldSplit(
             subsolvers=[
-                Identity(groups=["g2"]),
-                AMG(groups=["g2"]),
-                Identity(groups=["g3"]),
+                Identity(groups=["g2"], key="identity_g2"),
+                AMG(groups=["g2"], key="amg_g2"),
+                Identity(groups=["g3"], key="identity_g3"),
             ],
         )
 
@@ -159,60 +161,55 @@ def test_composite_bad_groups():
     with pytest.raises(ValueError):
         CompositePreconditioner(
             subsolvers=[
-                Identity(groups=["g2"]),
-                Identity(groups=["g1"]),
+                Identity(groups=["g2"], key="identity_0"),
+                Identity(groups=["g1"], key="identity_1"),
             ]
         )
     # Order matters.
     with pytest.raises(ValueError):
         CompositePreconditioner(
             subsolvers=[
-                Identity(groups=["g2", "g1"]),
-                Identity(groups=["g1", "g2"]),
+                Identity(groups=["g2", "g1"], key="identity_0"),
+                Identity(groups=["g1", "g2"], key="identity_1"),
             ]
         )
 
 
-@pytest.mark.filterwarnings("ignore:Both GMRES and preconditioner override options")
 @pytest.mark.parametrize(
     "configuration",
     CONFIGURATIONS_ALL,
 )
-@pytest.mark.parametrize("prefix", ["", "custom_prefix_"])
-def test_user_options_and_prefix(configuration: PetscKspPcConfiguration, prefix: str):
+def test_user_options_and_prefix(configuration: PetscKspPcConfiguration):
     user_options = {
         "custom_key": {"ksp_type": "cg", "pc_type": "sor"},
         "this_key_should_be_ignored": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix=prefix, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     # User options should override defaults.
-    if not isinstance(configuration, GMRES):
-        assert petsc_options[f"{prefix}ksp_type"] == "cg"
-        assert petsc_options[f"{prefix}pc_type"] == "sor"
-    else:
-        # This is the known edge case (preconditioner overrides gmres settings.)
-        assert petsc_options[f"{prefix}ksp_type"] == "cg"
-        assert petsc_options[f"{prefix}pc_type"] == "none"
+    assert petsc_options[f"custom_key_ksp_type"] == "cg"
+    assert petsc_options[f"custom_key_pc_type"] == "sor"
 
 
-@pytest.mark.filterwarnings("ignore:Both GMRES and preconditioner override options")
-def test_gmres_and_preconditioner_override_user_params():
+def test_gmres_override_preconditioner_key():
     configuration = GMRES(
-        preconditioner=Identity(groups=["g1"], key="preconditioner"),
         key="gmres",
+        preconditioner=Identity(groups=["g1"], key="preconditioner"),
     )
     user_options = {
         "gmres": {"ksp_type": "cg", "pc_type": "sor"},
         "preconditioner": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
-    # Preconditioner options are prioritized.
-    assert petsc_options["ksp_type"] == "bcgs"
-    assert petsc_options["pc_type"] == "ilu"
+    # The "preconditioner" key is ignored, read the GMRES class comment.
+    assert petsc_options["gmres_ksp_type"] == "cg"
+    assert petsc_options["gmres_pc_type"] == "sor"
+    # All keys have "gmres" prefix.
+    for key in petsc_options:
+        assert key.startswith("gmres_")
 
 
 def test_nested_fieldsplits_schur():
@@ -222,8 +219,6 @@ def test_nested_fieldsplits_schur():
             complement_solver=complement,
             approximate_inverter=DiagonalInverter(),
             key=key,
-            petsc_tag="elim",
-            petsc_complement_tag="keep",
         )
 
     configuration = make_fieldsplit(
@@ -254,43 +249,43 @@ def test_nested_fieldsplits_schur():
         "i4": {"test_option": "i4"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
-        "test_option": "fs1",
-        "fieldsplit_elim_test_option": "fs2",
-        "fieldsplit_elim_fieldsplit_elim_test_option": "i1",
-        "fieldsplit_elim_fieldsplit_keep_test_option": "i2",
-        "fieldsplit_keep_test_option": "fs3",
-        "fieldsplit_keep_fieldsplit_elim_test_option": "i3",
-        "fieldsplit_keep_fieldsplit_keep_test_option": "i4",
+        "fs1_test_option": "fs1",
+        "fs2_test_option": "fs2",
+        "fs3_test_option": "fs3",
+        "i1_test_option": "i1",
+        "i2_test_option": "i2",
+        "i3_test_option": "i3",
+        "i4_test_option": "i4",
     }.items():
         assert petsc_options[expected_key] == expected_value
 
     # Nested fieldsplits should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     assert petsc_assembly_config == {
-        "": {
+        "fs1": {
             "config_type": "fieldsplit_schur",
-            "elim_tag": "elim",
-            "keep_tag": "keep",
+            "elim_key": "fs2",
+            "keep_key": "fs3",
             "elim_groups": [0, 1],
             "keep_groups": [2, 3, 4],
         },
-        "fieldsplit_elim_": {
+        "fs2": {
             "config_type": "fieldsplit_schur",
-            "elim_tag": "elim",
-            "keep_tag": "keep",
+            "elim_key": "i1",
+            "keep_key": "i2",
             "elim_groups": [0],
             "keep_groups": [1],
         },
-        "fieldsplit_keep_": {
+        "fs3": {
             "config_type": "fieldsplit_schur",
-            "elim_tag": "elim",
-            "keep_tag": "keep",
+            "elim_key": "i3",
+            "keep_key": "i4",
             "elim_groups": [2],
             "keep_groups": [3, 4],
         },
@@ -334,37 +329,40 @@ def test_nested_additive_fieldsplits():
         "i5": {"test_option": "i5"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
-        "test_option": "fs1",
-        "fieldsplit_sub_0_test_option": "fs2",
-        "fieldsplit_sub_0_fieldsplit_sub_0_test_option": "i1",
-        "fieldsplit_sub_0_fieldsplit_sub_1_test_option": "i2",
-        "fieldsplit_sub_1_test_option": "i3",
-        "fieldsplit_sub_2_test_option": "fs3",
-        "fieldsplit_sub_2_fieldsplit_sub_0_test_option": "i4",
-        "fieldsplit_sub_2_fieldsplit_sub_1_test_option": "i5",
+        "fs1_test_option": "fs1",
+        "fs2_test_option": "fs2",
+        "fs3_test_option": "fs3",
+        "i1_test_option": "i1",
+        "i2_test_option": "i2",
+        "i3_test_option": "i3",
+        "i4_test_option": "i4",
+        "i5_test_option": "i5",
     }.items():
         assert petsc_options[expected_key] == expected_value
 
     # Nested fieldsplits should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     assert petsc_assembly_config == {
-        "": {
+        "fs1": {
             "config_type": "fieldsplit_common",
             "subsolver_groups": [[0, 1], [2], [3, 4]],
+            "subsolver_keys": ["fs2", "i3", "fs3"],
         },
-        "fieldsplit_sub_0_": {
+        "fs2": {
             "config_type": "fieldsplit_common",
             "subsolver_groups": [[0], [1]],
+            "subsolver_keys": ["i1", "i2"],
         },
-        "fieldsplit_sub_2_": {
+        "fs3": {
             "config_type": "fieldsplit_common",
             "subsolver_groups": [[3], [4]],
+            "subsolver_keys": ["i4", "i5"],
         },
     }
 
@@ -399,31 +397,31 @@ def test_nested_composites():
         "i4": {"test_option": "i4"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
-        "test_option": "c1",
-        "sub_0_test_option": "c2",
-        "sub_0_sub_0_test_option": "i1",
-        "sub_0_sub_1_test_option": "i2",
-        "sub_1_test_option": "i3",
-        "sub_2_test_option": "i4",
+        "c1_test_option": "c1",
+        "c2_test_option": "c2",
+        "i1_test_option": "i1",
+        "i2_test_option": "i2",
+        "i3_test_option": "i3",
+        "i4_test_option": "i4",
     }.items():
         assert petsc_options[expected_key] == expected_value
 
     # Nested composites should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     assert petsc_assembly_config == {
-        "": {
+        "c1": {
             "config_type": "composite",
-            "num_stages": 3,
+            "subsolver_keys": ["c2", "i3", "i4"],
         },
-        "sub_0_": {
+        "c2": {
             "config_type": "composite",
-            "num_stages": 2,
+            "subsolver_keys": ["i1", "i2"],
         },
     }
 
@@ -431,14 +429,14 @@ def test_nested_composites():
 @pytest.mark.parametrize(
     "inverter", [DiagonalInverter(), BlockDiagonalInverter(), FixedStressInverter()]
 )
-@pytest.mark.parametrize("prefix", ["", "custom_prefix"])
-def test_approximate_inverters_petsc_options(inverter: PetscInverter, prefix: str):
+@pytest.mark.parametrize("key", ["key1", "key2"])
+def test_approximate_inverters_petsc_options(inverter: PetscInverter, key: str):
     petsc_options = inverter.petsc_options(
-        key=prefix, tag="elim", complement_tag="keep"
+        key=key, elim_key="elim", complement_key="keep", dof_manager=MockDofManager()
     )
     assert isinstance(petsc_options, dict)
     for key in petsc_options.keys():
-        assert key.startswith(prefix)
+        assert key.startswith(key)
 
 
 @pytest.mark.parametrize(
@@ -470,19 +468,24 @@ def test_python_permutation():
         "p1": {"custom_option": "p1"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, prefix="", dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager()
     )
     for expected_key, expected_value in {
-        "custom_option": "p1",
-        "python_custom_option": "i1",
+        "p1_custom_option": "p1",
+        "i1_custom_option": "i1",
     }.items():
         assert petsc_options[expected_key] == expected_value
 
     assembly_config = configuration.petsc_assembly_config(
         user_options={}, dof_manager=MockDofManager()
     )
-    assert assembly_config["p1"]["config_type"] == "python_permutation"
-    assert assembly_config["p1"]["permutation_groups"] == [[0], [1]]
+    assert assembly_config == {
+        "p1": {
+            "config_type": "python_permutation",
+            "permutation_groups": [[0], [1]],
+            "inner_key": "i1",
+        }
+    }
 
 
 @pytest.fixture
@@ -513,61 +516,66 @@ def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
 @pytest.mark.parametrize(
     "params",
     [
-        # Use all defaults: "elim" and "keep".
+        # Use all defaults: uses default keys "ilu" and "identity" for subsolvers.
+        # Fieldsplit names itself based on the secondary subsolver ("fs_identity").
         {
-            "petsc_tag": None,
-            "petsc_complement_tag": None,
+            "elim_key": None,
+            "keep_key": None,
             "expected_petsc_options": {
-                "fieldsplit_elim_pc_type": "none",
-                "fieldsplit_keep_pc_type": "ilu",
+                "fs_identity_pc_type": "fieldsplit",
+                "identity_pc_type": "none",
+                "ilu_pc_type": "ilu",
             },
         },
-        # Use default for the complement: f"{petsc_tag}_cpl".
+        # Use default for the complement (ilu).
         {
-            "petsc_tag": "custom_tag_1",
-            "petsc_complement_tag": None,
+            "elim_key": "custom_tag_1",
+            "keep_key": None,
             "expected_petsc_options": {
-                "fieldsplit_custom_tag_1_pc_type": "none",
-                "fieldsplit_custom_tag_1_cpl_pc_type": "ilu",
+                "fs_custom_tag_1_pc_type": "fieldsplit",
+                "custom_tag_1_pc_type": "none",
+                "ilu_pc_type": "ilu",
             },
         },
-        # Use default petsc_tag: "keep".
+        # Use default for the secondary sub-solver (identity).
         {
-            "petsc_tag": None,
-            "petsc_complement_tag": "custom_tag_2",
+            "elim_key": None,
+            "keep_key": "custom_tag_2",
             "expected_petsc_options": {
-                "fieldsplit_elim_pc_type": "none",
-                "fieldsplit_custom_tag_2_pc_type": "ilu",
+                "fs_identity_pc_type": "fieldsplit",
+                "identity_pc_type": "none",
+                "custom_tag_2_pc_type": "ilu",
             },
         },
         # Custom values for both.
         {
-            "petsc_tag": "custom_tag_1",
-            "petsc_complement_tag": "custom_tag_2",
+            "elim_key": "custom_tag_1",
+            "keep_key": "custom_tag_2",
             "expected_petsc_options": {
-                "fieldsplit_custom_tag_1_pc_type": "none",
-                "fieldsplit_custom_tag_2_pc_type": "ilu",
+                "fs_custom_tag_1_pc_type": "fieldsplit",
+                "custom_tag_1_pc_type": "none",
+                "custom_tag_2_pc_type": "ilu",
             },
         },
     ],
 )
 def test_fieldsplit_schur_default_parameters(params: dict):
     """Tests non-trivial logic of creating FieldSplitSchur with default parameters
-    petsc_tag and petsc_complement_tag.
+    elim_key and keep_key.
 
     """
-    petsc_tag: str = params["petsc_tag"]
-    petsc_complement_tag: str = params["petsc_complement_tag"]
+    elim_key: Optional[str] = params["elim_key"]
+    keep_key: Optional[str] = params["keep_key"]
     expected_petsc_options: dict = params["expected_petsc_options"]
+    kwargs_subsolver = {"key": elim_key} if elim_key is not None else {}
+    kwargs_complement = {"key": keep_key} if keep_key is not None else {}
     preconditioner = FieldSplitSchur(
-        subsolver=Identity(groups=["mock_g1"]),
-        complement_solver=ILU(groups=["mock_g2"]),
+        subsolver=Identity(groups=["mock_g1"], **kwargs_subsolver),
+        complement_solver=ILU(groups=["mock_g2"], **kwargs_complement),
         approximate_inverter=DiagonalInverter(),
-        petsc_tag=petsc_tag,
-        petsc_complement_tag=petsc_complement_tag,
     )
     petsc_options = preconditioner.petsc_options(
-        user_options={}, prefix="", dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager()
     )
     for key, value in expected_petsc_options.items():
         assert petsc_options[key] == value

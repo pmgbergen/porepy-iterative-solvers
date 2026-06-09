@@ -207,21 +207,6 @@ class DofManager:
             offset += local_offset
         return eq_dofs
 
-    def build_projection(self, groups: Optional[list[EquationVariableGroup]] = None):
-        # TODO: Not sure this is the right api, also no unit tests
-        if groups is None:
-            groups = self.groups()
-        group_indices = self.indices_of_groups(groups)
-        eq_dofs = self.eq_dofs()
-        var_dofs = self.var_dofs()
-
-        projection_row = []
-        projection_col = []
-        for group_idx in group_indices:
-            projection_row.append(eq_dofs[group_idx])
-            projection_col.append(var_dofs[group_idx])
-        return projection_row, projection_col
-
     def _var_dofs_porepy_order(self) -> list[np.ndarray]:
         """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
         (how they are arranged in the PorePy model).

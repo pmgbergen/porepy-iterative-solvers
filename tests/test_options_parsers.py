@@ -31,7 +31,6 @@ from pp_solvers.petsc_utils import (
     insert_petsc_options,
     petsc_to_csr,
 )
-from tmp1 import MockDofManager
 
 
 @pytest.fixture

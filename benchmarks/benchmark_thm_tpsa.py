@@ -214,7 +214,7 @@ def prepare_thm_tpsa_model(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    model = prepare_thm_tpsa_model(direct_solver=False, grid_refinement_level=2)
+    model = prepare_thm_tpsa_model(direct_solver=False, grid_refinement_level=0)
     pp.ModelRunner(
         model,
         {

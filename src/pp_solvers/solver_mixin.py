@@ -34,6 +34,7 @@ from pp_solvers.preconditioners import (
     validate_all_keys_are_unique,
 )
 from pp_solvers.solver_selection.selector import SolverSelector
+from pp_solvers.transformations import PorePyArrangementTransformation
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -53,6 +54,8 @@ essentially bearers of options for the solver.
 type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
 https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
+
+ITERATIVE_SOLVER_FAILED_TO_INITIALIZE = -9999
 
 
 def transform_contact_block(
@@ -207,6 +210,16 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             Solution array of the linear system.
         """
+        # Check for NaN or Inf in the RHS.
+        # The rhs inside the linear system object is rearranged to match the matrix.
+        rhs = self.bmat.rhs
+        if np.any(np.isnan(rhs) | np.isinf(rhs)):
+            # This should never be the case, as this situation should cut off by the
+            # nonlinear convergence criterion from the earliear nonlinear iteration. We
+            # keep this safeguard until the iterative solver is in a more mature state.
+            logger.warning("RHS contains NaN or Inf values")
+            return np.full_like(rhs, np.nan)
+
         linear_solver_params = self.linear_solver_params()
 
         solver_selector = linear_solver_params.get("solver_selector", None)
@@ -287,14 +300,7 @@ class IterativeSolverMixin(pp.PorePyModel):
                 - Solution array of the linear system.
                 - PETSc KSP converged reason
         """
-        # Check for NaN or Inf in the RHS.
-        # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
-        if np.any(np.isnan(rhs) | np.isinf(rhs)):
-            # This should never be the case, as this situation should cut off by the
-            # nonlinear convergence criterion from the earliear nonlinear iteration. We
-            # keep this safeguard until the iterative solver is in a more mature state.
-            raise ValueError("RHS contains NaN or Inf values")
 
         t0 = time()
         try:
@@ -308,7 +314,8 @@ class IterativeSolverMixin(pp.PorePyModel):
             logger.exception(
                 "Failed to build a PETSc linear solver based on the given linear system"
             )
-            return np.full_like(rhs, np.nan), -9999
+            # TODO: What if rhs is is smaller due to Schur complement reduction?
+            return np.full_like(rhs, np.nan), ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
         elapsed = time() - t0
         self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
@@ -317,7 +324,7 @@ class IterativeSolverMixin(pp.PorePyModel):
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
         t0 = time()
-        x_loc = solver.solve(rhs)
+        x = solver.solve(rhs)
         elapsed = time() - t0
         self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         num_it = len(solver.get_residuals())
@@ -336,13 +343,10 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
                 info,
             )
+            return np.full_like(rhs, np.nan), info
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in reversed(self._transformations):
-            x_loc = transformation.transform_solution(x_loc)
-
-        _, proj_col = self._dof_manager.build_projection()
-        x = np.zeros_like(x_loc)
-        x[concatenate_dof_indices(proj_col)] = x_loc
+            x = transformation.transform_solution(x)
 
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
@@ -372,10 +376,6 @@ class IterativeSolverMixin(pp.PorePyModel):
                 group_names_col=dof_manager.variable_names(),
             ),
         )
-
-        # By calling [:], rearrange the blocks (and thereby the underlying matrix) to
-        # match the ordering defined by the `dof_manager`.
-        linear_system = linear_system[:]
 
         # Apply transformations to the linear systems before passing it to the solver.
         # TODO: Unit tests!
@@ -408,7 +408,10 @@ class IterativeSolverMixin(pp.PorePyModel):
         configuration = configuration_factory()
         validate_all_keys_are_unique(configuration.solver)
         self._petsc_ksp_pc_configuration = configuration.solver
-        self._transformations = configuration.transformations
+        self._transformations = [
+            # TODO: Explain
+            PorePyArrangementTransformation()
+        ] + configuration.transformations
         self._dof_manager = DofManager(model=self, groups=configuration.groups)
 
     def set_nonlinear_solver_statistics(self) -> None:

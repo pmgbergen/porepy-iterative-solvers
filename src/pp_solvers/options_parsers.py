@@ -146,6 +146,7 @@ def _assemble_pc_fieldsplit_schur(
 
     # We initialize two splitting groups. PETSc gives each group a temporary prefix
     # e.g., {parent_prefix}_fieldsplit_{elim_key}. The right prefix will be set later.
+    # Read a detailed explanation of this hack in the `BlockDiagonalInverter` class.
     pc.setFieldSplitIS((elim_key, is_elim), (keep_key, is_keep))
 
     # For a matrix [[A, B], [C, D]], Schur complement S = D - B * A^-1 * C, here D

@@ -152,39 +152,43 @@ class BlockDiagonalInverter(PetscInverter):
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:
-        # YZ: This option "mat_schur_complement_ainv_type" applies to the PETSc object,
-        # which represents the non-assembled Schur complement matrix. It tells it to use
-        # the block-diagonal approximation when the Schur complement needs to be
-        # assembled. This option applies not to the full "fieldsplit" context, but the
-        # context of the complement, thus using the complement prefix.
-
         bs = dof_manager.model.nd if self.block_size is None else self.block_size
 
-        # TODO: Explain
-        keep_options = {
-            "mat_schur_complement_ainv_type": "blockdiag",
-        }
-        elim_options = {
-            "mat_block_size": bs,
-        }
+        # Schur complement produces two matrices: A00 (what we eliminate) and S11 (what
+        # we keep). S11 is unassembled, and its approximation needs to be assembled.
+        # We pass to S11 the option "mat_schur_complement_ainv_type": "blockdiag", which
+        # means S11_approx = A11 - A10 * inv_bdiag(A00) * A01. Matrix A00 inverse is
+        # approximated by its block diagonal. We need to pass the block size to A00.
+
+        # Passing this to S11.
+        keep_options = {"mat_schur_complement_ainv_type": "blockdiag"}
+        # Passing this to A00.
+        elim_options = {"mat_block_size": bs}
+        # Passing this to the fieldsplit object - a parent of both S11 and A00.
+        fieldsplit_options = {"pc_fieldsplit_schur_precondition": "selfp"}
+
+        # Now some hacking happens. When PETSc creates two sub-solvers for the
+        # fieldsplit, it initially assigns them prefixes in the format
+        # "{fieldsplit_key}_fieldsplit_{subsolver_key}". When nesting multiple
+        # fieldsplits, it leads to unreadable prefixes fieldsplit_fieldsplit_fieldsplit_
+        # We assign custom, non-nesting prefixes based on our keys. The problem is in
+        # the sequence:
+        # - default prefixes create in pc.setFieldSplitIS(...)
+        # - sub-solvers are initialized and S11 approximation is assembled in pc.setUp()
+        # There is no access point to customize a prefix of a sub-solver in the middle
+        # of these two actions, neither from Python nor C. PETSc must fetch the options
+        # using default prefixes. We provide identical options both with the inititial
+        # prefixes and the customized ones for completeness. This hack is covered with
+        # a unit test, see `test_options_parsers.py/test_block_diagonal_invertor`.
+        initial_prefix_keep = f"{key}_fieldsplit_{complement_key}"
+        initial_prefix_elim = f"{key}_fieldsplit_{elim_key}"
         return (
-            append_prefix_to_options(
-                prefix=key,
-                options={"pc_fieldsplit_schur_precondition": "selfp"},
-            )
-            | append_prefix_to_options(
-                prefix=complement_key,
-                options=keep_options,
-            )
-            | append_prefix_to_options(
-                prefix=f"{key}_fieldsplit_{complement_key}", options=keep_options
-            )
-            | append_prefix_to_options(
-                prefix=f"{key}_fieldsplit_{elim_key}", options=elim_options
-            )
+            append_prefix_to_options(prefix=key, options=fieldsplit_options)
+            | append_prefix_to_options(prefix=complement_key, options=keep_options)
+            | append_prefix_to_options(prefix=initial_prefix_keep, options=keep_options)
+            | append_prefix_to_options(prefix=elim_key, options=elim_options)
+            | append_prefix_to_options(prefix=initial_prefix_elim, options=elim_options)
         )
-        # The matrix block size should be provided by the subsolver of the group to
-        # eliminate.
 
 
 class FixedStressInverter(PetscInverter):
@@ -265,7 +269,7 @@ class PetscKspPcConfiguration(ABC):
     def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
         """Builds the options for PETSc command-line format. The non-leaf solvers
         include the options of their children sub-solvers, with the corresponding
-        prefices.
+        prefixes.
 
         Parameters:
             user_options: A dictionary of the petsc options that the user can pass to
@@ -297,7 +301,7 @@ class PetscKspPcConfiguration(ABC):
     ) -> dict:
         """Builds a configuration for the `assemble_petsc_ksp_pc` function. The non-leaf
         solvers include the configurations of their children sub-solvers, with the
-        corresponding prefices.
+        corresponding prefixes.
 
         Parameters:
             user_options: A dictionary of the petsc options that the user can pass to
@@ -409,20 +413,40 @@ class GMRES(PetscKspPcConfiguration):
     unpreconditioned residual norm. See for more options:
     https://petsc.org/release/manualpages/KSP/KSPGMRES/
 
+    Implementation note: This class breaks an otherwise convenient assumption that a
+    single node (`PetscKspPcConfiguration`) configures both the ksp and pc objects that
+    operate on the same matrix and share a key. The convenience is due to:
+    - `AMG()` initializes a sub-solver with no KSP and an AMG PC. We don't have to write
+        something like `KspNone(pc=AMG())` every time;
+    - If we ever need to reinforce the subsolver `AMG()` with a KSP, this is done from
+        user options, e.g., `{'amg': {'ksp_type': 'bcgs'}}`.
+
+    GMRES is the edge case: `GMRES(preconditioner=AMG())`. Since the KSP and the PC must
+    share the same PETSc prefix, we override the PC key with the KSP key. Therefore,
+    this is a mistake:
+    `{'gmres': {'gmres_param_1': 'val1'}, 'amg': {'amg_param_1': 'val1'}}`. The correct
+    syntax is: `{'gmres': {'gmres_param_1': 'val1', 'amg_param_1': 'val1'}}`. This error
+    is not drastic, since we log that the `amg_param_1` is not read by PETSc.
+
+    Benefit of this approach is that it won't lead to unwanted collisions, such as:
+    `{'gmres': {'pc_type': 'ilu'}, 'amg': {'ksp_type}}`. YZ does not like this approach,
+    but finds it compromisable, unless others find that it brings more chaos than good.
+
     """
 
     def __init__(
         self, preconditioner: PetscKspPcConfiguration, key: str = "gmres"
     ) -> None:
         self.preconditioner: PetscKspPcConfiguration = preconditioner
-        self.preconditioner.key = key
+        self.preconditioner.key = key  # Read the class implementation note.
         super().__init__(groups=self.preconditioner.groups, key=key)
 
     def __repr__(self) -> str:
         return f"GMRES(preconditioner={self.preconditioner})"
 
     def get_children(self) -> list[PetscKspPcConfiguration]:
-        # TODO: Explain
+        # Read the class implementation note. The KSP and its preconditioner act as a
+        # single configuration node, and we reflect it in the children tree.
         return self.preconditioner.get_children()
 
     def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
@@ -554,13 +578,11 @@ class FieldSplit(PetscKspPcConfiguration):
 
         if len(set(self.groups)) < len(self.groups):
             # Non-unique groups are present.
-            raise ValueError(
-                f"Groups in FielSplitAdditive should not overlap:", self.groups
-            )
+            raise ValueError(f"Groups in FieldSplit should not overlap: {self.groups}")
 
         validate_subsolvers_keys_are_unique(
             subsolvers=self.subsolvers,
-            current_node_repr=f"FieldSplitAdditive({key = })",
+            current_node_repr=f"FieldSplit({key = })",
         )
 
     def __repr__(self) -> str:

@@ -9,6 +9,7 @@ from pp_solvers import BlockLinearSystem
 from pp_solvers.block_linear_system import LinearSystemIndexer
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.petsc_solvers import PetscKrylovSolver
+from pp_solvers.preconditioners import PythonPermutationWrapper
 
 from .testing_utils import MockDofManager, generate_reference_block_linear_system
 
@@ -80,6 +81,8 @@ def test_petsc_krylov_solver(
 def test_python_permutation():
     A = generate_reference_block_linear_system()
     dof_manager = MockDofManager()
+
+    petsc_ksp_pc_configuration = PythonPermutationWrapper()
 
     initialize_petsc_ksp(
         block_linear_system=A,
