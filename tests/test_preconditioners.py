@@ -11,7 +11,7 @@ from petsc4py import PETSc
 from scipy.sparse import csr_matrix
 from pp_solvers import dof_manager
 from pp_solvers.options_parsers import initialize_petsc_ksp
-from testing_utils import MockDofManager, generate_reference_block_linear_system
+from testing_utils import MockDofManager, generate_block_linear_system
 
 from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.petsc_utils import (
@@ -490,7 +490,7 @@ def test_python_permutation():
 
 @pytest.fixture
 def block_linear_system() -> BlockLinearSystem:
-    return generate_reference_block_linear_system()
+    return generate_block_linear_system()
 
 
 def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):

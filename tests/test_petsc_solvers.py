@@ -5,7 +5,7 @@ import pytest
 import scipy.sparse as sps
 from petsc4py import PETSc
 from scipy.sparse.linalg import spsolve
-from testing_utils import MockDofManager, generate_reference_block_linear_system
+from testing_utils import MockDofManager, generate_block_linear_system
 
 import pp_solvers
 from pp_solvers import BlockLinearSystem
@@ -84,7 +84,7 @@ def test_petsc_krylov_solver(
 def test_python_permutation(num_dofs_per_group: tuple[int, int]):
     # We create a 2x2 block matrix.
     n, m = num_dofs_per_group
-    A = generate_reference_block_linear_system(num_dofs_per_group=[n, m])
+    A = generate_block_linear_system(num_dofs_per_group=[n, m])
 
     # PythonPermutationWrapper accepts a matrix with same number of dofs in each group.
     petsc_ksp_pc_configuration = PythonPermutationWrapper(

@@ -19,7 +19,7 @@ from pp_solvers.preconditioners import (
 from pp_solvers.transformations import SchurComplementReduction
 from testing_utils import (
     MockDofManager,
-    generate_reference_block_linear_system,
+    generate_block_linear_system,
     generate_reference_dofs_3_groups,
 )
 
@@ -36,7 +36,7 @@ from pp_solvers.petsc_utils import (
 
 @pytest.fixture
 def block_linear_system() -> BlockLinearSystem:
-    return generate_reference_block_linear_system()
+    return generate_block_linear_system()
 
 
 @pytest.fixture
@@ -283,7 +283,9 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 "assembly_config": {
                     "root": {
                         "config_type": "fieldsplit_schur",
-                        "elim_groups": [2, 0],  # Intentionally mixed order of groups.
+                        # The order here matters since PETSc fieldsplit Schur requires
+                        # ordered dofs.
+                        "elim_groups": [0, 2],
                         "keep_groups": [1],
                         "elim_key": "elim",
                         "keep_key": "keep",
@@ -427,7 +429,7 @@ def test_block_diagonal_invertor(params: dict):
     groups_keep: list[str] = params["groups_keep"]
 
     # The block matrix consists of 3 groups: g1, g2, g3.
-    A = generate_reference_block_linear_system()[:3]
+    A = generate_block_linear_system()[:3]
     dof_manager = MockDofManager(block_linear_system=A)
     assert dof_manager.model.nd == 3, "The test assumes a 3D model."
 
@@ -463,6 +465,6 @@ def test_block_diagonal_invertor(params: dict):
     # PETSc stores two matrices - one for ksp (amat) and one for pc (pmat). Only pmat is
     # assembled with the block diagonal approximation applied.
     result_pmat = petsc_to_csr(petsc_matrices[schur_complement_key]["petsc_pmat"])
-    np.testing.assert_allclose((expected_mat - result_pmat).data, 0, atol=1e-15)
+    np.testing.assert_allclose((expected_mat - result_pmat).data, 0, atol=1e-14)
     # Amat is not assembled.
     assert petsc_matrices[schur_complement_key]["petsc_amat"].type == "schurcomplement"

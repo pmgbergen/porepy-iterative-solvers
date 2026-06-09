@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
-from testing_utils import generate_reference_block_linear_system
+from testing_utils import generate_block_linear_system
 
 from pp_solvers import petsc_utils
 from pp_solvers.block_linear_system import BlockLinearSystem
@@ -38,7 +38,7 @@ def test_insert_clear_petsc_options():
 
 @pytest.fixture
 def sample_linear_system() -> BlockLinearSystem:
-    return generate_reference_block_linear_system()
+    return generate_block_linear_system()
 
 
 @pytest.mark.parametrize("groups", [[1], [1, 0]])
