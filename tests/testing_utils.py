@@ -119,6 +119,23 @@ class MockModel:
 class MockDofManager:
     model = MockModel()
 
+    def __init__(self, block_linear_system: BlockLinearSystem | None = None):
+        self._block_linear_system = block_linear_system
+
     def indices_of_groups(self, groups: list[EquationVariableGroup]):
         # each mock group is a string "g1", "g2", etc.
         return [int(g[1]) - 1 for g in groups]
+
+    def eq_dofs(self) -> list:
+        if self._block_linear_system is None:
+            raise ValueError(
+                "Pass block_linear_system to MockDofManager to use eq_dofs()"
+            )
+        return self._block_linear_system.indexer.original_dofs_row
+
+    def var_dofs(self) -> list:
+        if self._block_linear_system is None:
+            raise ValueError(
+                "Pass block_linear_system to MockDofManager to use var_dofs()"
+            )
+        return self._block_linear_system.indexer.original_dofs_col

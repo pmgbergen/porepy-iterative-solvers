@@ -315,24 +315,22 @@ def assemble_petsc_ksp_pc(
         "config_type": "fieldsplit_schur",
         "elim_groups": [0, 1],  # groups to eliminate to build the Schur complement.
         "keep_groups": [2, 3],  # groups to keep to build the Schur complement.
-        "elim_tag": "tag1",  # tag to build the petsc prefix for the eliminated groups.
-        "keep_tag": "tag2",  # tag to build the petsc prefix for the kept groups.
+        "elim_key": "tag1",  # key identifying the eliminated sub-solver.
+        "keep_key": "tag2",  # key identifying the kept (Schur complement) sub-solver.
     }
     {
         "config_type": "fieldsplit_common",
-        "subsolver_groups": [
-            [0, 1],
-            [2, 3],
-            [5, 6],
-        ],  # list of groups to build the non-Schur-complement fieldsplit.
+        "subsolver_groups": [[0, 1], [2, 3], [5, 6]],
+        "subsolver_keys": ["key1", "key2", "key3"],  # one key per group entry.
     }
     {
         "config_type": "composite",
-        "num_stages": 3,  # number of stages for the composite preconditioner.
+        "subsolver_keys": ["key1", "key2", "key3"],  # one key per stage.
     }
     {
         "config_type": "python_permutation",
         "permutation_groups": [[1, 2], [3, 4]],  # Groups to permute.
+        "inner_key": "inner",  # key for the inner PC that operates on the permuted matrix.
     }
 
     TODO: Revisit docstrings

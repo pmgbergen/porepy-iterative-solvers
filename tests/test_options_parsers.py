@@ -18,6 +18,7 @@ from pp_solvers.preconditioners import (
 )
 from pp_solvers.transformations import SchurComplementReduction
 from testing_utils import (
+    MockDofManager,
     generate_reference_block_linear_system,
     generate_reference_dofs_3_groups,
 )
@@ -66,7 +67,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         # If broken: we failed to configure the most basice PETSc commands.
         pytest.param(
             {
-                "petsc_options": {"ksp_type": "bcgs", "pc_type": "sor"},
+                "petsc_options": {"root_ksp_type": "bcgs", "root_pc_type": "sor"},
                 "assembly_config": {},
             },
             id="monolithic petsc solver",
@@ -76,9 +77,9 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "pbjacobi",
-                    "mat_block_size": 3,
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "pbjacobi",
+                    "root_mat_block_size": 3,
                 },
                 "assembly_config": {},
             },
@@ -89,11 +90,11 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "fgmres",
+                    "root_ksp_type": "fgmres",
                     # Use a krylov solver as a preconditioner, see PETSc PCKSP.
-                    "pc_type": "ksp",
-                    "ksp_ksp_type": "gmres",
-                    "ksp_pc_type": "jacobi",
+                    "root_pc_type": "ksp",
+                    "root_ksp_ksp_type": "gmres",
+                    "root_ksp_pc_type": "jacobi",
                 },
                 "assembly_config": {},
             },
@@ -103,9 +104,9 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "hypre",
-                    "pc_hypre_type": "boomeramg",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "hypre",
+                    "root_pc_hypre_type": "boomeramg",
                 },
                 "assembly_config": {},
             },
@@ -116,21 +117,22 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "fieldsplit_aaa_pc_type": "sor",
-                    "fieldsplit_bbb_pc_type": "jacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    # Each sub-solver is addressed by its key, not by a nested prefix.
+                    "aaa_pc_type": "sor",
+                    "bbb_pc_type": "jacobi",
                     # Custom matrix block sizes within fieldsplit.
-                    "fieldsplit_aaa_mat_block_size": 3,
-                    "fieldsplit_bbb_mat_block_size": 2,
+                    "aaa_mat_block_size": 3,
+                    "bbb_mat_block_size": 2,
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [0],
                         "keep_groups": [1, 2],
-                        "elim_tag": "aaa",
-                        "keep_tag": "bbb",
+                        "elim_key": "aaa",
+                        "keep_key": "bbb",
                     }
                 },
             },
@@ -142,27 +144,27 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "fieldsplit_aaa_pc_type": "fieldsplit",
-                    "fieldsplit_aaa_fieldsplit_ccc_pc_type": "sor",
-                    "fieldsplit_aaa_fieldsplit_ddd_pc_type": "pbjacobi",
-                    "fieldsplit_bbb_pc_type": "jacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    "aaa_pc_type": "fieldsplit",
+                    "ccc_pc_type": "sor",
+                    "ddd_pc_type": "pbjacobi",
+                    "bbb_pc_type": "jacobi",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [0, 1],
                         "keep_groups": [2],
-                        "elim_tag": "aaa",
-                        "keep_tag": "bbb",
+                        "elim_key": "aaa",
+                        "keep_key": "bbb",
                     },
-                    "fieldsplit_aaa_": {
+                    "aaa": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [1],  # Intentionally switching order.
                         "keep_groups": [0],
-                        "elim_tag": "ccc",
-                        "keep_tag": "ddd",
+                        "elim_key": "ccc",
+                        "keep_key": "ddd",
                     },
                 },
             },
@@ -174,27 +176,27 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "fieldsplit_aaa_pc_type": "jacobi",
-                    "fieldsplit_bbb_pc_type": "fieldsplit",
-                    "fieldsplit_bbb_fieldsplit_ccc_pc_type": "sor",
-                    "fieldsplit_bbb_fieldsplit_ddd_pc_type": "pbjacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    "aaa_pc_type": "jacobi",
+                    "bbb_pc_type": "fieldsplit",
+                    "ccc_pc_type": "sor",
+                    "ddd_pc_type": "pbjacobi",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [2],
                         "keep_groups": [0, 1],
-                        "elim_tag": "aaa",
-                        "keep_tag": "bbb",
+                        "elim_key": "aaa",
+                        "keep_key": "bbb",
                     },
-                    "fieldsplit_bbb_": {
+                    "bbb": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [1],  # Intentionally switching order.
                         "keep_groups": [0],
-                        "elim_tag": "ccc",
-                        "keep_tag": "ddd",
+                        "elim_key": "ccc",
+                        "keep_key": "ddd",
                     },
                 },
             },
@@ -205,16 +207,16 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "composite",
-                    "sub_0_pc_type": "sor",
-                    "sub_1_pc_type": "jacobi",
-                    "sub_2_pc_type": "pbjacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "composite",
+                    "stage0_pc_type": "sor",
+                    "stage1_pc_type": "jacobi",
+                    "stage2_pc_type": "pbjacobi",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "composite",
-                        "num_stages": 3,
+                        "subsolver_keys": ["stage0", "stage1", "stage2"],
                     },
                 },
             },
@@ -226,25 +228,25 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "composite",
-                    "mat_block_size": 3,  # custom block size for composite.
-                    "sub_0_pc_type": "fieldsplit",
-                    "sub_0_fieldsplit_elim_pc_type": "gamg",
-                    "sub_0_fieldsplit_keep_pc_type": "none",
-                    "sub_1_pc_type": "jacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "composite",
+                    "root_mat_block_size": 3,  # custom block size for composite.
+                    "stage0_pc_type": "fieldsplit",
+                    "elim_pc_type": "gamg",
+                    "keep_pc_type": "none",
+                    "stage1_pc_type": "jacobi",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "composite",
-                        "num_stages": 2,
+                        "subsolver_keys": ["stage0", "stage1"],
                     },
-                    "sub_0_": {
+                    "stage0": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [2, 0],  # Intentionally mixed order of groups.
                         "keep_groups": [1],
-                        "elim_tag": "elim",
-                        "keep_tag": "keep",
+                        "elim_key": "elim",
+                        "keep_key": "keep",
                     },
                 },
             },
@@ -255,13 +257,14 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "python",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "python",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "python_permutation",
                         "permutation_groups": [[2, 0, 1]],
+                        "inner_key": "inner",
                     }
                 },
             },
@@ -272,18 +275,18 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "pc_fieldsplit_type": "schur",
-                    "pc_fieldsplit_schur_precondition": "user",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    "root_pc_fieldsplit_type": "schur",
+                    "root_pc_fieldsplit_schur_precondition": "user",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_schur",
                         "elim_groups": [2, 0],  # Intentionally mixed order of groups.
                         "keep_groups": [1],
-                        "elim_tag": "elim",
-                        "keep_tag": "keep",
+                        "elim_key": "elim",
+                        "keep_key": "keep",
                         # Constructing an inverter matrix, so S = A - C * D^-1 * B ≈ A.
                         "inverter_additive": lambda _: csr_to_petsc(
                             csr_matrix(
@@ -303,17 +306,18 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "pc_fieldsplit_type": "additive",
-                    "fieldsplit_sub_0_pc_type": "sor",
-                    "fieldsplit_sub_1_ksp_type": "bcgs",
-                    "fieldsplit_sub_2_pc_type": "jacobi",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    "root_pc_fieldsplit_type": "additive",
+                    "s0_pc_type": "sor",
+                    "s1_ksp_type": "bcgs",
+                    "s2_pc_type": "jacobi",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2], [0], [1]],
+                        "subsolver_keys": ["s0", "s1", "s2"],
                     }
                 },
             },
@@ -324,22 +328,24 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
         pytest.param(
             {
                 "petsc_options": {
-                    "ksp_type": "preonly",
-                    "pc_type": "fieldsplit",
-                    "pc_fieldsplit_type": "additive",
-                    "fieldsplit_sub_0_pc_type": "fieldsplit",
-                    "fieldsplit_sub_0_pc_fieldsplit_type": "additive",
-                    "fieldsplit_sub_0_fieldsplit_sub_1_pc_type": "sor",
-                    "fieldsplit_sub_1_ksp_type": "bcgs",
+                    "root_ksp_type": "preonly",
+                    "root_pc_type": "fieldsplit",
+                    "root_pc_fieldsplit_type": "additive",
+                    "s0_pc_type": "fieldsplit",
+                    "s0_pc_fieldsplit_type": "additive",
+                    "s01_pc_type": "sor",
+                    "s1_ksp_type": "bcgs",
                 },
                 "assembly_config": {
-                    "": {
+                    "root": {
                         "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2, 0], [1]],
+                        "subsolver_keys": ["s0", "s1"],
                     },
-                    "fieldsplit_sub_0_": {
+                    "s0": {
                         "config_type": "fieldsplit_common",
                         "subsolver_groups": [[2], [0]],
+                        "subsolver_keys": ["s00", "s01"],
                     },
                 },
             },
@@ -361,12 +367,13 @@ def test_assemble_petsc_ksp_pc(
         pc=ksp.getPC(),
         assembly_config=assembly_config,
         indexer=block_linear_system.indexer,
+        key="root",
     )
 
     # We do not check types of inner preconditioners, but petsc would not let a nested
     # preconditioner (e.g. fieldsplit) to set up, if there is an error in inner solvers.
-    assert ksp.type == petsc_options["ksp_type"]
-    assert ksp.getPC().type == petsc_options["pc_type"]
+    assert ksp.type == petsc_options["root_ksp_type"]
+    assert ksp.getPC().type == petsc_options["root_pc_type"]
 
     # Check that all PETSc options are applied, which means that inner solvers
     # initialized correctly.
@@ -374,7 +381,7 @@ def test_assemble_petsc_ksp_pc(
         assert options.used(key)
 
     # Check that the block size initialized properly.
-    expected_block_size = petsc_options.get("mat_block_size", 1)
+    expected_block_size = petsc_options.get("root_mat_block_size", 1)
     petsc_mat, petsc_pmat = ksp.getOperators()
     assert petsc_mat.getBlockSize() == expected_block_size
     assert petsc_pmat.getBlockSize() == expected_block_size
@@ -421,7 +428,7 @@ def test_block_diagonal_invertor(params: dict):
 
     # The block matrix consists of 3 groups: g1, g2, g3.
     A = generate_reference_block_linear_system()[:3]
-    dof_manager = MockDofManager()
+    dof_manager = MockDofManager(block_linear_system=A)
     assert dof_manager.model.nd == 3, "The test assumes a 3D model."
 
     # Our petsc configuration is a field split with a block-diagonal invertor.
