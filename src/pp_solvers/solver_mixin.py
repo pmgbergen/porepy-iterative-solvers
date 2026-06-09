@@ -18,7 +18,6 @@ from porepy.viz.solver_statistics import SolverStatistics
 from pp_solvers.block_linear_system import (
     BlockLinearSystem,
     LinearSystemIndexer,
-    concatenate_dof_indices,
 )
 from pp_solvers.dof_manager import DofManager
 
@@ -277,8 +276,8 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         # The way of accessing these values should be changed when they find a
         # better accommodation.
-        solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
-        construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
+        solve_time = self.linear_solver_statistics.linsolve_solve_time[-1]
+        construct_time = self.linear_solver_statistics.linsolve_construction_time[-1]
         # Providing feedback to the ML model.
         solver_selector.provide_performance_feedback(
             solve_time=solve_time,
@@ -317,7 +316,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             # TODO: What if rhs is is smaller due to Schur complement reduction?
             return np.full_like(rhs, np.nan), ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
         elapsed = time() - t0
-        self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
+        self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
 
         # Project the right hand side to the local block matrix ordering, as was done
@@ -326,18 +325,22 @@ class IterativeSolverMixin(pp.PorePyModel):
         t0 = time()
         x = solver.solve(rhs)
         elapsed = time() - t0
-        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         num_it = len(solver.get_residuals())
+        info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         logger.info(
-            "Linear system solved in %.2f seconds with %d iterations.",
+            "Linear system solved in %.2f seconds with %d iterations, "
+            "converged reason: %d.",
             elapsed,
             num_it,
+            info,
         )
+        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
+        self.linear_solver_statistics.petsc_converged_reason.append(info)
+        self.linear_solver_statistics.num_krylov_iters.append(num_it)
 
-        info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         if info <= 0:
             logger.warning(
-                f"Linear solver did not converge. Reason: %d. "
+                "Linear solver did not converge. Reason: %d. "
                 "Check the solver options and the problem setup. "
                 "See detailed description of PETSc error codes: "
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
@@ -348,8 +351,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         for transformation in reversed(self._transformations):
             x = transformation.transform_solution(x)
 
-        self.linear_solver_statistics.petsc_converged_reason.append(info)
-        self.linear_solver_statistics.num_krylov_iters.append(num_it)
         if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
 

@@ -168,7 +168,10 @@ def test_linear_solver_failure():
             iterative_model, {"nl_max_iterations": max_nonlinear_iterations}
         ).run()
     linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
-    assert len(linear_iterations) == 7, (
+    # The current implementation discards the linear solver solution if it reached the
+    # iteration limit. We try to solve one linear system and fail. This stops the
+    # simulation, since we use the constant time step.
+    assert len(linear_iterations) == 1, (
         f"We did {linear_iterations} Newton iterations and did not converge."
     )
     # No idea why PETSc reports 2 and not 1, but it should not report anything else.
