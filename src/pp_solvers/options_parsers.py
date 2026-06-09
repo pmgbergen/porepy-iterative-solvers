@@ -20,8 +20,8 @@ from pp_solvers.petsc_utils import (
     insert_petsc_options,
 )
 from pp_solvers.preconditioners import (
-    PetscKspPcConfiguration,
     PETSC_OPTIONS_MAX_SYMBOLS,
+    PetscKspPcConfiguration,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,6 +258,10 @@ def _assemble_pc_python_permutation(
     inner_key: str = config["inner_key"]
 
     perm = [indexer.get_dofs_of_groups(g)[0] for g in permutation_groups]
+    if np.unique([len(x) for x in perm]).size != 1:
+        raise ValueError(
+            "PcPythonPermutation accepts groups with equal number of dofs."
+        )
     perm = np.vstack(perm).ravel("F")
 
     python_context = PcPythonPermutation(
@@ -265,6 +269,14 @@ def _assemble_pc_python_permutation(
     )
     python_context.setFromOptions(pc=pc)
 
+    # This is duplicated here since we don't call assemble_petsc_ksp_pc (see below).
+    # This should be removed if the lines below are ever uncommented.
+    if petsc_matrices is not None:
+        petsc_amat, petsc_pmat = python_context.petsc_pc.getOperators()
+        petsc_matrices[inner_key] = {
+            "petsc_pmat": petsc_pmat,
+            "petsc_amat": petsc_amat,
+        }
     # YZ: Nested initialization of python_context.petsc_pc can be here. However, we
     # don't use it now, so I don't cover it with tests and thus not implement it here.
     # assemble_petsc_ksp_pc(

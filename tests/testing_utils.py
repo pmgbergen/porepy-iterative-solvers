@@ -100,7 +100,25 @@ def generate_reference_dofs_3_groups():
     return reference_dofs_row_3_groups, reference_dofs_col_3_groups
 
 
-def generate_reference_block_linear_system():
+def generate_reference_block_linear_system(
+    num_dofs_per_group: list[int] | None = None,
+):
+    if num_dofs_per_group is not None:
+        total = sum(num_dofs_per_group)
+        rng = np.random.default_rng(42)
+        A = rng.standard_normal((total, total))
+        A = A @ A.T + total * np.eye(total)
+        dofs = []
+        start = 0
+        for n in num_dofs_per_group:
+            dofs.append(np.arange(start, start + n, dtype=int))
+            start += n
+        return BlockLinearSystem(
+            mat=sp.csr_matrix(A),
+            rhs=rng.standard_normal(total),
+            indexer=LinearSystemIndexer(dofs_row=dofs, dofs_col=dofs),
+        )
+
     dofs_row, dofs_col = generate_reference_dofs_3_groups()
     return BlockLinearSystem(
         mat=generate_reference_matrix_3_groups(),

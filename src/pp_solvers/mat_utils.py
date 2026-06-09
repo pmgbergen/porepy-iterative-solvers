@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import porepy as pp
 import scipy.sparse
-import scipy.sparse.linalg
 from numba import njit
 
 __all__ = [

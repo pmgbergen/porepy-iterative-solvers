@@ -86,13 +86,13 @@ class PcPythonPermutation:
         self.petsc_pc.view(viewer)
 
     def setFromOptions(self, pc: PETSc.PC) -> None:
-        self.petsc_pc.setFromOptions()
-
-    def setUp(self, pc: PETSc.PC) -> None:
         _, P = pc.getOperators()
         self.P_perm = P.permute(self.petsc_is_perm, self.petsc_is_perm)
         self.P_perm.setBlockSize(self.bs)
         self.petsc_pc.setOperators(self.P_perm, self.P_perm)
+        self.petsc_pc.setFromOptions()
+
+    def setUp(self, pc: PETSc.PC) -> None:
         self.petsc_pc.setUp()
 
     def reset(self, pc: PETSc.PC) -> None:
