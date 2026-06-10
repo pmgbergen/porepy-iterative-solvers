@@ -140,14 +140,16 @@ class MockModel:
 class MockDofManager:
     model = MockModel()
 
-    def __init__(self, block_linear_system: Optional[BlockLinearSystem] = None):
+    def __init__(
+        self, groups: list[str], block_linear_system: Optional[BlockLinearSystem] = None
+    ):
+        self.groups: list[str] = groups
         # Some tests need eq_dofs and var_dofs. They can use the dofs of the provided
         # block linear system. Tests that only need indices_of_groups may ignore it.
         self._block_linear_system = block_linear_system
 
     def indices_of_groups(self, groups: list[EquationVariableGroup]):
-        # each mock group is a string "g1", "g2", etc.
-        return [int(g[1]) - 1 for g in groups]
+        return [self.groups.index(g) for g in groups]
 
     def eq_dofs(self) -> list:
         if self._block_linear_system is None:

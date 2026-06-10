@@ -97,7 +97,7 @@ def test_python_permutation(num_dofs_per_group: tuple[int, int]):
     try:
         solver = initialize_petsc_ksp(
             block_linear_system=A,
-            dof_manager=MockDofManager(),
+            dof_manager=MockDofManager(groups=petsc_ksp_pc_configuration.groups),
             petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
             user_options={
                 "python_permutation": {"ksp_type": "gmres"},

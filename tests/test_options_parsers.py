@@ -443,7 +443,9 @@ def test_petsc_invertors_invertor(params: dict):
 
     # The block matrix consists of 3 groups: g1, g2, g3.
     A = generate_block_linear_system()[:3]
-    dof_manager = MockDofManager(block_linear_system=A)
+    dof_manager = MockDofManager(
+        groups=sorted(groups_elim + groups_keep), block_linear_system=A
+    )
     assert dof_manager.model.nd == 3, "The test assumes a 3D model."
 
     # Our petsc configuration is a field split with a block-diagonal invertor.

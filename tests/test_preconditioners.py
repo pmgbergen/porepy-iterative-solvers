@@ -99,7 +99,7 @@ def test_default_petsc_options(configuration: PetscKspPcConfiguration, ksp: PETS
     options."""
     clear_petsc_options()
     petsc_options = configuration.petsc_options(
-        user_options={}, dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager(groups=configuration.groups)
     )
     assert isinstance(petsc_options, dict)
     insert_petsc_options(petsc_options)
@@ -127,12 +127,12 @@ def test_configurations_sanity_checks(configuration: PetscKspPcConfiguration):
     assert configuration.key == "custom_key"
     # 2. petsc_options should return something and it should be a dict.
     petsc_options = configuration.petsc_options(
-        user_options={}, dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager(groups=configuration.groups)
     )
     assert isinstance(petsc_options, dict)
     # 3. petsc_assembly_config should return something and it should be a dict.
     config = configuration.petsc_assembly_config(
-        user_options={}, dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager(groups=configuration.groups)
     )
     assert isinstance(config, dict)
 
@@ -185,7 +185,7 @@ def test_user_options_and_prefix(configuration: PetscKspPcConfiguration):
         "this_key_should_be_ignored": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
     )
     # User options should override defaults.
     assert petsc_options[f"custom_key_ksp_type"] == "cg"
@@ -202,7 +202,7 @@ def test_gmres_override_preconditioner_key():
         "preconditioner": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
     )
     # The "preconditioner" key is ignored, read the GMRES class comment.
     assert petsc_options["gmres_ksp_type"] == "cg"
@@ -248,8 +248,10 @@ def test_nested_fieldsplits_schur():
         "i3": {"test_option": "i3"},
         "i4": {"test_option": "i4"},
     }
+    dof_manager = MockDofManager(groups=configuration.groups)
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options,
+        dof_manager=dof_manager,
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
@@ -265,7 +267,7 @@ def test_nested_fieldsplits_schur():
 
     # Nested fieldsplits should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=dof_manager
     )
     assert petsc_assembly_config == {
         "fs1": {
@@ -328,8 +330,10 @@ def test_nested_additive_fieldsplits():
         "i4": {"test_option": "i4"},
         "i5": {"test_option": "i5"},
     }
+    dof_manager = MockDofManager(groups=configuration.groups)
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options,
+        dof_manager=dof_manager,
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
@@ -346,7 +350,7 @@ def test_nested_additive_fieldsplits():
 
     # Nested fieldsplits should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=dof_manager
     )
     assert petsc_assembly_config == {
         "fs1": {
@@ -397,7 +401,7 @@ def test_nested_composites():
         "i4": {"test_option": "i4"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
@@ -412,7 +416,7 @@ def test_nested_composites():
 
     # Nested composites should return correct assembly configs.
     petsc_assembly_config = configuration.petsc_assembly_config(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager(groups=groups)
     )
     assert petsc_assembly_config == {
         "c1": {
@@ -432,7 +436,10 @@ def test_nested_composites():
 @pytest.mark.parametrize("key", ["key1", "key2"])
 def test_approximate_inverters_petsc_options(inverter: PetscInverter, key: str):
     petsc_options = inverter.petsc_options(
-        key=key, elim_key="elim", complement_key="keep", dof_manager=MockDofManager()
+        key=key,
+        elim_key="elim",
+        complement_key="keep",
+        dof_manager=MockDofManager(groups=["g1", "g2"]),
     )
     assert isinstance(petsc_options, dict)
     for key in petsc_options.keys():
@@ -467,7 +474,7 @@ def test_python_permutation():
         "p1": {"custom_option": "p1"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager()
+        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
     )
     for expected_key, expected_value in {
         "p1_custom_option": "p1",
@@ -476,7 +483,7 @@ def test_python_permutation():
         assert petsc_options[expected_key] == expected_value
 
     assembly_config = configuration.petsc_assembly_config(
-        user_options={}, dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager(groups=configuration.groups)
     )
     assert assembly_config == {
         "p1": {
@@ -495,7 +502,7 @@ def block_linear_system() -> BlockLinearSystem:
 def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
     krylov_solver = initialize_petsc_ksp(
         block_linear_system=block_linear_system,
-        dof_manager=MockDofManager(),
+        dof_manager=MockDofManager(groups=["mock_g1"]),
         petsc_ksp_pc_configuration=GMRES(preconditioner=Identity(groups=["mock_g1"])),
         user_options={
             "gmres": {"ksp_type": "fgmres"},
@@ -574,7 +581,7 @@ def test_fieldsplit_schur_default_parameters(params: dict):
         approximate_inverter=DiagonalInverter(),
     )
     petsc_options = preconditioner.petsc_options(
-        user_options={}, dof_manager=MockDofManager()
+        user_options={}, dof_manager=MockDofManager(groups=["mock_g1", "mock_g2"])
     )
     for key, value in expected_petsc_options.items():
         assert petsc_options[key] == value
@@ -603,5 +610,5 @@ def test_fieldsplit_schur_raises_on_invertor_option_conflict(conflicting_options
     with pytest.raises(ValueError, match="invertor options override solver options"):
         preconditioner.petsc_options(
             user_options=conflicting_options,
-            dof_manager=MockDofManager(),
+            dof_manager=MockDofManager(groups=preconditioner.groups),
         )

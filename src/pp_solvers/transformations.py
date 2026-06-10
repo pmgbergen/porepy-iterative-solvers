@@ -18,15 +18,24 @@ logger = getLogger(__name__)
 
 
 class LinearSystemTransformation(ABC):
+    """A base class for a transformation of a linear system, everything that should
+    happen to it before and after solving it. Can include permutations, scaling, etc.
+
+    It is assumed that `transform_matrix_rhs` is always called first and
+    `transform_solution` second.
+
+    """
+
     @abstractmethod
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        pass
+        """Applies a transformation to a linear system."""
 
     @abstractmethod
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
-        pass
+        """Applies an inverse transformation to the solution to map it back to the
+        original space."""
 
 
 class PorePyArrangementTransformation(LinearSystemTransformation):
