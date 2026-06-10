@@ -34,7 +34,25 @@ def initialize_petsc_ksp(
     user_options: dict,
     petsc_matrices: Optional[dict] = None,
 ):
-    """TODO: Docstring. Unit test?"""
+    """Initialize a PETSc KSP solver from a block linear system and solver config.
+
+    Converts the system matrix to PETSc format, inserts PETSc CLI options derived from
+    the configuration, assembles the KSP/PC hierarchy. Warns about any CLI options that
+    PETSc did not consume.
+
+    Args:
+        block_linear_system: The assembled block linear system containing the matrix and
+            index structure.
+        dof_manager: Degree-of-freedom manager used to resolve group-to-DOF mappings.
+        petsc_ksp_pc_configuration: Solver/preconditioner configuration that produces
+            PETSc options and the assembly config.
+        user_options: Runtime overrides forwarded to the configuration.
+        petsc_matrices: If provided, populated with references to the PETSc Amat/Pmat
+            for each sub-solver key (useful for debugging and testing).
+
+    Returns:
+        A `PetscKrylovSolver` wrapping the assembled PETSc KSP.
+    """
     # We validated that all the solver keys are unique in SolverMixin.
 
     # Construct a PETSc matrix from the scipy matrix.
@@ -213,9 +231,11 @@ def _assemble_pc_composite(
 
     for i, stage_key in enumerate(stage_keys):
         # We need to access each sub-preconditioner. We need to create them using
-        # pc.addCompositePCType(type). We do not know the type here, as it is provided
-        # in petsc options. So we create them with a placeholder type "none".
-        # TODO: Revisit comments
+        # pc.addCompositePCType(type). For each sub-preconditioner, we use the type
+        # PCKSP. This creates a structure composite->pc->ksp->pc. The default ksp type
+        # is KSPPREONLY, so this is numerically identical to just composite->pc.
+        # However, it gives a flexibility to reinforce the CPR parts with GMRES, which
+        # is useful for debugging.
         pc.addCompositePCType("ksp")
         # Access the newly created sub-preconditioner. PETSc assigns it a temporary
         # prefix: {parent_prefix}_sub_{i}. The right prefix will be set later.
@@ -224,8 +244,10 @@ def _assemble_pc_composite(
         child_pc.setOperators(*pc.getOperators())
 
         sub_ksp = child_pc.getKSP()
-        sub_ksp.setOperators(*pc.getOperators())  # Should it be a copy? The prefix on
-        # the matrix will be overriden! TODO: Safeguard!
+        # This may cause problems. We pass the same matrix to the sub-ksp. Below, in
+        # assemble_petsc_ksp_pc we change its prefix. It is unclear for YZ whether it
+        # can cause problems, but we need to keep it in mind.
+        sub_ksp.setOperators(*pc.getOperators())
         sub_pc = sub_ksp.getPC()
         # The actual type of each sub_pc will be fetched here from PETSc options.
         assemble_petsc_ksp_pc(

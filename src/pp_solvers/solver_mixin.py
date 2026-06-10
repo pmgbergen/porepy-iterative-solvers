@@ -217,7 +217,7 @@ class IterativeSolverMixin(pp.PorePyModel):
             # nonlinear convergence criterion from the earliear nonlinear iteration. We
             # keep this safeguard until the iterative solver is in a more mature state.
             logger.warning("RHS contains NaN or Inf values")
-            return np.full_like(rhs, np.nan)
+            return np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
 
         linear_solver_params = self.linear_solver_params()
 
@@ -313,8 +313,8 @@ class IterativeSolverMixin(pp.PorePyModel):
             logger.exception(
                 "Failed to build a PETSc linear solver based on the given linear system"
             )
-            # TODO: What if rhs is is smaller due to Schur complement reduction?
-            return np.full_like(rhs, np.nan), ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
+            nans = np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
+            return nans, ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
         elapsed = time() - t0
         self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
@@ -346,7 +346,8 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
                 info,
             )
-            return np.full_like(rhs, np.nan), info
+            nans = np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
+            return nans, info
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in reversed(self._transformations):
             x = transformation.transform_solution(x)
@@ -409,8 +410,11 @@ class IterativeSolverMixin(pp.PorePyModel):
         configuration = configuration_factory()
         validate_all_keys_are_unique(configuration.solver)
         self._petsc_ksp_pc_configuration = configuration.solver
+        # The PorePyArrangementTransformation permutes the linear system from the PorePy
+        # ordering to the ordering declared by the DofManager. Then it transforms the
+        # solution back to the PorePy ordering. It is included by default for all the
+        # problems.
         self._transformations = [
-            # TODO: Explain
             PorePyArrangementTransformation()
         ] + configuration.transformations
         self._dof_manager = DofManager(model=self, groups=configuration.groups)

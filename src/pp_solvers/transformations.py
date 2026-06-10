@@ -30,16 +30,23 @@ class LinearSystemTransformation(ABC):
 
 
 class PorePyArrangementTransformation(LinearSystemTransformation):
+    """Permutes the linear system from the PorePy ordering to the ordering declared by
+    the DofManager. Then it transforms the solution back to the PorePy ordering.
+
+    """
+
     def __init__(self) -> None:
         self.projection_columns: Optional[np.ndarray] = None
+        """Permutation of the linear system columns needed to transform solution back to
+        PorePy ordering."""
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
         if self.projection_columns is None:
             self.projection_columns = concatenate_dof_indices(dof_manager.var_dofs())
-        # By calling [:], rearrange the blocks (and thereby the underlying matrix) to
-        # match the ordering defined by the `dof_manager`.
+        # By calling [:], rearrange the underlying linear system to match the ordering
+        # defined by the `dof_manager`.
         return block_linear_system[:]
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
@@ -76,10 +83,10 @@ class SchurComplementReduction(LinearSystemTransformation):
         assert len(intersection) == 0
 
         if self.primary_dofs is None or self.secondary_dofs is None:
-            eq_dofs = dof_manager.eq_dofs()
-            self.primary_dofs = concatenate_dof_indices([eq_dofs[i] for i in keep_idx])
+            var_dofs = dof_manager.var_dofs()
+            self.primary_dofs = concatenate_dof_indices([var_dofs[i] for i in keep_idx])
             self.secondary_dofs = concatenate_dof_indices(
-                [eq_dofs[i] for i in elim_idx]
+                [var_dofs[i] for i in elim_idx]
             )
 
         # 0 - elim, 1 - keep
@@ -148,7 +155,8 @@ class ContactLinearTransformation(LinearSystemTransformation):
             )
         except ValueError:
             logger.warning(
-                "You're using ContactLinearTransformation with no interface force balance equation"
+                "You're using ContactLinearTransformation with no interface force "
+                "balance equation"
             )
             return block_linear_system
 
@@ -157,23 +165,24 @@ class ContactLinearTransformation(LinearSystemTransformation):
             # transformation is the identity matrix, nothing should be done.
             return block_linear_system
 
-        # Pick out the block matrix corresponding to the interface force balance equation
-        # (the row index) and the interface displacement variable (the column index). There
-        # is an underlying assumption that the groups in the preconditioner ordering are so
-        # that this equtaion-variable pair is on the diagonal of the matrix.
+        # Pick out the block matrix corresponding to the interface force balance
+        # equation (the row index) and the interface displacement variable (the column
+        # index). There is an underlying assumption that the groups in the
+        # preconditioner ordering are so that this equtaion-variable pair is on the
+        # diagonal of the matrix.
         J55 = block_linear_system[idx_intf_force, idx_intf_force].mat
 
         # The contribution from the interface displacement variable to the force balance
-        # should be diagonally dominant, reflecting that the interface displacement has the
-        # strongest influence on the force on its own cell (and less so on the neighboring
-        # cell, though, with the MPSA stencil, the latter will not be zero). Note that there
-        # is no connection between the two sides of a fracture; this is represented in a
-        # different block of the full matrix. Approximate the stencil by a block diagonal,
-        # and calculate the inverse cheaply.
+        # should be diagonally dominant, reflecting that the interface displacement has
+        # the strongest influence on the force on its own cell (and less so on the
+        # neighboring cell, though, with the MPSA stencil, the latter will not be zero).
+        # Note that there is no connection between the two sides of a fracture; this is
+        # represented in a different block of the full matrix. Approximate the stencil
+        # by a block diagonal, and calculate the inverse cheaply.
         J55_inv = inv_block_diag(J55, nd=dof_manager.model.nd)
 
-        # Extract the block matrix corresponding to the impact of the contact forces on the
-        # force balance equation.
+        # Extract the block matrix corresponding to the impact of the contact forces on
+        # the force balance equation.
         J54 = block_linear_system[idx_intf_force, idx_contact].mat
 
         # The transformation is given like this, see papers by Zabegaev for the details.
@@ -246,5 +255,5 @@ class ScaleSpecificVolume(LinearSystemTransformation):
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
         # Only the equations (rows) and not the variables (columns) were reordered:
-        # : Q * A * x = Q * rhs.
+        # Q * A * x = Q * rhs.
         return sol

@@ -13,8 +13,10 @@ from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.preconditioners import (
     BlockDiagonalInverter,
     BlockDiagonalPreconditioner,
+    DiagonalInverter,
     FieldSplitSchur,
     Identity,
+    PetscInverter,
 )
 from pp_solvers.transformations import SchurComplementReduction
 from testing_utils import (
@@ -405,26 +407,37 @@ def test_assemble_petsc_ksp_pc(
     [
         # Block size deduced from model.nd = 3. G1 has 3 rows, so it inverts exactly.
         {
-            "block_size": None,
+            "invertor": BlockDiagonalInverter(),
+            "block_size": 3,
             "groups_elim": ["g1"],
             "groups_keep": ["g2", "g3"],
         },
         # Custom block size.
         {
+            "invertor": BlockDiagonalInverter(block_size=1),
             "block_size": 1,
             "groups_elim": ["g1"],
             "groups_keep": ["g2", "g3"],
         },
         # Different groups. G2 and g3 have 6 rows, so it inverts approximately.
         {
+            "invertor": BlockDiagonalInverter(block_size=2),
             "block_size": 2,
+            "groups_elim": ["g2", "g3"],
+            "groups_keep": ["g1"],
+        },
+        # Diagonal invertor.
+        {
+            "invertor": DiagonalInverter(),
+            "block_size": 1,
             "groups_elim": ["g2", "g3"],
             "groups_keep": ["g1"],
         },
     ],
 )
-def test_block_diagonal_invertor(params: dict):
-    block_size: Optional[int] = params["block_size"]
+def test_petsc_invertors_invertor(params: dict):
+    invertor: PetscInverter = params["invertor"]
+    block_size: int = params["block_size"]
     groups_elim: list[str] = params["groups_elim"]
     groups_keep: list[str] = params["groups_keep"]
 
@@ -438,7 +451,7 @@ def test_block_diagonal_invertor(params: dict):
     petsc_ksp_pc_configuration = FieldSplitSchur(
         subsolver=Identity(groups=groups_elim, key="elim"),
         complement_solver=Identity(groups=groups_keep, key=schur_complement_key),
-        approximate_inverter=BlockDiagonalInverter(block_size=block_size),
+        approximate_inverter=invertor,
     )
 
     # The petsc matrices will be saved here.
@@ -453,11 +466,10 @@ def test_block_diagonal_invertor(params: dict):
     )
 
     # Doing the same procedure from Python to get the expected result.
-    bs = dof_manager.model.nd if block_size is None else block_size
     reduction = SchurComplementReduction(
         primary_groups=groups_keep,
         secondary_groups=groups_elim,
-        invertor=lambda mat: inv_block_diag(mat, nd=bs),
+        invertor=lambda mat: inv_block_diag(mat, nd=block_size),
     )
     S = reduction.transform_matrix_rhs(A, dof_manager)
 

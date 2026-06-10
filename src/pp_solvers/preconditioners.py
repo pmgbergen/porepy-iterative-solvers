@@ -722,15 +722,24 @@ class FieldSplitSchur(PetscKspPcConfiguration):
             user_options=user_options,
             dof_manager=dof_manager,
         )
-        result |= self.approximate_inverter.petsc_options(
+        result |= append_prefix_to_options(
+            prefix=self.key, options=user_options.get(self.key, {})
+        )
+
+        invertor_results = self.approximate_inverter.petsc_options(
             key=self.key,
             elim_key=self.subsolver.key,
             complement_key=self.complement_solver.key,
             dof_manager=dof_manager,
         )
-        result |= append_prefix_to_options(
-            prefix=self.key, options=user_options.get(self.key, {})
-        )
+        intersection = set(result).intersection(invertor_results)
+        if len(intersection) > 0:
+            raise ValueError(
+                "FieldSplitSchur invertor options override solver options: "
+                f"{intersection}"
+            )
+
+        result |= invertor_results
         return result
 
     def petsc_assembly_config(

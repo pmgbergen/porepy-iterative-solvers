@@ -65,7 +65,6 @@ class PetscKrylovSolver:
 
 class PcPythonPermutation:
     def __init__(self, perm: np.ndarray, block_size: int, inner_key: str):
-        # TODO: Test that petsc matrix is actually permuted
         self.petsc_pc = PETSc.PC().create()
         self.petsc_pc.setOptionsPrefix(f"{inner_key}_")
         self.petsc_is_perm = PETSc.IS().createGeneral(perm.astype(np.int32))
@@ -74,6 +73,8 @@ class PcPythonPermutation:
         self.bs = block_size
         self.b.setSizes(perm.size)
         self.b.setUp()
+
+        self.is_set_up: bool = False
 
     def __del__(self):
         self.petsc_pc.destroy()
@@ -86,11 +87,17 @@ class PcPythonPermutation:
         self.petsc_pc.view(viewer)
 
     def setFromOptions(self, pc: PETSc.PC) -> None:
+        if self.is_set_up:
+            # Set from options should be called only once.
+            raise ValueError(
+                "This class is not tested for operator reuse and may break your code."
+            )
         _, P = pc.getOperators()
         self.P_perm = P.permute(self.petsc_is_perm, self.petsc_is_perm)
         self.P_perm.setBlockSize(self.bs)
         self.petsc_pc.setOperators(self.P_perm, self.P_perm)
         self.petsc_pc.setFromOptions()
+        self.is_set_up = True
 
     def setUp(self, pc: PETSc.PC) -> None:
         self.petsc_pc.setUp()

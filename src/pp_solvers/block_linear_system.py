@@ -453,45 +453,6 @@ class BlockLinearSystem:
             validate_input=False,
         )
 
-    # def permute_left_vector_to_original(self, vec: np.ndarray) -> np.ndarray:
-    #     """The block linear system undergoes some permutations / slicing. This method
-    #     permutes the left vector (right-hand side) to restore the original arrangement
-    #     that was used when the `BlockLinearSystem` was originally created. If some
-    #     information is lost due to slicing, these values are filled with zeros.
-
-    #     """
-    #     return self._permute_vec_to_original(vec, side="left")
-
-    # def permute_right_vector_to_original(self, vec: np.ndarray) -> np.ndarray:
-    #     """The block linear system undergoes some permutations / slicing. This method
-    #     permutes the right vector (solution) to restore the original arrangement that
-    #     was used when the `BlockLinearSystem` was originally created. If some
-    #     information is lost due to slicing, these values are filled with zeros.
-
-    #     """
-    #     return self._permute_vec_to_original(vec, side="right")
-
-    # def _permute_vec_to_original(
-    #     self, vec: np.ndarray, side: Literal["left", "right"]
-    # ) -> np.ndarray:
-    #     # TODO: If build_projection introduced in dof_manager, should this be removed?
-    #     """See `permute_left_vector_to_original` and `permute_right_vector_to_original`
-    #     methods.
-
-    #     """
-    #     if side == "left":
-    #         enabled_groups = self.indexer.enabled_groups_row
-    #         original_dofs = self.indexer.original_dofs_row
-    #     elif side == "right":
-    #         enabled_groups = self.indexer.enabled_groups_col
-    #         original_dofs = self.indexer.original_dofs_col
-    #     else:
-    #         raise ValueError(f"{side = }")
-    #     dofs = [original_dofs[i] for i in enabled_groups]
-    #     result = np.zeros(sum(x.size for x in original_dofs))
-    #     result[concatenate_dof_indices(dofs)] = vec
-    #     return result
-
     # MARK: Matrix construction
 
     def set_zeros(

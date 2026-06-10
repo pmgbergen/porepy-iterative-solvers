@@ -449,7 +449,6 @@ def test_approximate_inverters_petsc_options(inverter: PetscInverter, key: str):
     ],
 )
 def test_approximate_inverters_assembly_config(inverter: PetscInverter):
-    # TODO: Test that invertor produces correct Schur complement
     assert inverter.petsc_assembly_config(dof_manager=None) == {}
 
 
@@ -579,3 +578,30 @@ def test_fieldsplit_schur_default_parameters(params: dict):
     )
     for key, value in expected_petsc_options.items():
         assert petsc_options[key] == value
+
+
+@pytest.mark.parametrize(
+    "conflicting_options",
+    [
+        {"fs": {"pc_fieldsplit_schur_precondition": "a11"}},
+        {"elim": {"mat_block_size": 5}},
+        {"keep": {"mat_schur_complement_ainv_type": "diag"}},
+    ],
+)
+def test_fieldsplit_schur_raises_on_invertor_option_conflict(conflicting_options: dict):
+    """FieldSplitSchur raises ValueError when user_options duplicate a key that the
+    approximate_inverter already manages, preventing a silent option override.
+
+    """
+    preconditioner = FieldSplitSchur(
+        subsolver=Identity(groups=["g1"], key="elim"),
+        complement_solver=ILU(groups=["g2"], key="keep"),
+        approximate_inverter=BlockDiagonalInverter(),
+        key="fs",
+    )
+
+    with pytest.raises(ValueError, match="invertor options override solver options"):
+        preconditioner.petsc_options(
+            user_options=conflicting_options,
+            dof_manager=MockDofManager(),
+        )
