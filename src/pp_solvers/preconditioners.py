@@ -120,7 +120,6 @@ class PetscInverter(ABC):
 
 
 class NoInverter(PetscInverter):
-    # TODO: Unit test!
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:

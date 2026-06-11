@@ -12,10 +12,10 @@ from scipy.sparse import csr_matrix
 from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.preconditioners import (
     BlockDiagonalInverter,
-    BlockDiagonalPreconditioner,
     DiagonalInverter,
     FieldSplitSchur,
     Identity,
+    NoInverter,
     PetscInverter,
 )
 from pp_solvers.transformations import SchurComplementReduction
@@ -435,7 +435,7 @@ def test_assemble_petsc_ksp_pc(
         },
     ],
 )
-def test_petsc_invertors_invertor(params: dict):
+def test_petsc_invertors(params: dict):
     invertor: PetscInverter = params["invertor"]
     block_size: int = params["block_size"]
     groups_elim: list[str] = params["groups_elim"]
@@ -476,6 +476,46 @@ def test_petsc_invertors_invertor(params: dict):
     S = reduction.transform_matrix_rhs(A, dof_manager)
 
     expected_mat = S.mat
+    # PETSc stores two matrices - one for ksp (amat) and one for pc (pmat). Only pmat is
+    # assembled with the block diagonal approximation applied.
+    result_pmat = petsc_to_csr(petsc_matrices[schur_complement_key]["petsc_pmat"])
+    np.testing.assert_allclose((expected_mat - result_pmat).data, 0, atol=1e-14)
+    # Amat is not assembled.
+    assert petsc_matrices[schur_complement_key]["petsc_amat"].type == "schurcomplement"
+
+
+def test_petsc_no_invertor():
+    groups_elim = ["g1", "g2"]
+    groups_keep = ["g3"]
+
+    # The block matrix consists of 3 groups: g1, g2, g3.
+    A = generate_block_linear_system()[:3]
+    dof_manager = MockDofManager(
+        groups=groups_elim + groups_keep, block_linear_system=A
+    )
+    assert dof_manager.model.nd == 3, "The test assumes a 3D model."
+
+    # Our petsc configuration is a field split with a block-diagonal invertor.
+    schur_complement_key = "keep"
+    petsc_ksp_pc_configuration = FieldSplitSchur(
+        subsolver=Identity(groups=groups_elim, key="elim"),
+        complement_solver=Identity(groups=groups_keep, key=schur_complement_key),
+        approximate_inverter=NoInverter(),
+    )
+
+    # The petsc matrices will be saved here.
+    petsc_matrices = {}
+    # Initializing the solver and saving petsc matrices.
+    _ = initialize_petsc_ksp(
+        block_linear_system=A,
+        dof_manager=dof_manager,
+        petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
+        user_options={"delete_matrices": False},
+        petsc_matrices=petsc_matrices,
+    )
+
+    keep_idx = dof_manager.indices_of_groups(groups_keep)
+    expected_mat = A[keep_idx].mat
     # PETSc stores two matrices - one for ksp (amat) and one for pc (pmat). Only pmat is
     # assembled with the block diagonal approximation applied.
     result_pmat = petsc_to_csr(petsc_matrices[schur_complement_key]["petsc_pmat"])

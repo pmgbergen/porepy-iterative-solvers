@@ -17,23 +17,28 @@ class PetscKrylovSolver:
         assembly_config: Optional[dict] = None,
         petsc_options: Optional[dict] = None,
     ) -> None:
-        """Initialize the solver with a PETSc KSP object.
+        """Initialize the solver with a PETSc KSP object. Optionally, can store
+        `assembly_config` and `petsc_options`, which were used to produce this `ksp`.
+
 
         Parameters:
             ksp: A PETSc KSP object.
-
-        TODO: Revisit docstring
+            assembly_config: A dictionary of options used during assembly of this ksp
+                from Python code.
+            petsc_options: A dictionary of PETSc CLI options used during assembly.
 
         """
         self.ksp: PETSc.KSP = ksp
         self.assembly_config: Optional[dict] = assembly_config
-        """TODO"""
+        """A dictionary of options used during assembly of this ksp from Python code."""
         self.petsc_options: Optional[dict] = petsc_options
-        """TODO"""
+        """A dictionary of PETSc CLI options used during assembly."""
 
         petsc_mat = ksp.getOperators()[0]
         self.petsc_x: PETSc.Vec = petsc_mat.createVecRight()
+        """A PETSc vector for the solution approximation."""
         self.petsc_b: PETSc.Vec = petsc_mat.createVecLeft()
+        """A PETSc vector for the right-hand side."""
         # self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
 

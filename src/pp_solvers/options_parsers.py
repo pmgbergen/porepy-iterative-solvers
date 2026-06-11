@@ -109,6 +109,7 @@ def _assemble_pc_fieldsplit_additive(
     key: str,
     petsc_matrices: Optional[dict] = None,
 ):
+    """See the docstring of `assemble_petsc_ksp_pc`."""
     assert pc.type == "fieldsplit"
 
     prefix_config = assembly_config[key]
@@ -148,6 +149,7 @@ def _assemble_pc_fieldsplit_schur(
     key: str,
     petsc_matrices: Optional[dict] = None,
 ):
+    """See the docstring of `assemble_petsc_ksp_pc`."""
     # calls: pc.setUp, ksp.setUp
     assert pc.type == "fieldsplit"
 
@@ -226,6 +228,7 @@ def _assemble_pc_composite(
     key: str,
     petsc_matrices: Optional[dict] = None,
 ):
+    """See the docstring of `assemble_petsc_ksp_pc`."""
     assert pc.type == "composite"
     stage_keys = assembly_config[key]["subsolver_keys"]
 
@@ -275,6 +278,7 @@ def _assemble_pc_python_permutation(
     key: str,
     petsc_matrices: Optional[dict] = None,
 ):
+    """See the docstring of `assemble_petsc_ksp_pc`."""
     config = assembly_config[key]
     permutation_groups: list[list[int]] = config["permutation_groups"]
     inner_key: str = config["inner_key"]
@@ -330,7 +334,7 @@ def assemble_petsc_ksp_pc(
     indexer: LinearSystemIndexer,
     key: str,
     petsc_matrices: Optional[dict] = None,
-):
+) -> None:
     """This is a recursive parser that initializes the PETSc KSP and PC objects based on
     the provided assembly config. The assembly config contains sub-dictionaries, each
     corresponding to a certain PETSc prefix. The empty prefix corresponds to the root
@@ -364,10 +368,17 @@ def assemble_petsc_ksp_pc(
     {
         "config_type": "python_permutation",
         "permutation_groups": [[1, 2], [3, 4]],  # Groups to permute.
-        "inner_key": "inner",  # key for the inner PC that operates on the permuted matrix.
+        "inner_key": "inner",  # key for the inner PC that operates on the permuted mat.
     }
 
-    TODO: Revisit docstrings
+    Parameters:
+        ksp: The PETSc KSP object to configure.
+        pc: The PETSc PC object to configure.
+        assembly_config: Nested dict mapping PETSc prefix keys to sub-solver configs.
+        indexer: Maps equation/variable group names to DOF index ranges.
+        key: The PETSc prefix key identifying this KSP/PC pair within the config.
+        petsc_matrices: Pass an empty dictionary here, and the function will store PETSc
+            matrices for each sub-solver key. Used for testing and debugging.
 
     """
     prefix = f"{key}_"
@@ -384,7 +395,7 @@ def assemble_petsc_ksp_pc(
     pc.setOptionsPrefix(prefix)
     pc.setFromOptions()
 
-    # TODO: Explain
+    # Accessing config for the current key.
     current_config: dict = assembly_config.get(key, {})
 
     petsc_amat, petsc_pmat = ksp.getOperators()
@@ -407,7 +418,7 @@ def assemble_petsc_ksp_pc(
         == pc_petsc_pmat.prefix
     )
 
-    # TODO: Explain
+    # Store PETSc matriecs for debugging or testing.
     if petsc_matrices is not None:
         petsc_matrices[key] = {
             "petsc_pmat": pc_petsc_pmat,

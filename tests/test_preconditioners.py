@@ -31,6 +31,7 @@ from pp_solvers.preconditioners import (
     FieldSplitSchur,
     FixedStressInverter,
     Identity,
+    NoInverter,
     PetscInverter,
     PetscKspPcConfiguration,
     PythonPermutationWrapper,
@@ -185,7 +186,8 @@ def test_user_options_and_prefix(configuration: PetscKspPcConfiguration):
         "this_key_should_be_ignored": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
+        user_options=user_options,
+        dof_manager=MockDofManager(groups=configuration.groups),
     )
     # User options should override defaults.
     assert petsc_options[f"custom_key_ksp_type"] == "cg"
@@ -202,7 +204,8 @@ def test_gmres_override_preconditioner_key():
         "preconditioner": {"ksp_type": "bcgs", "pc_type": "ilu"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
+        user_options=user_options,
+        dof_manager=MockDofManager(groups=configuration.groups),
     )
     # The "preconditioner" key is ignored, read the GMRES class comment.
     assert petsc_options["gmres_ksp_type"] == "cg"
@@ -401,7 +404,8 @@ def test_nested_composites():
         "i4": {"test_option": "i4"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
+        user_options=user_options,
+        dof_manager=MockDofManager(groups=configuration.groups),
     )
     # Each option should be fetched with the corresponding petsc prefix.
     for expected_key, expected_value in {
@@ -431,7 +435,8 @@ def test_nested_composites():
 
 
 @pytest.mark.parametrize(
-    "inverter", [DiagonalInverter(), BlockDiagonalInverter(), FixedStressInverter()]
+    "inverter",
+    [NoInverter(), DiagonalInverter(), BlockDiagonalInverter(), FixedStressInverter()],
 )
 @pytest.mark.parametrize("key", ["key1", "key2"])
 def test_approximate_inverters_petsc_options(inverter: PetscInverter, key: str):
@@ -474,7 +479,8 @@ def test_python_permutation():
         "p1": {"custom_option": "p1"},
     }
     petsc_options = configuration.petsc_options(
-        user_options=user_options, dof_manager=MockDofManager(groups=configuration.groups)
+        user_options=user_options,
+        dof_manager=MockDofManager(groups=configuration.groups),
     )
     for expected_key, expected_value in {
         "p1_custom_option": "p1",
