@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
-from pp_solvers import dof_manager
-from pp_solvers.options_parsers import initialize_petsc_ksp
 from testing_utils import MockDofManager, generate_block_linear_system
 
+from pp_solvers import dof_manager
 from pp_solvers.block_linear_system import BlockLinearSystem
+from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.petsc_utils import (
     clear_petsc_options,
     csr_to_petsc,

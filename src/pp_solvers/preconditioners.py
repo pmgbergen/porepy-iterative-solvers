@@ -9,9 +9,9 @@ This module also defines the default linear solver configurations for PorePy mod
 
 from __future__ import annotations
 
-from collections import defaultdict
 import logging
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Literal, Optional, Sequence
 

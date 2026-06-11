@@ -15,12 +15,8 @@ import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
-from pp_solvers.block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
-
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (

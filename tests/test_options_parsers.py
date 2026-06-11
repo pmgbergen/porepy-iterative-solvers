@@ -9,7 +9,22 @@ import numpy as np
 import pytest
 from petsc4py import PETSc
 from scipy.sparse import csr_matrix
+from testing_utils import (
+    MockDofManager,
+    generate_block_linear_system,
+    generate_reference_dofs_3_groups,
+)
+
+# integration tests for all the default factories (not here, in preconditioners?)
+from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.mat_utils import inv_block_diag
+from pp_solvers.options_parsers import assemble_petsc_ksp_pc, initialize_petsc_ksp
+from pp_solvers.petsc_utils import (
+    clear_petsc_options,
+    csr_to_petsc,
+    insert_petsc_options,
+    petsc_to_csr,
+)
 from pp_solvers.preconditioners import (
     BlockDiagonalInverter,
     DiagonalInverter,
@@ -20,21 +35,6 @@ from pp_solvers.preconditioners import (
     PetscInverter,
 )
 from pp_solvers.transformations import SchurComplementReduction
-from testing_utils import (
-    MockDofManager,
-    generate_block_linear_system,
-    generate_reference_dofs_3_groups,
-)
-
-# integration tests for all the default factories (not here, in preconditioners?)
-from pp_solvers.block_linear_system import BlockLinearSystem
-from pp_solvers.options_parsers import assemble_petsc_ksp_pc, initialize_petsc_ksp
-from pp_solvers.petsc_utils import (
-    clear_petsc_options,
-    csr_to_petsc,
-    insert_petsc_options,
-    petsc_to_csr,
-)
 
 
 @pytest.fixture

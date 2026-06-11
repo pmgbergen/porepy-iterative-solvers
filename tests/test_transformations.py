@@ -12,12 +12,10 @@ import porepy as pp
 import pytest
 import scipy.sparse as sp
 from porepy.applications.test_utils.models import add_mixin
-from scipy.sparse.linalg import spsolve, inv
+from scipy.sparse.linalg import inv, spsolve
+from testing_utils import MockDofManager, generate_block_linear_system
 
-from pp_solvers.block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
@@ -34,10 +32,6 @@ from pp_solvers.transformations import (
     PorePyArrangementTransformation,
     ScaleSpecificVolume,
     SchurComplementReduction,
-)
-from testing_utils import (
-    MockDofManager,
-    generate_block_linear_system,
 )
 
 

@@ -1,8 +1,9 @@
 import pytest
+
 from pp_solvers.solver_selection.solver_space import (
-    SolverSpace,
     CategoricalChoices,
     NumericalChoices,
+    SolverSpace,
     explain_decisions,
 )
 
