@@ -734,10 +734,15 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         )
         intersection = set(result).intersection(invertor_results)
         if len(intersection) > 0:
-            raise ValueError(
-                "FieldSplitSchur invertor options override solver options: "
-                f"{intersection}"
-            )
+            for key in intersection:
+                from_subsolvers = result[key]
+                from_invertor = invertor_results[key]
+                if from_subsolvers != from_invertor:
+                    raise ValueError(
+                        "FieldSplitSchur invertor options override solver options: "
+                        f"{intersection}. Value from sub-solvers: {from_subsolvers}, "
+                        f"value from invertor: {from_invertor}."
+                    )
 
         result |= invertor_results
         return result
