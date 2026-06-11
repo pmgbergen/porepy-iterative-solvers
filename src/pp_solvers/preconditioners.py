@@ -39,7 +39,6 @@ from pp_solvers.transformations import (
     ContactLinearTransformation,
     LinearSystemTransformation,
     ScaleSpecificVolume,
-    SchurComplementReduction,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,17 +98,19 @@ class PetscInverter(ABC):
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:
-        """Builds the PETSc options for the approximate Schur complement inverter.
+        """Return PETSc options for the approximate Schur complement inverter.
 
         Parameters:
-            prefix: The PETSc options prefix of the owning `FieldSplitSchur` node. The
-                `pc_fieldsplit_schur_precondition` option applies to this context.
-            complement_prefix: The PETSc options prefix of the complement sub-solver
-                (the kept block ``S``). Options that configure the (non-assembled) Schur
-                complement matrix apply to this context.
+            key: PETSc prefix of the owning `FieldSplitSchur` node. Options such as
+                `pc_fieldsplit_schur_precondition` are scoped to this prefix.
+            elim_key: PETSc prefix of the eliminated block sub-solver (A00).
+            complement_key: PETSc prefix of the Schur complement sub-solver (S11).
+                Options that configure the unassembled Schur complement matrix are
+                scoped here.
+            dof_manager: Used to resolve model properties (e.g. ambient dimension).
 
-        TODO: Revision docstring
-
+        Returns:
+            Dict of PETSc CLI options keyed by their fully-prefixed option name.
         """
 
     def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
@@ -144,8 +145,17 @@ class DiagonalInverter(PetscInverter):
 
 
 class BlockDiagonalInverter(PetscInverter):
+    """Block-diagonal inverter for the eliminated block A00 in a Schur complement split.
+
+    The block size must match that of A00. For example, if the block size is 3,
+    the eliminated ILU sub-solver must also be configured with block size 3.
+
+    Parameters:
+        block_size: By default, uses the PorePy model ambient dimension.
+
+    """
+
     def __init__(self, block_size: Optional[int] = None) -> None:
-        # TODO: Docstring
         self.block_size: Optional[int] = block_size
 
     def petsc_options(
@@ -266,76 +276,72 @@ class PetscKspPcConfiguration(ABC):
 
     @abstractmethod
     def petsc_options(self, user_options: dict, dof_manager: DofManager) -> dict:
-        """Builds the options for PETSc command-line format. The non-leaf solvers
-        include the options of their children sub-solvers, with the corresponding
-        prefixes.
+        """Return a flat dict of PETSc CLI options for this solver and all sub-solvers.
+
+        Each option key is prefixed with the `key` of the node that owns it, e.g. an
+        option ``pc_type`` on a node with ``key="mechanics"`` becomes
+        ``"mechanics_pc_type"``. Sub-solver options are included recursively, so the
+        returned dict covers the full solver hierarchy.
 
         Parameters:
-            user_options: A dictionary of the petsc options that the user can pass to
-                customize the setup. Expected format:
-                ```
-                {
-                    key: {
-                        "petsc_option_1": "value1",
-                        "petsc_option_2": "value2",
+            user_options: Per-node overrides keyed by `PetscKspPcConfiguration.key`.
+                Format::
+
+                    {
+                        "mechanics": {"pc_type": "gamg"},
+                        "flow":      {"ksp_type": "preonly"},
                     }
-                }
-                ```
-                where `key` corresponds to the unique `PetscKspPcConfiguration.key` of
-                the subsolver to apply options. The user should provide options without
-                a prefix, e.g. "pc_type", not "fieldsplit_sub_0_pc_type".
 
-            prefix: PETSc prefix to use with the options. If the method is called from
-                the user code, the empty prefix should typically be used. Internally,
-                used in recursion. (TODO)
+                Options should be provided without a prefix - the correct prefix is
+                derived from the node's key automatically.
+            dof_manager: DOF manager for the problem; used to resolve group-to-DOF
+                mappings and model properties (e.g. ambient dimension).
 
-            dof_manager: The `DofManager` for the problem.
-
-        Returns: A flat dictionary of PETSc command-line options.
-
+        Returns:
+            Flat dict of fully-prefixed PETSc CLI options ready to pass to
+            `insert_petsc_options`.
         """
 
     def petsc_assembly_config(
         self, user_options: dict, dof_manager: DofManager
     ) -> dict:
-        """Builds a configuration for the `assemble_petsc_ksp_pc` function. The non-leaf
-        solvers include the configurations of their children sub-solvers, with the
-        corresponding prefixes.
+        """Return the assembly config consumed by `assemble_petsc_ksp_pc`.
 
-        Parameters:
-            user_options: A dictionary of the petsc options that the user can pass to
-                customize the setup. See `PetscKspPcConfiguration.petsc_options` for
-                more info.
+        The config is a flat dict keyed by node `key` values. Each entry describes
+        how `assemble_petsc_ksp_pc` should set up the corresponding KSP/PC pair.
+        Non-leaf nodes include the configs of their sub-solvers, so the returned
+        dict covers the full hierarchy. Format::
 
-            prefix: PETSc prefix to use with the options. If the method is called from
-                the user code, the empty prefix should typically be used. Internally,
-                used in recursion.  (TODO)
-
-            dof_manager: The `DofManager` for the problem.
-
-        Returns: A dictionary of the following structure:
-            ```
             {
-                petsc_prefix_1: {
+                "root_key": {
                     "config_type": "fieldsplit_schur",
+                    "elim_key": "mechanics",
+                    "keep_key": "flow",
                     ...
                 },
-                petsc_prefix_2: {
+                "mechanics": {
                     "config_type": "composite",
                     ...
                 },
                 ...
             }
-            ```
-            where each sub-dictionary corresponds to a sub-solver, which needs to be
-            configured via python. `petsc_prefix_x` corresponds to the petsc prefix of
-            this sub-solver.
 
+        Parameters:
+            user_options: Per-node overrides. See `petsc_options` for the format.
+            dof_manager: DOF manager for the problem.
+
+        Returns:
+            Flat dict mapping each node's key to its assembly sub-config dict.
         """
         return {}
 
     def get_children(self) -> list[PetscKspPcConfiguration]:
-        # TODO: Docstring, unit test
+        """Return the direct sub-solver nodes of this configuration node.
+
+        Used to traverse the solver tree, e.g., to validate that all node keys are
+        unique. Leaf nodes (ILU, AMG, etc.) return an empty list; composite nodes
+        override this to return their sub-solvers.
+        """
         return []
 
 
@@ -556,7 +562,7 @@ class FieldSplit(PetscKspPcConfiguration):
         key: Optional[str] = None,
         fieldsplit_type: Literal[
             "additive", "multiplicative", "symmetric_multiplicative"
-        ] = "additive",  # TODO: Unit tests!
+        ] = "additive",
     ) -> None:
         # PETSc accepts more fieldsplit types than this class supports.
         if fieldsplit_type == "schur":

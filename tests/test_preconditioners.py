@@ -136,6 +136,10 @@ def test_configurations_sanity_checks(configuration: PetscKspPcConfiguration):
         user_options={}, dof_manager=MockDofManager(groups=configuration.groups)
     )
     assert isinstance(config, dict)
+    # 4. assert that get_children works.
+    all_children = configuration.get_children()
+    for child in all_children:
+        assert isinstance(child, PetscKspPcConfiguration)
 
 
 def test_fieldsplit_bad_groups():
@@ -500,12 +504,8 @@ def test_python_permutation():
     }
 
 
-@pytest.fixture
-def block_linear_system() -> BlockLinearSystem:
-    return generate_block_linear_system()
-
-
 def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
+    block_linear_system = generate_block_linear_system()
     krylov_solver = initialize_petsc_ksp(
         block_linear_system=block_linear_system,
         dof_manager=MockDofManager(groups=["mock_g1"]),

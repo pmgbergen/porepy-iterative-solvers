@@ -13,6 +13,7 @@ from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.preconditioners import (
     BlockDiagonalInverter,
     DiagonalInverter,
+    FieldSplit,
     FieldSplitSchur,
     Identity,
     NoInverter,
@@ -334,9 +335,9 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                 "petsc_options": {
                     "root_ksp_type": "preonly",
                     "root_pc_type": "fieldsplit",
-                    "root_pc_fieldsplit_type": "additive",
+                    "root_pc_fieldsplit_type": "multiplicative",
                     "s0_pc_type": "fieldsplit",
-                    "s0_pc_fieldsplit_type": "additive",
+                    "s0_pc_fieldsplit_type": "symmetric-multiplicative",
                     "s01_pc_type": "sor",
                     "s1_ksp_type": "bcgs",
                 },
@@ -522,3 +523,35 @@ def test_petsc_no_invertor():
     np.testing.assert_allclose((expected_mat - result_pmat).data, 0, atol=1e-14)
     # Amat is not assembled.
     assert petsc_matrices[schur_complement_key]["petsc_amat"].type == "schurcomplement"
+
+
+@pytest.mark.parametrize(
+    "fieldsplit_type", ["additive", "multiplicative", "symmetric_multiplicative"]
+)
+def test_fieldsplit_common_type(capfd, fieldsplit_type: str):
+    # capfd captures the PETSc.PC.view() stdout and stderr.
+    configuration = FieldSplit(
+        subsolvers=[
+            Identity(groups=["g1"], key="i1"),
+            Identity(groups=["g2"], key="i2"),
+            Identity(groups=["g3"], key="i3"),
+        ],
+        fieldsplit_type=fieldsplit_type,
+    )
+    A = generate_block_linear_system(num_dofs_per_group=[2, 3, 4])
+    dof_manager = MockDofManager(groups=["g1", "g2", "g3"], block_linear_system=A)
+    solver = initialize_petsc_ksp(
+        block_linear_system=A,
+        dof_manager=dof_manager,
+        petsc_ksp_pc_configuration=configuration,
+        user_options={},
+    )
+    pc = solver.ksp.getPC()
+    assert pc.type == "fieldsplit"
+
+    pc.view()
+    stdout, _ = capfd.readouterr()
+    assert (
+        f"fieldsplit with {fieldsplit_type} composition: total splits = 3"
+        in stdout.lower()
+    )
