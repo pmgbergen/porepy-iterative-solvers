@@ -35,6 +35,8 @@ from pp_solvers.preconditioners import (
     PetscInverter,
     PetscKspPcConfiguration,
     PythonPermutationWrapper,
+    _validate_subsolvers_keys_are_unique,
+    validate_all_keys_are_unique,
 )
 
 
@@ -504,7 +506,7 @@ def test_python_permutation():
     }
 
 
-def test_petsc_ksp_scheme(block_linear_system: BlockLinearSystem):
+def test_petsc_ksp_scheme():
     block_linear_system = generate_block_linear_system()
     krylov_solver = initialize_petsc_ksp(
         block_linear_system=block_linear_system,
@@ -618,3 +620,63 @@ def test_fieldsplit_schur_raises_on_invertor_option_conflict(conflicting_options
             user_options=conflicting_options,
             dof_manager=MockDofManager(groups=preconditioner.groups),
         )
+
+
+def test_validate_subsolvers_keys_are_unique():
+    with pytest.raises(ValueError):
+        _validate_subsolvers_keys_are_unique(
+            [Identity(["g1"]), ILU(["g2"]), Identity(["g3"])], "root"
+        )
+
+    _validate_subsolvers_keys_are_unique(
+        [Identity(["g1"]), ILU(["g2"]), AMG(["g3"])], "root"
+    )
+
+
+def test_validate_all_keys_are_unique():
+    with pytest.raises(ValueError):
+        validate_all_keys_are_unique(
+            GMRES(
+                FieldSplitSchur(
+                    subsolver=Identity(groups=["g1"]),
+                    approximate_inverter=NoInverter(),
+                    complement_solver=FieldSplitSchur(
+                        subsolver=ILU(groups=["g2"]),
+                        approximate_inverter=NoInverter(),
+                        complement_solver=FieldSplitSchur(
+                            approximate_inverter=NoInverter(),
+                            subsolver=Identity(groups=["g3"]),
+                            complement_solver=AMG(groups=["g4"]),
+                        ),
+                    ),
+                )
+            )
+        )
+
+    with pytest.raises(ValueError):
+        validate_all_keys_are_unique(
+            CompositePreconditioner(
+                subsolvers=[
+                    Identity(groups=["g1", "g2"]),
+                    FieldSplit(
+                        subsolvers=[Identity(groups=["g1"]), ILU(groups=["g2"])]
+                    ),
+                ]
+            )
+        )
+
+    validate_all_keys_are_unique(
+        FieldSplitSchur(
+            subsolver=Identity(groups=["g1"], key="i1"),
+            approximate_inverter=NoInverter(),
+            complement_solver=FieldSplitSchur(
+                subsolver=ILU(groups=["g2"], key="ilu"),
+                approximate_inverter=NoInverter(),
+                complement_solver=FieldSplitSchur(
+                    approximate_inverter=NoInverter(),
+                    subsolver=Identity(groups=["g3"], key="i3"),
+                    complement_solver=AMG(groups=["g4"], key="i4"),
+                ),
+            ),
+        )
+    )

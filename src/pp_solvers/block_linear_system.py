@@ -36,8 +36,6 @@ class LinearSystemIndexer:
         self,
         dofs_row: list[np.ndarray],
         dofs_col: list[np.ndarray],
-        original_dofs_row: Optional[list[np.ndarray]] = None,
-        original_dofs_col: Optional[list[np.ndarray]] = None,
         group_names_row: Optional[list[str]] = None,
         group_names_col: Optional[list[str]] = None,
         enabled_groups_row: Optional[list[int]] = None,
@@ -70,22 +68,6 @@ class LinearSystemIndexer:
         """List of column groups that are enabled. A group is enabled by default, but
         can be disabled if we slice a submatrix without this group. Also indicates the
         order of column permutations.
- 
-        """
-        if original_dofs_row is None:
-            original_dofs_row = [x.copy() for x in dofs_row]
-        self.original_dofs_row: list[np.ndarray] = original_dofs_row
-        """Same as `dofs_row`, but this list does not change after slicing or
-        permutations. Needed for reverse transformations to the original PorePy
-        arrangement.
- 
-        """
-        if original_dofs_col is None:
-            original_dofs_col = [x.copy() for x in dofs_col]
-        self.original_dofs_col: list[np.ndarray] = original_dofs_col
-        """Same as `dofs_col`, but this list does not change after slicing or
-        permutations. Needed for reverse transformations to the original PorePy
-        arrangement.
  
         """
 
@@ -136,8 +118,6 @@ class LinearSystemIndexer:
         return LinearSystemIndexer(
             dofs_row=new_dofs_row,
             dofs_col=new_dofs_col,
-            original_dofs_row=self.original_dofs_row,  # unchanged
-            original_dofs_col=self.original_dofs_col,  # unchanged
             group_names_col=self.group_names_col,  # unchanged
             group_names_row=self.group_names_row,  # unchanged
             enabled_groups_row=groups_row,
@@ -290,6 +270,7 @@ class BlockLinearSystem:
         rhs: np.ndarray,
         indexer: LinearSystemIndexer,
         validate_input: bool = True,
+        dofs_are_sorted: bool = False,
     ):
         self.mat: csr_matrix = mat
         """The matrix itself."""
@@ -298,7 +279,13 @@ class BlockLinearSystem:
         self.indexer: LinearSystemIndexer = indexer
         """The indexer object that contains information about indices that correspond to
         different groups."""
-
+        self.dofs_are_sorted: bool = dofs_are_sorted
+        """True if the DoFs are arranged contiguously by group in the matrix: all DoFs
+        of group 0 appear before group 1, etc. PorePy matrices have this False by
+        default; many algorithms require sorted DoFs. Use
+        `PorePyArrangementTransformation`, or ``block_linear_system[:]``, to produce a
+        sorted copy.
+        """
         if validate_input:
             validate_block_matrix(self)
 
@@ -375,6 +362,12 @@ class BlockLinearSystem:
             # incurred overhead is minor compared to the benefits in saving memory.
             sliced_matrix.data = sliced_matrix.data.copy()
 
+        # Dofs are sorted if the requested groups order is ascending.
+        groups_row, groups_col = self.indexer.correct_validate_getitem_key(key)
+        dofs_are_sorted = bool(
+            np.all(np.diff(groups_row) > 0) and np.all(np.diff(groups_col) > 0)
+        )
+
         # Return a new block linear system object with the selected blocks. Compared to
         # the current object, the new object potentially has a subset of enabled groups,
         # with a corresponding subset of local indices (dofs_row and dofs_col).
@@ -383,6 +376,7 @@ class BlockLinearSystem:
             rhs=rhs,
             indexer=self.indexer[key],
             validate_input=False,
+            dofs_are_sorted=dofs_are_sorted,
         )
 
     def __setitem__(

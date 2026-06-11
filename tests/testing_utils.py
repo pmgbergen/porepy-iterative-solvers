@@ -156,11 +156,11 @@ class MockDofManager:
             raise ValueError(
                 "Pass block_linear_system to MockDofManager to use eq_dofs()"
             )
-        return self._block_linear_system.indexer.original_dofs_row
+        return self._block_linear_system.indexer.dofs_row
 
     def var_dofs(self) -> list:
         if self._block_linear_system is None:
             raise ValueError(
                 "Pass block_linear_system to MockDofManager to use var_dofs()"
             )
-        return self._block_linear_system.indexer.original_dofs_col
+        return self._block_linear_system.indexer.dofs_col

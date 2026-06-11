@@ -17,22 +17,20 @@ from scipy.sparse.linalg import spsolve, inv
 from pp_solvers.block_linear_system import (
     BlockLinearSystem,
     LinearSystemIndexer,
-    concatenate_dof_indices,
 )
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
-    InterfaceForceBalanceGroup,
     MassBalancePressureFracturesGroup,
     MassBalancePressureIntersectionsGroup,
 )
 from pp_solvers.mat_utils import inv_block_diag
-from pp_solvers.preconditioners import th_factory
 from pp_solvers.solver_mixin import IterativeSolverMixin, LinearSolverParams
 from pp_solvers.transformations import (
     ContactLinearTransformation,
+    LinearSystemTransformation,
     PorePyArrangementTransformation,
     ScaleSpecificVolume,
     SchurComplementReduction,
@@ -40,10 +38,6 @@ from pp_solvers.transformations import (
 from testing_utils import (
     MockDofManager,
     generate_block_linear_system,
-    generate_reference_dofs_3_groups,
-    generate_reference_matrix_3_groups,
-    generate_reference_rhs_3_groups,
-    generate_reference_submatrices_3_groups,
 )
 
 
@@ -98,17 +92,11 @@ def model(model_kind: str, with_fractures: bool):
     return model
 
 
-def test_porepy_arrangement_transformation(
-    model: IterativeSolverMixin, model_kind: str, with_fractures: bool
-):
-    """Solve the unpermuted system, permute it, solve, permute back, and compare."""
-    dof_manager: DofManager = model._dof_manager
+@pytest.fixture
+def linear_system(model: IterativeSolverMixin):
     mat, rhs = model.linear_system
-    rhs = rhs.copy()
-
-    sol = spsolve(mat, rhs)
-
-    linear_system = BlockLinearSystem(
+    dof_manager: DofManager = model._dof_manager
+    return BlockLinearSystem(
         mat=mat.copy(),
         rhs=rhs.copy(),
         indexer=LinearSystemIndexer(
@@ -119,15 +107,29 @@ def test_porepy_arrangement_transformation(
         ),
     )
 
+
+def test_porepy_arrangement_transformation(
+    model: IterativeSolverMixin,
+    linear_system: BlockLinearSystem,
+    model_kind: str,
+    with_fractures: bool,
+):
+    """Solve the unpermuted system, permute it, solve, permute back, and compare."""
+    dof_manager: DofManager = model._dof_manager
+
+    sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
+
     transformation = PorePyArrangementTransformation()
     permuted_linear_system = transformation.transform_matrix_rhs(
         linear_system, dof_manager=dof_manager
     )
     # The flow model without fractures has a single group, so should be no difference.
     should_permute = model_kind != "flow" or with_fractures
-    assert np.allclose(rhs, permuted_linear_system.rhs) != should_permute
+    assert np.allclose(linear_system.rhs, permuted_linear_system.rhs) != should_permute
 
-    sol_permuted = spsolve(permuted_linear_system.mat, permuted_linear_system.rhs)
+    sol_permuted = spsolve(
+        permuted_linear_system.mat.tocsc(), permuted_linear_system.rhs
+    )
     assert np.allclose(sol, sol_permuted) != should_permute
 
     actual_sol = transformation.transform_solution(sol_permuted)
@@ -173,14 +175,17 @@ def test_schur_complement_reduction(
 
     # The reduced system covers only the primary groups.
     assert S.mat.shape == (sum(num_dofs_primary), sum(num_dofs_primary))
-    x_reduced = spsolve(S.mat, S.rhs)
+    x_reduced = spsolve(S.mat.tocsc(), S.rhs)
     x_full = reduction.transform_solution(x_reduced)
 
     np.testing.assert_allclose(A.mat @ x_full, A.rhs, atol=1e-16)
 
 
 def test_contact_transformation(
-    model: IterativeSolverMixin, model_kind: str, with_fractures: bool
+    model: IterativeSolverMixin,
+    linear_system: BlockLinearSystem,
+    model_kind: str,
+    with_fractures: bool,
 ):
     """Solve the unpermuted system, permute, solve, permute back, and compare.
 
@@ -188,21 +193,8 @@ def test_contact_transformation(
     and non-singular after, and that the rest of the matrix is unchanged.
     """
     dof_manager: DofManager = model._dof_manager
-    mat, rhs = model.linear_system
-    rhs = rhs.copy()
 
-    sol = spsolve(mat, rhs)
-
-    linear_system = BlockLinearSystem(
-        mat=mat.copy(),
-        rhs=rhs.copy(),
-        indexer=LinearSystemIndexer(
-            dofs_row=dof_manager.eq_dofs(),
-            dofs_col=dof_manager.var_dofs(),
-            group_names_row=dof_manager.equation_names(),
-            group_names_col=dof_manager.variable_names(),
-        ),
-    )
+    sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
 
     # Contact transformation requires that groups are sorted, so we first appply the
     # PorePyArrangementTransformation, which does that.
@@ -221,9 +213,9 @@ def test_contact_transformation(
         permuted_contact_submat = permuted_linear_system[contact_idx]
         # Matrix should be singular.
         with pytest.raises(RuntimeError):
-            _ = inv(contact_submat.mat)
+            _ = inv(contact_submat.mat.tocsc())
         # Transformed matrix should be non-singular.
-        _ = inv(permuted_contact_submat.mat)
+        _ = inv(permuted_contact_submat.mat.tocsc())
 
     # Check that the rest of the matrix did not change.
     unchanged_groups = [g for g in dof_manager.groups() if g != ContactMechanicsGroup()]
@@ -232,7 +224,9 @@ def test_contact_transformation(
     submat_after_transformation = permuted_linear_system[unchanged_groups_idx].mat
     assert (original_submat - submat_after_transformation).data.size == 0
 
-    sol_permuted = spsolve(permuted_linear_system.mat, permuted_linear_system.rhs)
+    sol_permuted = spsolve(
+        permuted_linear_system.mat.tocsc(), permuted_linear_system.rhs
+    )
     actual_sol = sol_permuted
     for transformation in reversed(transformations):
         actual_sol = transformation.transform_solution(actual_sol)
@@ -248,6 +242,7 @@ def test_contact_transformation(
 )
 def test_scale_specific_volume(
     model: IterativeSolverMixin,
+    linear_system: BlockLinearSystem,
     model_kind: str,
     with_fractures: bool,
     groups_to_scale: list[EquationVariableGroup],
@@ -260,21 +255,8 @@ def test_scale_specific_volume(
     if model_kind == "flow":
         return
     dof_manager: DofManager = model._dof_manager
-    mat, rhs = model.linear_system
-    rhs = rhs.copy()
 
-    sol = spsolve(mat, rhs)
-
-    linear_system = BlockLinearSystem(
-        mat=mat.copy(),
-        rhs=rhs.copy(),
-        indexer=LinearSystemIndexer(
-            dofs_row=dof_manager.eq_dofs(),
-            dofs_col=dof_manager.var_dofs(),
-            group_names_row=dof_manager.equation_names(),
-            group_names_col=dof_manager.variable_names(),
-        ),
-    )
+    sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
 
     # ScaleSpecificVolume requires that groups are sorted, so we first appply the
     # PorePyArrangementTransformation, which does that.
@@ -307,11 +289,36 @@ def test_scale_specific_volume(
     original_submat = linear_system[groups_not_changed_idx].mat
     assert (unchanged_submat - original_submat).size == 0
 
-    sol_permuted = spsolve(permuted_linear_system.mat, permuted_linear_system.rhs)
+    sol_permuted = spsolve(
+        permuted_linear_system.mat.tocsc(), permuted_linear_system.rhs
+    )
     actual_sol = sol_permuted
     for transformation in reversed(transformations):
         actual_sol = transformation.transform_solution(actual_sol)
     np.testing.assert_allclose(sol, actual_sol)
 
 
-# TODO: And the rest of todos...
+@pytest.mark.parametrize(
+    "transformation",
+    [
+        ContactLinearTransformation(),
+        ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+    ],
+)
+def test_transformations_with_unsorted_dofs(
+    transformation: LinearSystemTransformation,
+    linear_system: BlockLinearSystem,
+    model_kind: str,
+    model: IterativeSolverMixin,
+):
+    """Transformations that require sorted DoFs raise ValueError when given an
+    unsorted (raw PorePy) linear system."""
+    if model_kind == "flow":
+        return
+    dof_manager: DofManager = model._dof_manager
+
+    with pytest.raises(
+        ValueError,
+        match="Use .+ after PorePyArrangementTransformation.",
+    ):
+        _ = transformation.transform_matrix_rhs(linear_system, dof_manager)

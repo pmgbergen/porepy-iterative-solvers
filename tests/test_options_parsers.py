@@ -337,7 +337,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     "root_pc_type": "fieldsplit",
                     "root_pc_fieldsplit_type": "multiplicative",
                     "s0_pc_type": "fieldsplit",
-                    "s0_pc_fieldsplit_type": "symmetric-multiplicative",
+                    "s0_pc_fieldsplit_type": "symmetric_multiplicative",
                     "s01_pc_type": "sor",
                     "s1_ksp_type": "bcgs",
                 },
@@ -354,7 +354,7 @@ reference_dofs_row, reference_dofs_col = generate_reference_dofs_3_groups()
                     },
                 },
             },
-            id="nested fieldsplit additive",
+            id="nested fieldsplit common",
         ),
     ],
 )

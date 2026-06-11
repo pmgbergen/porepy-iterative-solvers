@@ -380,7 +380,6 @@ class IterativeSolverMixin(pp.PorePyModel):
         )
 
         # Apply transformations to the linear systems before passing it to the solver.
-        # TODO: Unit tests!
         for transformation in self._transformations:
             linear_system = transformation.transform_matrix_rhs(
                 linear_system, dof_manager=dof_manager

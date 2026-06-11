@@ -67,6 +67,20 @@ class PorePyArrangementTransformation(LinearSystemTransformation):
 
 
 class SchurComplementReduction(LinearSystemTransformation):
+    """Reduces a block linear system by Schur complement elimination.
+
+    Given groups partitioned into *primary* (kept) and *secondary* (eliminated),
+    forms the reduced system:
+
+        S = A_11 - A_10 * inv(A_00) * A_01
+        rhs_S = b_1 - A_10 * inv(A_00) * b_0
+
+    where group 0 is secondary and group 1 is primary. After the reduced system
+    is solved for x_1, the secondary solution x_0 is recovered by
+    back-substitution: x_0 = inv(A_00) * (b_0 - A_01 * x_1).
+
+    """
+
     def __init__(
         self,
         primary_groups: list[EquationVariableGroup],
@@ -76,16 +90,29 @@ class SchurComplementReduction(LinearSystemTransformation):
         if invertor is None:
             invertor = lambda mat: inv_block_diag(mat, nd=1)
         self.invertor = invertor
+        """Callable that inverts the secondary block A_00. Defaults to block-diagonal
+        inversion with block size 1."""
         self.primary_groups: list[EquationVariableGroup] = primary_groups
+        """Equation-variable groups to keep in the reduced system."""
         self.secondary_groups: list[EquationVariableGroup] = secondary_groups
+        """Equation-variable groups to eliminate via Schur complement."""
         self.primary_dofs: Optional[np.ndarray] = None
+        """DoF indices for the primary groups. Populated on the first call to
+        `transform_matrix_rhs`."""
         self.secondary_dofs: Optional[np.ndarray] = None
+        """DoF indices for the secondary groups. Populated on the first call to
+        `transform_matrix_rhs`."""
         self.A01: Optional[BlockLinearSystem] = None
+        """Off-diagonal block A_01 (secondary rows, primary columns). Saved for
+        back-substitution in `transform_solution`."""
         self.A00_inv: Optional[csr_matrix] = None
+        """Inverse of the secondary block A_00. Saved for back-substitution in
+        `transform_solution`."""
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
+        """Forms the Schur complement system and stores intermediate results."""
         keep_idx = dof_manager.indices_of_groups(self.primary_groups)
         elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
         intersection = set(keep_idx).intersection(elim_idx)
@@ -121,6 +148,7 @@ class SchurComplementReduction(LinearSystemTransformation):
         return S11
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
+        """Recovers the full solution via back-substitution."""
         if (
             self.primary_dofs is None
             or self.secondary_dofs is None
@@ -143,14 +171,30 @@ class SchurComplementReduction(LinearSystemTransformation):
 
 
 class ContactLinearTransformation(LinearSystemTransformation):
+    """Applies a right column transformation to handle contact mechanics.
+
+    Assembles a transformation matrix Q that absorbs the contact-force column
+    block into the interface force balance equation, improving conditioning of
+    the contact mechanics block. The system becomes A * Q, and the raw solver
+    solution is mapped back via Q * x.
+
+    Must be applied after `PorePyArrangementTransformation` (requires sorted DoFs).
+
+    """
+
     def __init__(self) -> None:
         self.transformation_matrix: Optional[csr_matrix] = None
+        """The right transformation matrix Q. Populated by `transform_matrix_rhs`
+        and applied in `transform_solution`."""
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
         """Assemble the right linear transformation."""
-        # TODO: Make a flag that bmat is sorted, and test it.
+        if not block_linear_system.dofs_are_sorted:
+            raise ValueError(
+                "Use ContactLinearTransformation after PorePyArrangementTransformation."
+            )
         try:
             idx_contact = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
         except ValueError:
@@ -219,6 +263,7 @@ class ContactLinearTransformation(LinearSystemTransformation):
         return block_linear_system
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
+        """Applies Q to map the raw solver solution back to the original space."""
         if self.transformation_matrix is None:
             # Transformation matrix may be not set if transform_matrix_rhs return early
             # due to no transformation.
@@ -227,13 +272,27 @@ class ContactLinearTransformation(LinearSystemTransformation):
 
 
 class ScaleSpecificVolume(LinearSystemTransformation):
+    """Scales selected equation groups (rows) by the inverse specific volume.
+
+    Assembles a left row-scaling Q with diagonal entries 1 / specific_volume,
+    and applies it as Q * A * x = Q * rhs. The solution vector is unchanged.
+
+    Must be applied after `PorePyArrangementTransformation` (requires sorted DoFs).
+
+    """
+
     def __init__(self, groups: list[EquationVariableGroup]):
         self.groups: list[EquationVariableGroup] = groups
+        """Equation-variable groups whose rows are scaled by 1 / specific_volume."""
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
         """Assemble the right linear transformation for scaling energy fluxes."""
+        if not block_linear_system.dofs_are_sorted:
+            raise ValueError(
+                "Use ScaleSpecificVolume after PorePyArrangementTransformation."
+            )
         try:
             idx_to_scale = dof_manager.indices_of_groups(self.groups)
         except ValueError:
@@ -264,6 +323,5 @@ class ScaleSpecificVolume(LinearSystemTransformation):
         return block_linear_system
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
-        # Only the equations (rows) and not the variables (columns) were reordered:
-        # Q * A * x = Q * rhs.
+        """Returns the solution unchanged (only rows were scaled, not columns)."""
         return sol

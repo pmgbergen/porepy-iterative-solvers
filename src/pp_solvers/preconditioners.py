@@ -502,7 +502,7 @@ class CompositePreconditioner(PetscKspPcConfiguration):
                     "CompositePreconditioner subsolvers must operate on identical"
                     " groups."
                 )
-        validate_subsolvers_keys_are_unique(
+        _validate_subsolvers_keys_are_unique(
             subsolvers=subsolvers,
             current_node_repr=f"CompositePreconditioner({key = })",
         )
@@ -585,7 +585,7 @@ class FieldSplit(PetscKspPcConfiguration):
             # Non-unique groups are present.
             raise ValueError(f"Groups in FieldSplit should not overlap: {self.groups}")
 
-        validate_subsolvers_keys_are_unique(
+        _validate_subsolvers_keys_are_unique(
             subsolvers=self.subsolvers,
             current_node_repr=f"FieldSplit({key = })",
         )
@@ -696,7 +696,7 @@ class FieldSplitSchur(PetscKspPcConfiguration):
         if len(intersection) > 0:
             raise ValueError(f"Groups in FielSplit should not overlap: {intersection}")
 
-        validate_subsolvers_keys_are_unique(
+        _validate_subsolvers_keys_are_unique(
             subsolvers=[self.subsolver, self.complement_solver],
             current_node_repr=f"FieldSplitSchur(key={self.key})",
         )
@@ -961,10 +961,12 @@ class LinearSolverConfiguration:
 # MARK: Validation
 
 
-def validate_subsolvers_keys_are_unique(
+def _validate_subsolvers_keys_are_unique(
     subsolvers: list[PetscKspPcConfiguration], current_node_repr: str
 ):
-    # TODO: Unit test!
+    """This function is different from `validate_all_keys_are_unique`, since it does not
+    do recursion. It is applied at __init__ configurations with children and raises
+    early, so the stack trace indicates exactly where the duplicate is."""
     count_subsolver_keys = defaultdict(lambda: 0)
     for subsolver in subsolvers:
         count_subsolver_keys[subsolver.key] += 1
