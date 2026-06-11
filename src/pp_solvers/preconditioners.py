@@ -640,35 +640,38 @@ class FieldSplit(PetscKspPcConfiguration):
 
 
 class FieldSplitSchur(PetscKspPcConfiguration):
-    """A preconditioner that splits the problem into two sub-problems by building a
-    Schur complement approximation and treats each separately with a sub-solver. See:
+    """A preconditioner that applies PETSc PCFIELDSPLIT with a Schur complement
+    factorization to a 2x2 block system.  See:
     https://petsc.org/release/manualpages/PC/PCFIELDSPLIT/
 
-    Consider a 2x2 block matrix:
-    ```
-    [[A, B],
-     [C, D]]
-    ```
-    with the Schur complement `S = D - B * A^-1 * C`.
+    Given the block matrix::
 
-    **Note**: `petsc_tag` and `petsc_complement_tag` must be short, as PETSc has a limit
-    of 127 symbols for a prefix. They may not be equal to the `key` parameter: the tags
-    are for internal identification by PETSc, the key is for identification by
-    simulation developers.
+        [[A, B],
+         [C, D]]
+
+    the Schur complement is ``S = D - C A^-1 B``. This class sets
+    ``pc_fieldsplit_type = schur`` with an upper factorization, so each
+    KSP sub-solve uses ``ksp_type = preonly``.
+
+    The PETSc options prefix for each sub-solver is taken from
+    ``subsolver.key`` and ``complement_solver.key`` respectively, so
+    those keys must be unique within the solver tree and short enough
+    to stay within PETSc's 127-character prefix limit.
 
     Parameters:
-        subsolver: A configuration class of a solver that approximates `A^-1`.
-        complement_solver: A configuration class of a solver that approximates `S^-1`.
-        approximate_inverter: A configuration class to construct the approximate `S`.
-        petsc_tag: A string to build a PETSc options prefix that identifies the `A^-1`
-            sub-solver. Defaults to `"elim"` (submatrix to eliminate).
-        petsc_complemet_tag: A string to build a PETSc options prefix that identifies
-            the `S^-1` sub-solver. Defaults to `"keep"` (submatrix to keep) if
-            `petsc_tag` is not passed, otherwise to `f"{petsc_tag}_cpl"` (complenent).
-        key: A key to pass user options to the configurations.
+        subsolver: Configuration for the solver that approximates ``A^-1``.
+            Its ``groups`` define which DOFs are eliminated.
+        complement_solver: Configuration for the solver that approximates
+            ``S^-1``. Its ``groups`` must be disjoint from ``subsolver.groups``.
+        approximate_inverter: Strategy for constructing the approximate Schur complement
+            ``S``.
+        key: PETSc options prefix for this preconditioner. Defaults to
+            ``f"fs_{subsolver.key}"``.
 
-        TODO: revisit docstring
-
+    Raises:
+        ValueError: If ``subsolver.groups`` and ``complement_solver.groups``
+            overlap, or if the two sub-solvers share a key anywhere in the
+            solver tree.
     """
 
     def __init__(
