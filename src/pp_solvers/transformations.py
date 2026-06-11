@@ -222,7 +222,7 @@ class ContactLinearTransformation(LinearSystemTransformation):
         # Pick out the block matrix corresponding to the interface force balance
         # equation (the row index) and the interface displacement variable (the column
         # index). There is an underlying assumption that the groups in the
-        # preconditioner ordering are so that this equtaion-variable pair is on the
+        # preconditioner ordering are so that this equation-variable pair is on the
         # diagonal of the matrix.
         J55 = block_linear_system[idx_intf_force, idx_intf_force].mat
 

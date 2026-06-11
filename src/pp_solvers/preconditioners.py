@@ -121,6 +121,13 @@ class PetscInverter(ABC):
 
 
 class NoInverter(PetscInverter):
+    """Schur complement inverter that does not approximate the inverse of A00.
+
+    Sets ``pc_fieldsplit_schur_precondition`` to ``a11``, so PETSc approximates the
+    S11 with A11, ignoring the A10 * inv(A00) * A01 correction.
+
+    """
+
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:
@@ -133,6 +140,15 @@ class NoInverter(PetscInverter):
 
 
 class DiagonalInverter(PetscInverter):
+    """Schur complement inverter that approximates inv(A00) by its inverse diagonal.
+
+    Sets ``pc_fieldsplit_schur_precondition`` to ``selfp``, so PETSc assembles the Schur
+    complement approximation S11_approx = A11 - A10 * inv(diag(A00)) * A01. This is the
+    cheapest assembled approximation; for block-structured A00 use
+    `BlockDiagonalInverter` instead.
+
+    """
+
     def petsc_options(
         self, key: str, elim_key: str, complement_key: str, dof_manager: DofManager
     ) -> dict:
@@ -186,7 +202,7 @@ class BlockDiagonalInverter(PetscInverter):
         # - sub-solvers are initialized and S11 approximation is assembled in pc.setUp()
         # There is no access point to customize a prefix of a sub-solver in the middle
         # of these two actions, neither from Python nor C. PETSc must fetch the options
-        # using default prefixes. We provide identical options both with the inititial
+        # using default prefixes. We provide identical options both with the initial
         # prefixes and the customized ones for completeness. This hack is covered with
         # a unit test, see `test_options_parsers.py/test_block_diagonal_invertor`.
         initial_prefix_keep = f"{key}_fieldsplit_{complement_key}"

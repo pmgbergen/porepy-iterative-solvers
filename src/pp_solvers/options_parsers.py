@@ -63,7 +63,7 @@ def initialize_petsc_ksp(
     # Clear the PETSc options from a previous solve.
     petsc_options = clear_petsc_options()
 
-    # Prodice a flat list of PETSc CLI options
+    # Produce a flat list of PETSc CLI options
     all_options_dict = petsc_ksp_pc_configuration.petsc_options(
         user_options=user_options, dof_manager=dof_manager
     )
@@ -124,7 +124,7 @@ def _assemble_pc_fieldsplit_additive(
         pc.setUp()
         ksp.setUp()
     except:
-        print(f"failed on {key = }")
+        logger.error(f"failed on {key = }")
         raise
 
     sub_ksp_list = pc.getFieldSplitSubKSP()
@@ -191,7 +191,7 @@ def _assemble_pc_fieldsplit_schur(
         pc.setUp()
         ksp.setUp()
     except:
-        print(f"failed on {key = }")
+        logger.error(f"failed on {key = }")
         raise
 
     sub_ksp_list = pc.getFieldSplitSubKSP()
@@ -266,7 +266,7 @@ def _assemble_pc_composite(
         ksp.setUp()
         pc.setUp()
     except:
-        print(f"Failed on {key = }")
+        logger.error(f"Failed on {key = }")
         raise
 
 
@@ -323,7 +323,7 @@ def _assemble_pc_python_permutation(
         ksp.setUp()
         pc.setUp()
     except:
-        print(f"Failed on {key = }")
+        logger.error(f"Failed on {key = }")
         raise
 
 
@@ -469,5 +469,5 @@ def assemble_petsc_ksp_pc(
             ksp.setUp()
             pc.setUp()
         except:
-            print(f"Failed on {prefix = }")
+            logger.error(f"Failed on {key = }")
             raise
