@@ -1,10 +1,10 @@
 """Tests for the linear-system transformation classes in transformations.py.
 
 Coverage:
-  - PorePyArrangementTransformation: block reordering, solution scatter, caching
+  - PorePyArrangementTransformation: block reordering
   - SchurComplementReduction: reduced system correctness, solution reconstruction
-  - ContactLinearTransformation: three early-return paths, solution passthrough
-  - ScaleSpecificVolume: row scaling on a real TH model, solution passthrough
+  - ContactLinearTransformation: contact singularity, correctness
+  - ScaleSpecificVolume: group scaling and isolation, solution correctness (THM only)
 """
 
 import numpy as np
@@ -12,7 +12,7 @@ import porepy as pp
 import pytest
 import scipy.sparse as sp
 from porepy.applications.test_utils.models import add_mixin
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve, inv
 
 from pp_solvers.block_linear_system import (
     BlockLinearSystem,
@@ -23,7 +23,10 @@ from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
     EnergyBalanceTemperatureGroup,
+    EquationVariableGroup,
     InterfaceForceBalanceGroup,
+    MassBalancePressureFracturesGroup,
+    MassBalancePressureIntersectionsGroup,
 )
 from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.preconditioners import th_factory
@@ -98,7 +101,7 @@ def model(model_kind: str, with_fractures: bool):
 def test_porepy_arrangement_transformation(
     model: IterativeSolverMixin, model_kind: str, with_fractures: bool
 ):
-    # Solve unpermuted linear system. Permute, solve permuted, permute back. Compare.
+    """Solve the unpermuted system, permute it, solve, permute back, and compare."""
     dof_manager: DofManager = model._dof_manager
     mat, rhs = model.linear_system
     rhs = rhs.copy()
@@ -142,7 +145,7 @@ def test_porepy_arrangement_transformation(
 def test_schur_complement_reduction(
     block_size: int, primary_secondary_groups: tuple[list, list]
 ):
-    # Solve the linear system with the Schur complement. Ensure residual close to zero.
+    """Solve via Schur complement reduction and verify the residual is near zero."""
     primary_groups = primary_secondary_groups[0]
     secondary_groups = primary_secondary_groups[1]
     # Some arbitrary numbers of dofs.
@@ -179,7 +182,11 @@ def test_schur_complement_reduction(
 def test_contact_transformation(
     model: IterativeSolverMixin, model_kind: str, with_fractures: bool
 ):
-    # Solve unpermuted linear system. Permute, solve permuted, permute back. Compare.
+    """Solve the unpermuted system, permute, solve, permute back, and compare.
+
+    Also checks that the contact submatrix is singular before the transformation
+    and non-singular after, and that the rest of the matrix is unchanged.
+    """
     dof_manager: DofManager = model._dof_manager
     mat, rhs = model.linear_system
     rhs = rhs.copy()
@@ -197,22 +204,114 @@ def test_contact_transformation(
         ),
     )
 
-    transformation = ContactLinearTransformation()
-    permuted_linear_system = transformation.transform_matrix_rhs(
-        linear_system, dof_manager=dof_manager
-    )
-    # The flow model without fractures has a single group, so should be no difference.
-    should_permute = model_kind != "flow" or with_fractures
-    assert np.allclose(rhs, permuted_linear_system.rhs) != should_permute
+    # Contact transformation requires that groups are sorted, so we first appply the
+    # PorePyArrangementTransformation, which does that.
+    transformations = [PorePyArrangementTransformation(), ContactLinearTransformation()]
+    permuted_linear_system = linear_system
+    for transformation in transformations:
+        permuted_linear_system = transformation.transform_matrix_rhs(
+            permuted_linear_system, dof_manager=dof_manager
+        )
+    # The difference should be only for the THM model with fractures.
+    should_do_something = model_kind != "flow" and with_fractures
+
+    if should_do_something:
+        contact_idx = dof_manager.indices_of_groups([ContactMechanicsGroup()])
+        contact_submat = linear_system[contact_idx]
+        permuted_contact_submat = permuted_linear_system[contact_idx]
+        # Matrix should be singular.
+        with pytest.raises(RuntimeError):
+            _ = inv(contact_submat.mat)
+        # Transformed matrix should be non-singular.
+        _ = inv(permuted_contact_submat.mat)
+
+    # Check that the rest of the matrix did not change.
+    unchanged_groups = [g for g in dof_manager.groups() if g != ContactMechanicsGroup()]
+    unchanged_groups_idx = dof_manager.indices_of_groups(unchanged_groups)
+    original_submat = linear_system[unchanged_groups_idx].mat
+    submat_after_transformation = permuted_linear_system[unchanged_groups_idx].mat
+    assert (original_submat - submat_after_transformation).data.size == 0
 
     sol_permuted = spsolve(permuted_linear_system.mat, permuted_linear_system.rhs)
-    assert np.allclose(sol, sol_permuted) != should_permute
-
-    actual_sol = transformation.transform_solution(sol_permuted)
+    actual_sol = sol_permuted
+    for transformation in reversed(transformations):
+        actual_sol = transformation.transform_solution(actual_sol)
     np.testing.assert_allclose(sol, actual_sol)
 
 
-# TODO: complete test_contact_transformation
-# TODO: Scale specific volume transformation
-# TODO: Fix why test_model fails.
+@pytest.mark.parametrize(
+    "groups_to_scale",
+    [
+        [EnergyBalanceTemperatureGroup()],
+        [MassBalancePressureIntersectionsGroup(), MassBalancePressureFracturesGroup()],
+    ],
+)
+def test_scale_specific_volume(
+    model: IterativeSolverMixin,
+    model_kind: str,
+    with_fractures: bool,
+    groups_to_scale: list[EquationVariableGroup],
+):
+    """Solve the unpermuted THM system, permute, solve, permute back, and compare.
+
+    Also checks that the targeted groups are actually scaled and the rest of the
+    matrix is unchanged. Skipped for the flow model (it does not have tested groups).
+    """
+    if model_kind == "flow":
+        return
+    dof_manager: DofManager = model._dof_manager
+    mat, rhs = model.linear_system
+    rhs = rhs.copy()
+
+    sol = spsolve(mat, rhs)
+
+    linear_system = BlockLinearSystem(
+        mat=mat.copy(),
+        rhs=rhs.copy(),
+        indexer=LinearSystemIndexer(
+            dofs_row=dof_manager.eq_dofs(),
+            dofs_col=dof_manager.var_dofs(),
+            group_names_row=dof_manager.equation_names(),
+            group_names_col=dof_manager.variable_names(),
+        ),
+    )
+
+    # ScaleSpecificVolume requires that groups are sorted, so we first appply the
+    # PorePyArrangementTransformation, which does that.
+    transformations = [
+        PorePyArrangementTransformation(),
+        ScaleSpecificVolume(groups=groups_to_scale),
+    ]
+    permuted_linear_system = linear_system
+    for transformation in transformations:
+        permuted_linear_system = transformation.transform_matrix_rhs(
+            permuted_linear_system, dof_manager=dof_manager
+        )
+
+    # Should change only if fractures are present (specific volume != 1).
+    should_change = with_fractures
+
+    # Check that the groups we want to scale actually scaled.
+    groups_changed_idx = dof_manager.indices_of_groups(groups_to_scale)
+    changed_submat = permuted_linear_system[groups_changed_idx].mat
+    original_submat = linear_system[groups_changed_idx].mat
+    assert (
+        np.allclose((changed_submat - original_submat).data, 0, atol=1e-16)
+        != should_change
+    )
+
+    # Check that the groups we do not want to change remain the same.
+    groups_not_changed = [g for g in dof_manager.groups() if g not in groups_to_scale]
+    groups_not_changed_idx = dof_manager.indices_of_groups(groups_not_changed)
+    unchanged_submat = permuted_linear_system[groups_not_changed_idx].mat
+    original_submat = linear_system[groups_not_changed_idx].mat
+    assert (unchanged_submat - original_submat).size == 0
+
+    sol_permuted = spsolve(permuted_linear_system.mat, permuted_linear_system.rhs)
+    actual_sol = sol_permuted
+    for transformation in reversed(transformations):
+        actual_sol = transformation.transform_solution(actual_sol)
+    np.testing.assert_allclose(sol, actual_sol)
+
+
 # TODO: And the rest of todos...

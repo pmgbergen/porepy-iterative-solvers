@@ -150,6 +150,7 @@ class ContactLinearTransformation(LinearSystemTransformation):
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
         """Assemble the right linear transformation."""
+        # TODO: Make a flag that bmat is sorted, and test it.
         try:
             idx_contact = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
         except ValueError:
