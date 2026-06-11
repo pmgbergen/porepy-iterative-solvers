@@ -26,6 +26,7 @@ from pp_solvers.preconditioners import (
     momentum_balance_factory,
     th_factory,
     thm_factory,
+    thm_tpsa_factory,
     validate_all_keys_are_unique,
 )
 from pp_solvers.solver_selection.selector import SolverSelector
@@ -432,6 +433,7 @@ class IterativeSolverMixin(pp.PorePyModel):
 def default_preconditioner_factory(
     model: pp.PorePyModel,
 ) -> Callable[[], LinearSolverConfiguration]:
+    is_tpsa = isinstance(model, pp.poromechanics.TpsaPoromechanicsMixin)
     if isinstance(model, pp.SinglePhaseFlow):
         return mass_balance_factory
     if isinstance(model, pp.MomentumBalance):
@@ -440,6 +442,8 @@ def default_preconditioner_factory(
         return th_factory
     if isinstance(model, pp.Poromechanics):
         return hm_factory
-    if isinstance(model, pp.Thermoporomechanics):
+    if isinstance(model, pp.Thermoporomechanics) and not is_tpsa:
         return thm_factory
+    if isinstance(model, pp.Thermoporomechanics) and is_tpsa:
+        return thm_tpsa_factory
     raise ValueError(f"Unknown model:", type(model))
