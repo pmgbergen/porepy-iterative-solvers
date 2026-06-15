@@ -54,64 +54,6 @@ https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
 ITERATIVE_SOLVER_FAILED_TO_INITIALIZE = -9999
 
 
-def transform_contact_block(
-    J: BlockLinearSystem, row_group: int, col_group: int, nd: int
-):
-    """Assemble the right linear transformation."""
-    # Sorted according to groups. If not done, the matrix can be in porepy order,
-    # which does not guarantee that diagonal groups are truly on diagonals.
-    Qright = J.empty_container()[:]
-
-    if len(J.indexer.dofs_row[row_group]) == 0:
-        # If the relevant row group is empty (case without fractures), the
-        # transformation is the identity matrix, nothing should be done.
-        Qright.mat = csr_ones(Qright.shape[0])
-        return Qright
-
-    # Pick out the block matrix corresponding to the interface force balance equation
-    # (the row index) and the interface displacement variable (the column index). There
-    # is an underlying assumption that the groups in the preconditioner ordering are so
-    # that this equtaion-variable pair is on the diagonal of the matrix.
-    J55 = J[col_group, col_group].mat
-
-    # The contribution from the interface displacement variable to the force balance
-    # should be diagonally dominant, reflecting that the interface displacement has the
-    # strongest influence on the force on its own cell (and less so on the neighboring
-    # cell, though, with the MPSA stencil, the latter will not be zero). Note that there
-    # is no connection between the two sides of a fracture; this is represented in a
-    # different block of the full matrix. Approximate the stencil by a block diagonal,
-    # and calculate the inverse cheaply.
-    J55_inv = inv_block_diag(J55, nd=nd)
-
-    Qright.mat = csr_ones(Qright.shape[0])
-    # Extract the block matrix corresponding to the impact of the contact forces on the
-    # force balance equation.
-    J54 = J[col_group, row_group].mat
-
-    # The transformation is given like this, see papers by Zabegaev for the details.
-    tmp = -J55_inv @ J54
-    Qright[col_group, row_group] = tmp
-    return Qright
-
-
-def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
-    """Assemble the right linear transformation for scaling energy fluxes."""
-    # Sorted according to groups. If not done, the matrix can be in porepy order,
-    # which does not guarantee that diagonal groups are truly on diagonals.
-    Q = J.empty_container()[:]
-
-    subdomains = model.mdg.subdomains()
-    vols = 1.0 / model.equation_system.evaluate(model.specific_volume(subdomains))
-
-    Q.mat = sps.eye(Q.shape[0], format="csr")
-    if len(subdomains) == 0:
-        # No subdomains, hence no scaling.
-        return Q
-    Q.set_diagonal(groups=row_groups, values=vols, additive=False)
-
-    return Q
-
-
 @dataclass
 class LinearSolverStatistics(SolverStatistics):
     """A dataclass to store statistics about the linear solver.
