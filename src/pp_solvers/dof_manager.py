@@ -301,7 +301,8 @@ class DofManager:
             indices.append([variable_to_idx.pop(var) for var in md_var.sub_vars])
         if len(variable_to_idx) != 0:
             raise ValueError(
-                "Some variables are not used on some subdomains: "
+                "Variables are defined in the PorePy model, but not in the "
+                "LinearSolverConfiguration, or their definition domain does not match: "
                 f"{set([k.name for k in variable_to_idx.keys()])}"
             )
         return indices
@@ -366,7 +367,8 @@ class DofManager:
         assert len(indices) == len(self._equation_groups)
         if len(equation_to_idx) != 0:
             raise ValueError(
-                "Some equations are not used on some subdomains: "
+                "Equations are defined in the PorePy model, but not in the "
+                "LinearSolverConfiguration, or their definition domain does not match: "
                 f"{set([k[0] for k in equation_to_idx.keys()])}"
             )
 

@@ -45,24 +45,24 @@ class PorePyArrangementTransformation(LinearSystemTransformation):
     """
 
     def __init__(self) -> None:
-        self.projection_columns: Optional[np.ndarray] = None
+        self._projection_columns: Optional[np.ndarray] = None
         """Permutation of the linear system columns needed to transform solution back to
         PorePy ordering."""
 
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        if self.projection_columns is None:
-            self.projection_columns = concatenate_dof_indices(dof_manager.var_dofs())
+        if self._projection_columns is None:
+            self._projection_columns = concatenate_dof_indices(dof_manager.var_dofs())
         # By calling [:], rearrange the underlying linear system to match the ordering
         # defined by the `dof_manager`.
         return block_linear_system[:]
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
-        if self.projection_columns is None:
+        if self._projection_columns is None:
             raise ValueError("Must call transform_matrix_rhs first.")
         result = np.zeros_like(sol)
-        result[self.projection_columns] = sol
+        result[self._projection_columns] = sol
         return result
 
 
@@ -92,20 +92,20 @@ class SchurComplementReduction(LinearSystemTransformation):
         self.invertor = invertor
         """Callable that inverts the secondary block A_00. Defaults to block-diagonal
         inversion with block size 1."""
-        self.primary_groups: list[EquationVariableGroup] = primary_groups
+        self._primary_groups: list[EquationVariableGroup] = primary_groups
         """Equation-variable groups to keep in the reduced system."""
-        self.secondary_groups: list[EquationVariableGroup] = secondary_groups
+        self._secondary_groups: list[EquationVariableGroup] = secondary_groups
         """Equation-variable groups to eliminate via Schur complement."""
-        self.primary_dofs: Optional[np.ndarray] = None
+        self._primary_dofs: Optional[np.ndarray] = None
         """DoF indices for the primary groups. Populated on the first call to
         `transform_matrix_rhs`."""
-        self.secondary_dofs: Optional[np.ndarray] = None
+        self._secondary_dofs: Optional[np.ndarray] = None
         """DoF indices for the secondary groups. Populated on the first call to
         `transform_matrix_rhs`."""
-        self.A01: Optional[BlockLinearSystem] = None
+        self._A01: Optional[BlockLinearSystem] = None
         """Off-diagonal block A_01 (secondary rows, primary columns). Saved for
         back-substitution in `transform_solution`."""
-        self.A00_inv: Optional[csr_matrix] = None
+        self._A00_inv: Optional[csr_matrix] = None
         """Inverse of the secondary block A_00. Saved for back-substitution in
         `transform_solution`."""
 
@@ -113,15 +113,16 @@ class SchurComplementReduction(LinearSystemTransformation):
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
         """Forms the Schur complement system and stores intermediate results."""
-        keep_idx = dof_manager.indices_of_groups(self.primary_groups)
-        elim_idx = dof_manager.indices_of_groups(self.secondary_groups)
-        intersection = set(keep_idx).intersection(elim_idx)
-        assert len(intersection) == 0
+        keep_idx = dof_manager.indices_of_groups(self._primary_groups)
+        elim_idx = dof_manager.indices_of_groups(self._secondary_groups)
+        assert len(set(keep_idx).intersection(elim_idx)) == 0
 
-        if self.primary_dofs is None or self.secondary_dofs is None:
+        if self._primary_dofs is None or self._secondary_dofs is None:
             var_dofs = dof_manager.var_dofs()
-            self.primary_dofs = concatenate_dof_indices([var_dofs[i] for i in keep_idx])
-            self.secondary_dofs = concatenate_dof_indices(
+            self._primary_dofs = concatenate_dof_indices(
+                [var_dofs[i] for i in keep_idx]
+            )
+            self._secondary_dofs = concatenate_dof_indices(
                 [var_dofs[i] for i in elim_idx]
             )
 
@@ -142,31 +143,31 @@ class SchurComplementReduction(LinearSystemTransformation):
         # reduced rhs: b1 - A10 * inv(A00) * b0
         S11.rhs = A11.rhs - A10_mul_A00_inv @ A00.rhs
 
-        self.A00_inv = A00_inv
-        self.A01 = A01
+        self._A00_inv = A00_inv
+        self._A01 = A01
 
         return S11
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
         """Recovers the full solution via back-substitution."""
         if (
-            self.primary_dofs is None
-            or self.secondary_dofs is None
-            or self.A01 is None
-            or self.A00_inv is None
+            self._primary_dofs is None
+            or self._secondary_dofs is None
+            or self._A01 is None
+            or self._A00_inv is None
         ):
             raise ValueError("Must call transform_matrix_rhs first.")
 
         # x0 = solve_A00(b0 - A01 @ x1)      # second cheap A00 solve
-        A01 = self.A01
-        A00_inv = self.A00_inv
+        A01 = self._A01
+        A00_inv = self._A00_inv
         x0 = A00_inv @ (A01.rhs - A01.mat @ sol)
 
         result = np.zeros(
-            len(self.primary_dofs) + len(self.secondary_dofs), dtype=sol.dtype
+            len(self._primary_dofs) + len(self._secondary_dofs), dtype=sol.dtype
         )
-        result[self.primary_dofs] = sol
-        result[self.secondary_dofs] = x0
+        result[self._primary_dofs] = sol
+        result[self._secondary_dofs] = x0
         return result
 
 

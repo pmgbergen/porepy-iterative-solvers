@@ -58,7 +58,7 @@ def petsc_to_csr(petsc_mat: PETSc.Mat) -> scipy.sparse.csr_matrix:
 
 
 def insert_petsc_options(options: dict):
-    """PETSc options is a globally available singletone dictionary. We insert values
+    """PETSc options is a globally available singleton dictionary. We insert values
     into it.
 
     """

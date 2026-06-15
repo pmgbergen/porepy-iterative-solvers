@@ -343,8 +343,6 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
                 info,
             )
-            nans = np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
-            return nans, info
         # Transform the solution back to the global (PorePy) ordering.
         for transformation in reversed(self._transformations):
             x = transformation.transform_solution(x)

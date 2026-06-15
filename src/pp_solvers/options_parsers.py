@@ -98,7 +98,7 @@ def initialize_petsc_ksp(
     )
 
 
-def _assemble_pc_fieldsplit_additive(
+def _assemble_pc_fieldsplit_common(
     ksp: PETSc.KSP,
     pc: PETSc.PC,
     assembly_config: dict,
@@ -434,7 +434,7 @@ def assemble_petsc_ksp_pc(
             petsc_matrices=petsc_matrices,
         )
     elif config_type == "fieldsplit_common":
-        _assemble_pc_fieldsplit_additive(
+        _assemble_pc_fieldsplit_common(
             ksp=ksp,
             pc=pc,
             assembly_config=assembly_config,

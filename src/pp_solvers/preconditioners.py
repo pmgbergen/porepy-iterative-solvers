@@ -13,7 +13,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Sequence
+from typing import Final, Literal, Optional, Sequence
 
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
@@ -69,7 +69,7 @@ __all__ = [
     "thm_tpsa_factory",
 ]
 
-PETSC_OPTIONS_MAX_SYMBOLS = 126
+PETSC_OPTIONS_MAX_SYMBOLS: Final[int] = 126
 
 
 def append_prefix_to_options(prefix: str, options: dict):
@@ -204,7 +204,7 @@ class BlockDiagonalInverter(PetscInverter):
         # of these two actions, neither from Python nor C. PETSc must fetch the options
         # using default prefixes. We provide identical options both with the initial
         # prefixes and the customized ones for completeness. This hack is covered with
-        # a unit test, see `test_options_parsers.py/test_block_diagonal_invertor`.
+        # a unit test, see `test_options_parsers.py/test_petsc_invertors`.
         initial_prefix_keep = f"{key}_fieldsplit_{complement_key}"
         initial_prefix_elim = f"{key}_fieldsplit_{elim_key}"
         return (
@@ -1523,7 +1523,6 @@ def thm_tpsa_factory():
     return LinearSolverConfiguration(
         transformations=[
             ContactLinearTransformation(),
-            # SchurComplementReduction(primary_groups=solver.groups),
             ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
         ],
         solver=solver,

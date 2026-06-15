@@ -283,8 +283,7 @@ class BlockLinearSystem:
         """True if the DoFs are arranged contiguously by group in the matrix: all DoFs
         of group 0 appear before group 1, etc. PorePy matrices have this False by
         default; many algorithms require sorted DoFs. Use
-        `PorePyArrangementTransformation`, or ``block_linear_system[:]``, to produce a
-        sorted copy.
+        `PorePyArrangementTransformation` to produce a sorted copy.
         """
         if validate_input:
             validate_block_matrix(self)
