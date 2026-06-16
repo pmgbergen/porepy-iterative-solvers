@@ -107,7 +107,8 @@ def test_python_permutation(num_dofs_per_group: tuple[int, int]):
         )
     except ValueError:
         if n != m:
-            # It only works if n == m. Otherwise, it should validly crashes here.
+            # It only works if n == m. Otherwise, the exception is the expected behavior
+            # and the test finishes successfully.
             return
         raise
     # Must have two keys: "python_permutation" (operates on unpermuted matrix) and
@@ -120,7 +121,7 @@ def test_python_permutation(num_dofs_per_group: tuple[int, int]):
     inner_pc = python_context.petsc_pc
     assert inner_pc.type == "none"  # The inner pc is the Identity pc.
 
-    # Constructinge the expected permutation.
+    # Construct the expected permutation.
     expected_permutation = np.vstack([np.arange(n), np.arange(n, 2 * n)]).ravel("F")
     expected_permuted_mat = A.mat[expected_permutation, :][:, expected_permutation]
     # pmat and amat should be identical in this case.
