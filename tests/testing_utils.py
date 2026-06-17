@@ -4,9 +4,12 @@
 
 """
 
+from typing import Optional
+
 import numpy as np
 import scipy.sparse as sp
 
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.equation_variable_groups import EquationVariableGroup
 
 
@@ -99,6 +102,37 @@ def generate_reference_dofs_3_groups():
     return reference_dofs_row_3_groups, reference_dofs_col_3_groups
 
 
+def generate_block_linear_system(
+    num_dofs_per_group: list[int] | None = None,
+):
+    """Generate a random diagonally-dominant block linear system with a fixed random
+    seed.
+
+    Parameters:
+        num_dofs_per_group: Number of DOFs in each block group. Groups are assigned
+            contiguous DOF indices starting from 0. Defaults to [3, 4, 2, 0], matching
+            the 3-group reference system (with an extra empty group).
+
+    """
+    if num_dofs_per_group is None:
+        num_dofs_per_group = [3, 4, 2, 0]
+
+    total = sum(num_dofs_per_group)
+    rng = np.random.default_rng(42)
+    A = rng.standard_normal((total, total))
+    A = A @ A.T + total * np.eye(total)
+    dofs = []
+    start = 0
+    for n in num_dofs_per_group:
+        dofs.append(np.arange(start, start + n, dtype=int))
+        start += n
+    return BlockLinearSystem(
+        mat=sp.csr_matrix(A),
+        rhs=rng.standard_normal(total),
+        indexer=LinearSystemIndexer(dofs_row=dofs, dofs_col=dofs),
+    )
+
+
 class MockModel:
     nd = 3
 
@@ -106,6 +140,27 @@ class MockModel:
 class MockDofManager:
     model = MockModel()
 
+    def __init__(
+        self, groups: list[str], block_linear_system: Optional[BlockLinearSystem] = None
+    ):
+        self.groups: list[str] = groups
+        # Some tests need eq_dofs and var_dofs. They can use the dofs of the provided
+        # block linear system. Tests that only need indices_of_groups may ignore it.
+        self._block_linear_system = block_linear_system
+
     def indices_of_groups(self, groups: list[EquationVariableGroup]):
-        # each mock group is a string "g1", "g2", etc.
-        return [int(g[1]) - 1 for g in groups]
+        return [self.groups.index(g) for g in groups]
+
+    def eq_dofs(self) -> list:
+        if self._block_linear_system is None:
+            raise ValueError(
+                "Pass block_linear_system to MockDofManager to use eq_dofs()"
+            )
+        return self._block_linear_system.indexer.dofs_row
+
+    def var_dofs(self) -> list:
+        if self._block_linear_system is None:
+            raise ValueError(
+                "Pass block_linear_system to MockDofManager to use var_dofs()"
+            )
+        return self._block_linear_system.indexer.dofs_col

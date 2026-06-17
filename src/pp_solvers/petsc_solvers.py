@@ -7,27 +7,38 @@ from typing import Optional
 import numpy as np
 from petsc4py import PETSc
 
-from pp_solvers.block_linear_system import BlockLinearSystem
-
 
 class PetscKrylovSolver:
     """Shallow wrapper around a PETSc KSP object."""
 
     def __init__(
         self,
-        ksp,
+        ksp: PETSc.KSP,
+        assembly_config: Optional[dict] = None,
+        petsc_options: Optional[dict] = None,
     ) -> None:
-        """Initialize the solver with a PETSc KSP object.
+        """Initialize the solver with a PETSc KSP object. Optionally, can store
+        `assembly_config` and `petsc_options`, which were used to produce this `ksp`.
+
 
         Parameters:
             ksp: A PETSc KSP object.
+            assembly_config: A dictionary of options used during assembly of this ksp
+                from Python code.
+            petsc_options: A dictionary of PETSc CLI options used during assembly.
 
         """
-        self.ksp = ksp
-        petsc_mat = ksp.getOperators()[0]
+        self.ksp: PETSc.KSP = ksp
+        self.assembly_config: Optional[dict] = assembly_config
+        """A dictionary of options used during assembly of this ksp from Python code."""
+        self.petsc_options: Optional[dict] = petsc_options
+        """A dictionary of PETSc CLI options used during assembly."""
 
-        self.petsc_x = petsc_mat.createVecRight()
-        self.petsc_b = petsc_mat.createVecLeft()
+        petsc_mat = ksp.getOperators()[0]
+        self.petsc_x: PETSc.Vec = petsc_mat.createVecRight()
+        """A PETSc vector for the solution approximation."""
+        self.petsc_b: PETSc.Vec = petsc_mat.createVecLeft()
+        """A PETSc vector for the right-hand side."""
         # self.ksp.setComputeEigenvalues(True)
         self.ksp.setConvergenceHistory()
 
@@ -57,51 +68,18 @@ class PetscKrylovSolver:
         return self.ksp.getConvergenceHistory()
 
 
-class LinearSolverWithTransformations:
-    def __init__(
-        self,
-        inner: PetscKrylovSolver,
-        Qleft: Optional[BlockLinearSystem] = None,
-        Qright: Optional[BlockLinearSystem] = None,
-    ):
-        self.Qleft: BlockLinearSystem | None = Qleft
-        self.Qright: BlockLinearSystem | None = Qright
-        self.inner: PetscKrylovSolver = inner
-        self.ksp = inner.ksp
-
-    def solve(self, rhs: np.ndarray) -> np.ndarray:
-        """Transform the right-hand side, solve the linear system, and transform the
-        solution back.
-
-        """
-        rhs_Q = rhs
-        if self.Qleft is not None:
-            rhs_Q = self.Qleft.mat @ rhs_Q
-
-        sol_Q = self.inner.solve(rhs_Q)
-
-        if self.Qright is not None:
-            sol = self.Qright.mat @ sol_Q
-        else:
-            sol = sol_Q
-
-        return sol
-
-    def get_residuals(self):
-        return self.inner.get_residuals()
-
-
 class PcPythonPermutation:
-    def __init__(self, perm: np.ndarray, block_size: int, prefix: str):
-        self.prefix: str = prefix
+    def __init__(self, perm: np.ndarray, block_size: int, inner_key: str):
         self.petsc_pc = PETSc.PC().create()
-        self.petsc_pc.setOptionsPrefix(f"{prefix}python_")
+        self.petsc_pc.setOptionsPrefix(f"{inner_key}_")
         self.petsc_is_perm = PETSc.IS().createGeneral(perm.astype(np.int32))
         self.P_perm = PETSc.Mat()
         self.b = PETSc.Vec().create()
         self.bs = block_size
         self.b.setSizes(perm.size)
         self.b.setUp()
+
+        self.is_set_up: bool = False
 
     def __del__(self):
         self.petsc_pc.destroy()
@@ -114,13 +92,19 @@ class PcPythonPermutation:
         self.petsc_pc.view(viewer)
 
     def setFromOptions(self, pc: PETSc.PC) -> None:
-        self.petsc_pc.setFromOptions()
-
-    def setUp(self, pc: PETSc.PC) -> None:
+        if self.is_set_up:
+            # Set from options should be called only once.
+            raise ValueError(
+                "This class is not tested for operator reuse and may break your code."
+            )
         _, P = pc.getOperators()
         self.P_perm = P.permute(self.petsc_is_perm, self.petsc_is_perm)
         self.P_perm.setBlockSize(self.bs)
         self.petsc_pc.setOperators(self.P_perm, self.P_perm)
+        self.petsc_pc.setFromOptions()
+        self.is_set_up = True
+
+    def setUp(self, pc: PETSc.PC) -> None:
         self.petsc_pc.setUp()
 
     def reset(self, pc: PETSc.PC) -> None:

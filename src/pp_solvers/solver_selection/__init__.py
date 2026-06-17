@@ -1,8 +1,8 @@
 """An optional machine-learning solver selection sub-module."""
 
-from .solver_space import CategoricalChoices, NumericalChoices, SolverSpace
-from .selector import SolverSelector
 from .performance_predictor import assemble_default_performance_predictor
+from .selector import SolverSelector
+from .solver_space import CategoricalChoices, NumericalChoices, SolverSpace
 
 __all__ = [
     "CategoricalChoices",

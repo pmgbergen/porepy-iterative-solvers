@@ -24,6 +24,7 @@ rhs_mass_balance = rhs[dofs_mass_balance_eq]
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Optional
 from weakref import ReferenceType, ref
 
 import numpy as np
@@ -298,7 +299,12 @@ class DofManager:
             # not call sub_vars.
             assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
             indices.append([variable_to_idx.pop(var) for var in md_var.sub_vars])
-        assert len(variable_to_idx) == 0, "Some variables are not used."
+        if len(variable_to_idx) != 0:
+            raise ValueError(
+                "Variables are defined in the PorePy model, but not in the "
+                "LinearSolverConfiguration, or their definition domain does not match: "
+                f"{set([k.name for k in variable_to_idx.keys()])}"
+            )
         return indices
 
     def _equation_block_indices(self) -> list[list[int]]:
@@ -361,7 +367,8 @@ class DofManager:
         assert len(indices) == len(self._equation_groups)
         if len(equation_to_idx) != 0:
             raise ValueError(
-                "Some equations are not used on some subdomains: "
+                "Equations are defined in the PorePy model, but not in the "
+                "LinearSolverConfiguration, or their definition domain does not match: "
                 f"{set([k[0] for k in equation_to_idx.keys()])}"
             )
 

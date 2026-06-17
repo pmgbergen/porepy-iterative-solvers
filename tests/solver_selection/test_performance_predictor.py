@@ -1,11 +1,11 @@
-import pytest
 import numpy as np
+import pytest
+
 from pp_solvers.solver_selection.performance_predictor import (
-    assemble_default_performance_predictor,
     EPSGREEDY_EXPECTATION,
     FAIL_REWARD,
+    assemble_default_performance_predictor,
 )
-
 
 _SOLVER_FEATURES = np.eye(5)
 _N_SOLVERS = _SOLVER_FEATURES.shape[0]

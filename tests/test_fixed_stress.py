@@ -76,7 +76,7 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
 
     jacobian = model.bmat
 
-    dof_manager: DofManager = model._solver_factory.dof_manager
+    dof_manager: DofManager = model._dof_manager
     num_groups = len(dof_manager.groups())
     try:
         p_mat_group, p_frac_group = dof_manager.indices_of_groups(
@@ -114,10 +114,10 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
                 assert submat.nnz == 0, submat
 
 
-def test_fixed_stress_inverter(model: pp.PorePyModel):
+def test_fixed_stress_inverter(model: pp_solvers.IterativeSolverMixin):
     """Integration test that check that the configuration FixedStressInverter provides a
     correct fixed stress matrix."""
-    dof_manager: DofManager = model._solver_factory.dof_manager
+    dof_manager: DofManager = model._dof_manager
     inverter = FixedStressInverter()
     bmat: BlockLinearSystem = model.bmat
 

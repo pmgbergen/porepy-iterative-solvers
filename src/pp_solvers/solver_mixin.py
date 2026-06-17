@@ -15,27 +15,22 @@ import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
 
-from pp_solvers.block_linear_system import (
-    BlockLinearSystem,
-    LinearSystemIndexer,
-)
+from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    EnergyBalanceTemperatureGroup,
-    InterfaceForceBalanceGroup,
-)
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
-from pp_solvers.options_parsers import LinearTransformedScheme, PetscKSPScheme
+from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (
-    PetscKspPcConfiguration,
+    LinearSolverConfiguration,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
     th_factory,
     thm_factory,
+    thm_tpsa_factory,
+    validate_all_keys_are_unique,
 )
 from pp_solvers.solver_selection.selector import SolverSelector
+from pp_solvers.transformations import PorePyArrangementTransformation
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -56,63 +51,7 @@ type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
 https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
 
-
-def transform_contact_block(
-    J: BlockLinearSystem, row_group: int, col_group: int, nd: int
-):
-    """Assemble the right linear transformation."""
-    # Sorted according to groups. If not done, the matrix can be in porepy order,
-    # which does not guarantee that diagonal groups are truly on diagonals.
-    Qright = J.empty_container()[:]
-
-    if len(J.indexer.dofs_row[row_group]) == 0:
-        # If the relevant row group is empty (case without fractures), the
-        # transformation is the identity matrix, nothing should be done.
-        Qright.mat = csr_ones(Qright.shape[0])
-        return Qright
-
-    # Pick out the block matrix corresponding to the interface force balance equation
-    # (the row index) and the interface displacement variable (the column index). There
-    # is an underlying assumption that the groups in the preconditioner ordering are so
-    # that this equtaion-variable pair is on the diagonal of the matrix.
-    J55 = J[col_group, col_group].mat
-
-    # The contribution from the interface displacement variable to the force balance
-    # should be diagonally dominant, reflecting that the interface displacement has the
-    # strongest influence on the force on its own cell (and less so on the neighboring
-    # cell, though, with the MPSA stencil, the latter will not be zero). Note that there
-    # is no connection between the two sides of a fracture; this is represented in a
-    # different block of the full matrix. Approximate the stencil by a block diagonal,
-    # and calculate the inverse cheaply.
-    J55_inv = inv_block_diag(J55, nd=nd)
-
-    Qright.mat = csr_ones(Qright.shape[0])
-    # Extract the block matrix corresponding to the impact of the contact forces on the
-    # force balance equation.
-    J54 = J[col_group, row_group].mat
-
-    # The transformation is given like this, see papers by Zabegaev for the details.
-    tmp = -J55_inv @ J54
-    Qright[col_group, row_group] = tmp
-    return Qright
-
-
-def scale_energy_transform(J, row_groups: list[int], model: pp.PorePyModel):
-    """Assemble the right linear transformation for scaling energy fluxes."""
-    # Sorted according to groups. If not done, the matrix can be in porepy order,
-    # which does not guarantee that diagonal groups are truly on diagonals.
-    Q = J.empty_container()[:]
-
-    subdomains = model.mdg.subdomains()
-    vols = 1.0 / model.equation_system.evaluate(model.specific_volume(subdomains))
-
-    Q.mat = sps.eye(Q.shape[0], format="csr")
-    if len(subdomains) == 0:
-        # No subdomains, hence no scaling.
-        return Q
-    Q.set_diagonal(groups=row_groups, values=vols, additive=False)
-
-    return Q
+ITERATIVE_SOLVER_FAILED_TO_INITIALIZE = -9999
 
 
 @dataclass
@@ -147,8 +86,8 @@ class LinearSolverParams(TypedDict, total=False):
     as possible. Defaults to True.
 
     """
-    preconditioner_factory: PetscKspPcConfiguration
-    """A factory to build a PETSc preconditioned linear solver from. Using the default
+    preconditioner_factory: Callable[[], LinearSolverConfiguration]
+    """A factory to build a PETSc preconditioned linear solver. Using the default
     factory if not passed.
 
     """
@@ -209,28 +148,25 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             Solution array of the linear system.
         """
+        # Check for NaN or Inf in the RHS.
+        # The rhs inside the linear system object is rearranged to match the matrix.
+        rhs = self.bmat.rhs
+        if np.any(np.isnan(rhs) | np.isinf(rhs)):
+            # This should never be the case, as this situation should cut off by the
+            # nonlinear convergence criterion from the earliear nonlinear iteration. We
+            # keep this safeguard until the iterative solver is in a more mature state.
+            logger.warning("RHS contains NaN or Inf values")
+            return np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
+
         linear_solver_params = self.linear_solver_params()
 
         solver_selector = linear_solver_params.get("solver_selector", None)
         solver_options = linear_solver_params.get("options", {})
         if solver_selector is None:
-            solution, petsc_converged_reason = self._solve_linear_system(
-                solver_options=solver_options
-            )
+            solution, _ = self._solve_linear_system(solver_options=solver_options)
         else:
-            solution, petsc_converged_reason = (
-                self._solve_linear_system_with_solver_selection(
-                    solver_selector=solver_selector, solver_options=solver_options
-                )
-            )
-
-        if petsc_converged_reason <= 0:
-            logger.warning(
-                f"Linear solver did not converge. Reason: %d. "
-                "Check the solver options and the problem setup. "
-                "See detailed description of PETSc error codes: "
-                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
-                petsc_converged_reason,
+            solution, _ = self._solve_linear_system_with_solver_selection(
+                solver_selector=solver_selector, solver_options=solver_options
             )
 
         return solution
@@ -279,15 +215,15 @@ class IterativeSolverMixin(pp.PorePyModel):
 
         # The way of accessing these values should be changed when they find a
         # better accommodation.
-        solve_time = self.nonlinear_solver_statistics.linsolve_solve_time
-        construct_time = self.nonlinear_solver_statistics.linsolve_construction_time
+        solve_time = self.linear_solver_statistics.linsolve_solve_time[-1]
+        construct_time = self.linear_solver_statistics.linsolve_construction_time[-1]
         # Providing feedback to the ML model.
         solver_selector.provide_performance_feedback(
             solve_time=solve_time,
             construct_time=construct_time,
             success=petscConvergedReason > 0,
         )
-        return solution
+        return solution, petscConvergedReason
 
     def _solve_linear_system(
         self, solver_options: dict
@@ -302,47 +238,57 @@ class IterativeSolverMixin(pp.PorePyModel):
                 - Solution array of the linear system.
                 - PETSc KSP converged reason
         """
-        # Check for NaN or Inf in the RHS.
-        # The rhs inside the linear system object is rearranged to match the matrix.
         rhs = self.bmat.rhs
-        if np.any(np.isnan(rhs) | np.isinf(rhs)):
-            # This should never be the case, as this situation should cut off by the
-            # nonlinear convergence criterion from the earliear nonlinear iteration. We
-            # keep this safeguard until the iterative solver is in a more mature state.
-            raise ValueError("RHS contains NaN or Inf values")
 
         t0 = time()
         try:
-            solver = self._solver_factory.make_solver(self.bmat, solver_options)
-        except Exception as e:
-            raise RuntimeError(
-                "Failed to create solver with the provided preconditioner."
-            ) from e
+            solver = initialize_petsc_ksp(
+                block_linear_system=self.bmat,
+                dof_manager=self._dof_manager,
+                petsc_ksp_pc_configuration=self._petsc_ksp_pc_configuration,
+                user_options=solver_options,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to build a PETSc linear solver based on the given linear system"
+            )
+            nans = np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
+            return nans, ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
         elapsed = time() - t0
-        self.nonlinear_solver_statistics.linsolve_construction_time.append(elapsed)
+        self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
         logger.info("Linear solver constructed in %.2f seconds.", elapsed)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
         t0 = time()
-        x_loc = solver.solve(rhs)
+        x = solver.solve(rhs)
         elapsed = time() - t0
-        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         num_it = len(solver.get_residuals())
+        info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         logger.info(
-            "Linear system solved in %.2f seconds with %d iterations.",
+            "Linear system solved in %.2f seconds with %d iterations, "
+            "converged reason: %d.",
             elapsed,
             num_it,
+            info,
         )
-
-        info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
-        # Project the solution back to the global (PorePy) ordering. For clarity, no
-        # contact reordering here, since only the equations (rows) and not the variables
-        # (columns) were reordered.
-        x = self.bmat.permute_right_vector_to_original(x_loc)
+        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
         self.linear_solver_statistics.petsc_converged_reason.append(info)
         self.linear_solver_statistics.num_krylov_iters.append(num_it)
+
+        if info <= 0:
+            logger.warning(
+                "Linear solver did not converge. Reason: %d. "
+                "Check the solver options and the problem setup. "
+                "See detailed description of PETSc error codes: "
+                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
+                info,
+            )
+        # Transform the solution back to the global (PorePy) ordering.
+        for transformation in reversed(self._transformations):
+            x = transformation.transform_solution(x)
+
         if self.linear_solver_params().get("delete_matrices", True):
             del self.bmat
 
@@ -351,14 +297,15 @@ class IterativeSolverMixin(pp.PorePyModel):
     def assemble_linear_system(self):
         super().assemble_linear_system()  # type: ignore[misc]
 
-        dof_manager = self._solver_factory.dof_manager
+        dof_manager = self._dof_manager
         # Get the linear system from the equation system.
 
         # TODO: Replace this with a different type of plugin
         mat, rhs = self.linear_system
+        assert mat.getformat() == "csr"
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
-        bmat = BlockLinearSystem(
+        linear_system = BlockLinearSystem(
             mat=mat,
             rhs=rhs,
             indexer=LinearSystemIndexer(
@@ -369,10 +316,14 @@ class IterativeSolverMixin(pp.PorePyModel):
             ),
         )
 
-        # Store the linear system in the solver mixin *and*, by calling [:], rearrange
-        # the blocks (and thereby the underlying matrix) to match the ordering defined
-        # by the # `dof_manager`.
-        self.bmat = bmat[:]
+        # Apply transformations to the linear systems before passing it to the solver.
+        for transformation in self._transformations:
+            linear_system = transformation.transform_matrix_rhs(
+                linear_system, dof_manager=dof_manager
+            )
+
+        self.bmat = linear_system
+
         # Delete the original linear system to save memory unless instructed not to.
         if self.linear_solver_params().get("delete_matrices", True):
             del self.linear_system
@@ -387,63 +338,22 @@ class IterativeSolverMixin(pp.PorePyModel):
         self.nonlinear_solver_statistics.petsc_converged_reason = []
         self.nonlinear_solver_statistics.num_krylov_iters = []
 
-        precond_factory: Callable[[], PetscKspPcConfiguration]
-        linear_solver_params = self.params.get("linear_solver", {})
-        precond_factory = linear_solver_params.get("preconditioner_factory", None)
-        if precond_factory is None:
-            precond_factory = default_preconditioner_factory(self)
+        linear_solver_params = self.linear_solver_params()
+        configuration_factory = linear_solver_params.get("preconditioner_factory", None)
+        if configuration_factory is None:
+            configuration_factory = default_preconditioner_factory(self)
 
-        petsc_ksp_pc_configuration: PetscKspPcConfiguration = precond_factory()
-
-        dof_manager = DofManager(model=self, groups=petsc_ksp_pc_configuration.groups)
-
-        try:
-            contact_ind, u_intf_ind = dof_manager.indices_of_groups(
-                [ContactMechanicsGroup(), InterfaceForceBalanceGroup()]
-            )
-        except ValueError:
-            contact_ind, u_intf_ind = None, None
-
-        # TODO: Logic below should not be hard-coded in SolverMixin. precond_factory()
-        # should return some object that determines pre-processing before solving.
-        ksp_factory = PetscKSPScheme(
-            petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
-            dof_manager=dof_manager,
-        )
-        contact_transform, thermal_transform = None, None
-        if contact_ind is not None and u_intf_ind is not None:
-            # If there is a contact group, we need to use a linear solver that takes
-            # care of potential singularities in the contact block.
-            contact_transform = [
-                lambda bmat: transform_contact_block(
-                    bmat, contact_ind, u_intf_ind, self.nd
-                )
-            ]
-        try:
-            energy_balance_groups = dof_manager.indices_of_groups(
-                [EnergyBalanceTemperatureGroup()]
-            )
-        except ValueError:
-            energy_balance_groups = []
-        if len(energy_balance_groups) > 0:
-            thermal_transform = [
-                lambda bmat: scale_energy_transform(
-                    bmat, row_groups=energy_balance_groups, model=self
-                )
-            ]
-
-        if contact_transform is not None or thermal_transform is not None:
-            solver_factory = LinearTransformedScheme(
-                inner=ksp_factory,
-                right_transformations=contact_transform,
-                left_transformations=thermal_transform,
-            )
-
-        else:
-            # A standard KSP solver will do.
-            solver_factory = ksp_factory
-
-        self._solver_factory = solver_factory
+        configuration = configuration_factory()
+        validate_all_keys_are_unique(configuration.solver)
+        self._petsc_ksp_pc_configuration = configuration.solver
+        # The PorePyArrangementTransformation permutes the linear system from the PorePy
+        # ordering to the ordering declared by the DofManager. Then it transforms the
+        # solution back to the PorePy ordering. It is included by default for all the
+        # problems.
+        self._transformations = [
+            PorePyArrangementTransformation()
+        ] + configuration.transformations
+        self._dof_manager = DofManager(model=self, groups=configuration.groups)
 
     def set_nonlinear_solver_statistics(self) -> None:
         """Override the method to set the solver statistics, so that we also get fields
@@ -462,7 +372,8 @@ class IterativeSolverMixin(pp.PorePyModel):
 
 def default_preconditioner_factory(
     model: pp.PorePyModel,
-) -> Callable[[], PetscKspPcConfiguration]:
+) -> Callable[[], LinearSolverConfiguration]:
+    is_tpsa = isinstance(model, pp.poromechanics.TpsaPoromechanicsMixin)
     if isinstance(model, pp.SinglePhaseFlow):
         return mass_balance_factory
     if isinstance(model, pp.MomentumBalance):
@@ -471,6 +382,8 @@ def default_preconditioner_factory(
         return th_factory
     if isinstance(model, pp.Poromechanics):
         return hm_factory
-    if isinstance(model, pp.Thermoporomechanics):
+    if isinstance(model, pp.Thermoporomechanics) and not is_tpsa:
         return thm_factory
+    if isinstance(model, pp.Thermoporomechanics) and is_tpsa:
+        return thm_tpsa_factory
     raise ValueError(f"Unknown model:", type(model))

@@ -16,7 +16,6 @@ import porepy as pp
 import pytest
 from porepy.applications.test_utils.models import add_mixin
 
-import pp_solvers
 from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
@@ -29,7 +28,8 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureIntersectionsGroup,
     MassBalancePressureMatrixGroup,
 )
-from pp_solvers.preconditioners import PetscKspPcConfiguration
+from pp_solvers.preconditioners import LinearSolverConfiguration
+from pp_solvers.solver_mixin import default_preconditioner_factory
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -77,25 +77,15 @@ def model(model_kind, with_fractures) -> pp.PorePyModel:
 
 
 @pytest.fixture(scope="module")
-def solvers(model_kind: str) -> PetscKspPcConfiguration:
-    match model_kind:
-        case "flow":
-            return pp_solvers.mass_balance_factory()
-        case "mechanics":
-            return pp_solvers.momentum_balance_factory()
-        case "TH":
-            return pp_solvers.th_factory()
-        case "HM":
-            return pp_solvers.hm_factory()
-        case "THM":
-            return pp_solvers.thm_factory()
-        case default:
-            raise ValueError(default)
+def solver_configuration(model: pp.PorePyModel) -> LinearSolverConfiguration:
+    return default_preconditioner_factory(model)()
 
 
 @pytest.fixture(scope="module")
-def dof_manager(model: pp.PorePyModel, solvers: PetscKspPcConfiguration) -> DofManager:
-    return DofManager(model, solvers.groups)
+def dof_manager(
+    model: pp.PorePyModel, solver_configuration: LinearSolverConfiguration
+) -> DofManager:
+    return DofManager(model, solver_configuration.solver.groups)
 
 
 @pytest.fixture(scope="module")

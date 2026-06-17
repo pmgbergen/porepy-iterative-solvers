@@ -2,7 +2,7 @@
 *.pvd
 *.json
 *.msh
-*.geo_unrolled
+*.geo_unrolled*
 *.npz
 *.npy
 *.pyc

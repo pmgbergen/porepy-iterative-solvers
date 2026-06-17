@@ -57,6 +57,15 @@ class ThermoporomechanicsModel(
     pass
 
 
+class ThermoporomechanicsTpsaModel(
+    pp.model_geometries.SquareDomainOrthogonalFractures,
+    pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.poromechanics.TpsaPoromechanicsMixin,
+    pp.Thermoporomechanics,
+):
+    pass
+
+
 # Hard-coded expected number of linear iterations for each model. These are used for
 # regression testing. Hopefully the reference values are stable.
 expected_linear_iterations = {
@@ -64,6 +73,7 @@ expected_linear_iterations = {
     MechanicsModel: [5, 6],
     PoromechanicsModel: [8, 12, 10, 12],
     ThermoporomechanicsModel: [10, 15, 14],
+    ThermoporomechanicsTpsaModel: [13, 17, 19, 19, 18, 19, 19, 19],
 }
 
 
@@ -85,7 +95,13 @@ def model_options():
 
 @pytest.mark.parametrize(
     "model_class",
-    [FluidModel, MechanicsModel, PoromechanicsModel, ThermoporomechanicsModel],
+    [
+        FluidModel,
+        MechanicsModel,
+        PoromechanicsModel,
+        ThermoporomechanicsModel,
+        ThermoporomechanicsTpsaModel,
+    ],
 )
 def test_model(model_class):
     opts = model_options()
@@ -168,7 +184,7 @@ def test_linear_solver_failure():
             iterative_model, {"nl_max_iterations": max_nonlinear_iterations}
         ).run()
     linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
-    assert len(linear_iterations) == 7, (
+    assert len(linear_iterations) == max_nonlinear_iterations, (
         f"We did {linear_iterations} Newton iterations and did not converge."
     )
     # No idea why PETSc reports 2 and not 1, but it should not report anything else.

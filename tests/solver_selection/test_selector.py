@@ -1,15 +1,15 @@
-import pytest
 import numpy as np
+import pytest
+
+from pp_solvers.solver_selection.performance_predictor import (
+    assemble_default_performance_predictor,
+)
 from pp_solvers.solver_selection.selector import (
     SolverSelector,
     SolverSelectorHistory,
     concatenate_characteristics_solvers,
 )
-from pp_solvers.solver_selection.solver_space import SolverSpace, CategoricalChoices
-from pp_solvers.solver_selection.performance_predictor import (
-    assemble_default_performance_predictor,
-)
-
+from pp_solvers.solver_selection.solver_space import CategoricalChoices, SolverSpace
 
 _SPACE = SolverSpace({"pc_type": CategoricalChoices(["ilu", "gamg", "hypre"])})
 _ALL_CONFIGS = [_SPACE.config_from_decision(d) for d in _SPACE.all_decisions_encoding]
