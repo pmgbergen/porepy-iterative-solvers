@@ -1,4 +1,4 @@
-"""This module contains the `IterativeSolverMixin` class, which provides the capabilitiy
+"""TODO YZ This module contains the `IterativeSolverMixin` class, which provides the capabilitiy
 of using iterative linear solvers to a PorePy model.
 
 """
@@ -6,10 +6,11 @@ of using iterative linear solvers to a PorePy model.
 from __future__ import annotations
 
 import logging
+from abc import ABC
 from dataclasses import dataclass, field
 from time import time
-from typing import Callable, TypedDict
-
+from typing import Callable, Optional, TypedDict
+from scipy.sparse import csr_matrix
 import numpy as np
 import porepy as pp
 import scipy.sparse as sps
@@ -21,6 +22,7 @@ from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (
     LinearSolverConfiguration,
+    PetscKspPcConfiguration,
     hm_factory,
     mass_balance_factory,
     momentum_balance_factory,
@@ -30,15 +32,17 @@ from pp_solvers.preconditioners import (
     validate_all_keys_are_unique,
 )
 from pp_solvers.solver_selection.selector import SolverSelector
-from pp_solvers.transformations import PorePyArrangementTransformation
+from pp_solvers.transformations import (
+    PorePyArrangementTransformation,
+    LinearSystemTransformation,
+)
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
 __all__ = [
-    "IterativeSolverMixin",
-    "LinearSolverParams",
+    "IterativeLinearSolver",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
@@ -51,89 +55,120 @@ type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
 https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
 
-ITERATIVE_SOLVER_FAILED_TO_INITIALIZE = -9999
+
+@dataclass
+class LinearSolverStatus(ABC):
+    pass
 
 
 @dataclass
-class LinearSolverStatistics(SolverStatistics):
-    """A dataclass to store statistics about the linear solver.
-
-    Currently, PorePy only has stastics for the nonlinear solver, so we create an
-    extension to store the linear solver statistics.
-    """
-
-    linsolve_construction_time: list[float] = field(default_factory=list)
-    linsolve_solve_time: list[float] = field(default_factory=list)
-    petsc_converged_reason: list[int] = field(default_factory=list)
-    num_krylov_iters: list[int] = field(default_factory=list)
+class LinearSolverStatusSuccess(LinearSolverStatus):
+    pass
 
 
-class LinearSolverParams(TypedDict, total=False):
-    """A dictionary of linear solver parameters, stored in
-    `model.params['linear_solver']`.
-
-    The argument `total=False` states that all entries are optional.
-
-    """
-
-    options: dict
-    """A dict of parameters to tune the solver configuration. See examples for the
-    structure."""
-    solver_selector: SolverSelector
-    """A solver selector object providing multiple linear solver configurations."""
-    delete_matrices: bool
-    """Delete the linear solver matrix when it is not needed to free the memory as early
-    as possible. Defaults to True.
-
-    """
-    preconditioner_factory: Callable[[], LinearSolverConfiguration]
-    """A factory to build a PETSc preconditioned linear solver. Using the default
-    factory if not passed.
-
-    """
+@dataclass
+class LinearSolverStatusFailure(LinearSolverStatus):
+    pass
 
 
-class IterativeSolverMixin(pp.PorePyModel):
-    """Intended usage:
+@dataclass
+class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
+    solve_time: float
+    construct_time: float
+    petsc_converged_reason: PETScKspConvergedReason
+    num_krylov_iters: int
 
-    (i) Plug in the `IterativeSolverMixin` to the PorePy model inheritance chain below
-    your methods that override `solve_linear_system` and `assemble_linear_system`, e.g.
-    for logging purposes.
 
-    (ii) Insert an additional option to the model options dictionary:
-    ```
-    model_options["linear_solver"] = {
-        "options": {
-            {
-                # Uncomment below to enable convergence logging:
-                # "gmres: {
-                #     "ksp_monitor": None,
-                # }
-            }
-        }
-    }
-    ```
-    The linear solver can be customized via the `"options"` sub-dictionary, see
-    the examples folder for details.
+@dataclass
+class IterativeLinearSolverFailure(LinearSolverStatusSuccess):
+    reason: str
+    solve_time: float
+    construct_time: float
+    petsc_converged_reason: Optional[PETScKspConvergedReason] = None
+
+
+class IterativeLinearSolver(pp.LinearSolverBase):
+    """TODO YZ
+
+    Parameters:
+        options: A dict of parameters to tune the solver configuration. See examples for
+            the structure.
+        solver_selector: A solver selector object providing multiple linear solver
+            configurations. If not passed (default), ML solver selection is disabled.
+        delete_matrices: Delete the linear solver matrix when it is not needed to free
+            the memory as early as possible. Defaults to True.
+        preconditioner_factory: A factory to build a PETSc preconditioned linear solver.
+            If None (default), using a default factory for a given model.
 
     """
 
-    def linear_solver_params(self) -> LinearSolverParams:
-        """Access linear solver parameters dictionary."""
-        try:
-            linear_solver_params = self.params.get("linear_solver", dict())
-        except KeyError as e:
-            logger.exception("You must specify `linear_solver` in the model params.")
-            raise e
-        if not isinstance(linear_solver_params, dict):
-            raise ValueError(
-                "model_params['linear_solver'] must be a dictionary when used together "
-                "with the IterativeSolverMixin."
-            )
-        return linear_solver_params
+    def __init__(
+        self,
+        solver_options: Optional[dict] = None,
+        solver_selector: Optional[SolverSelector] = None,
+        delete_matrices: bool = True,
+        configuration_factory: Optional[Callable[[], LinearSolverConfiguration]] = None,
+    ):
+        if solver_options is None:
+            solver_options = {}
+        self.solver_options: dict = solver_options
+        """A dict of parameters to tune the solver configuration. See examples for the
+        structure.
 
-    def solve_linear_system(self) -> np.ndarray:
-        """Solve the linear system.
+        """
+        self.solver_selector: Optional[SolverSelector] = solver_selector
+        """A solver selector object providing multiple linear solver configurations. If
+        None, ML solver selection is disabled.
+    
+        """
+        self.delete_matrices: bool = delete_matrices
+        """Delete the linear solver matrix when it is not needed to free the memory as
+        early as possible.
+    
+        """
+        self.configuration_factory: Optional[
+            Callable[[], LinearSolverConfiguration]
+        ] = configuration_factory
+        """A factory to build a PETSc preconditioned linear solver. If None, a default
+        factory will be set for a given model in :meth:`initialize_linear_solver`.
+
+        """
+        self.petsc_ksp_pc_configuration: Optional[PetscKspPcConfiguration] = None
+        """TODO YZ"""
+        self.transformations: list[LinearSystemTransformation] = []
+        """TODO YZ"""
+        self.dof_manager: Optional[DofManager] = None
+        """TODO YZ"""
+        self._num_dofs: Optional[int] = None
+        """TODO YZ"""
+
+    def initialize_linear_solver(self, model: pp.PorePyModel):
+        """TODO YZ"""
+        # Set up preconditioner.
+
+        # TODO YZ: Resetting the statistics was here.
+
+        if self.configuration_factory is None:
+            self.configuration_factory = default_preconditioner_factory(model)
+
+        configuration = self.configuration_factory()
+        validate_all_keys_are_unique(configuration.solver)
+        self.petsc_ksp_pc_configuration = configuration.solver
+        # The PorePyArrangementTransformation permutes the linear system from the PorePy
+        # ordering to the ordering declared by the DofManager. Then it transforms the
+        # solution back to the PorePy ordering. It is included by default for all the
+        # problems.
+        self.transformations = [
+            PorePyArrangementTransformation()
+        ] + configuration.transformations
+        self.dof_manager = DofManager(model=model, groups=configuration.groups)
+
+        self._num_dofs = model.equation_system.num_dofs()
+
+    def solve_linear_system(
+        self, mat: csr_matrix, rhs: np.ndarray
+    ) -> tuple[np.ndarray, LinearSolverStatus]:
+        """Solve the linear system. TODO YZ
 
         This function returns a solution array even if the underlying linear solver did
         not converge. A warning will be logged in this case. It may also return nans if
@@ -148,32 +183,52 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             Solution array of the linear system.
         """
+        assert (
+            self.dof_manager is not None and self.petsc_ksp_pc_configuration is not None
+        ), "TODO YZ"
+
         # Check for NaN or Inf in the RHS.
-        # The rhs inside the linear system object is rearranged to match the matrix.
-        rhs = self.bmat.rhs
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
             # This should never be the case, as this situation should cut off by the
             # nonlinear convergence criterion from the earliear nonlinear iteration. We
             # keep this safeguard until the iterative solver is in a more mature state.
-            logger.warning("RHS contains NaN or Inf values")
-            return np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
+            error_msg = "RHS contains NaN or Inf values"
+            logger.warning(error_msg)
+            status = IterativeLinearSolverFailure(
+                reason=error_msg, solve_time=0.0, construct_time=0.0
+            )
+            return np.full(self._num_dofs, np.nan, dtype=rhs.dtype), status
 
-        linear_solver_params = self.linear_solver_params()
+        # Creating the indices of DoFs for the BlockLinearSystem class.
+        linear_system = BlockLinearSystem(
+            mat=mat,
+            rhs=rhs,
+            indexer=LinearSystemIndexer(
+                dofs_row=self.dof_manager.eq_dofs(),
+                dofs_col=self.dof_manager.var_dofs(),
+                group_names_row=self.dof_manager.equation_names(),
+                group_names_col=self.dof_manager.variable_names(),
+            ),
+        )
 
-        solver_selector = linear_solver_params.get("solver_selector", None)
-        solver_options = linear_solver_params.get("options", {})
-        if solver_selector is None:
-            solution, _ = self._solve_linear_system(solver_options=solver_options)
-        else:
-            solution, _ = self._solve_linear_system_with_solver_selection(
-                solver_selector=solver_selector, solver_options=solver_options
+        # Apply transformations to the linear systems before passing it to the solver.
+        for transformation in self.transformations:
+            linear_system = transformation.transform_matrix_rhs(
+                linear_system, dof_manager=self.dof_manager
             )
 
-        return solution
+        # Delete the original linear system to save memory unless instructed not to.
+        if self.delete_matrices:
+            del mat  # TODO YZ
+
+        if self.solver_selector is None:
+            return self._solve_linear_system(linear_system)
+        else:
+            return self._solve_linear_system_with_solver_selection(linear_system)
 
     def _solve_linear_system_with_solver_selection(
-        self, solver_selector: SolverSelector, solver_options: dict
-    ) -> tuple[np.ndarray, PETScKspConvergedReason]:
+        self, linear_system: BlockLinearSystem
+    ) -> tuple[np.ndarray, LinearSolverStatus]:
         """Use ML-based solver selection to solve the linear system and update the
         model.
 
@@ -191,43 +246,42 @@ class IterativeSolverMixin(pp.PorePyModel):
                 - Solution array of the linear system.
                 - PETSc KSP converged reason
         """
+        assert self.solver_selector is not None, "TODO YZ"
         characteristics = np.array([])  # Not implemented yet.
 
         # Perform the ML selection.
-        solver_selection_opts, solver_id = solver_selector.select_linear_solver_scheme(
-            characteristics=characteristics, active_solver_idx=-1
+        solver_selection_opts, solver_id = (
+            self.solver_selector.select_linear_solver_scheme(
+                characteristics=characteristics, active_solver_idx=-1
+            )
         )
 
         # Check that the ML model does not override the manually provided options. Warn
         # if so and merge the options into a single dict.
-        intersecting_keys = set(solver_options).intersection(solver_selection_opts)
+        intersecting_keys = set(self.solver_options).intersection(solver_selection_opts)
         if len(intersecting_keys) > 0:
             logger.warning(
                 "Solver selection override manually provided solver options:",
                 intersecting_keys,
             )
-        solver_selection_opts = solver_options | solver_selection_opts
+        solver_selection_opts = self.solver_options | solver_selection_opts
 
         # Solve the linear system.
-        solution, petscConvergedReason = self._solve_linear_system(
-            solver_options=solver_selection_opts
+        solution, status = self._solve_linear_system(
+            linear_system=linear_system, solver_options=solver_selection_opts
         )
 
-        # The way of accessing these values should be changed when they find a
-        # better accommodation.
-        solve_time = self.linear_solver_statistics.linsolve_solve_time[-1]
-        construct_time = self.linear_solver_statistics.linsolve_construction_time[-1]
         # Providing feedback to the ML model.
-        solver_selector.provide_performance_feedback(
-            solve_time=solve_time,
-            construct_time=construct_time,
-            success=petscConvergedReason > 0,
+        self.solver_selector.provide_performance_feedback(
+            solve_time=status.solve_time,
+            construct_time=status.construct_time,
+            success=status.petsc_converged_reason > 0,
         )
-        return solution, petscConvergedReason
+        return solution, status
 
     def _solve_linear_system(
-        self, solver_options: dict
-    ) -> tuple[np.ndarray, PETScKspConvergedReason]:
+        self, linear_system: BlockLinearSystem, solver_options: dict
+    ) -> tuple[np.ndarray, IterativeLinearSolverSuccess | IterativeLinearSolverFailure]:
         """Assembles the PETSc linear solver and solves the linear system.
 
         Parameters:
@@ -236,46 +290,47 @@ class IterativeSolverMixin(pp.PorePyModel):
         Returns:
             A tuple of two elements:
                 - Solution array of the linear system.
-                - PETSc KSP converged reason
+                - PETSc KSP converged reason TODO YZ
         """
-        rhs = self.bmat.rhs
+        assert (
+            self.dof_manager is not None and self.petsc_ksp_pc_configuration is not None
+        ), "TODO YZ"
 
         t0 = time()
         try:
             solver = initialize_petsc_ksp(
-                block_linear_system=self.bmat,
-                dof_manager=self._dof_manager,
-                petsc_ksp_pc_configuration=self._petsc_ksp_pc_configuration,
+                block_linear_system=linear_system,
+                dof_manager=self.dof_manager,
+                petsc_ksp_pc_configuration=self.petsc_ksp_pc_configuration,
                 user_options=solver_options,
             )
         except Exception:
-            logger.exception(
+            error_msg = (
                 "Failed to build a PETSc linear solver based on the given linear system"
             )
-            nans = np.full(self.equation_system.num_dofs(), np.nan, dtype=rhs.dtype)
-            return nans, ITERATIVE_SOLVER_FAILED_TO_INITIALIZE
-        elapsed = time() - t0
-        self.linear_solver_statistics.linsolve_construction_time.append(elapsed)
-        logger.info("Linear solver constructed in %.2f seconds.", elapsed)
+            logger.exception(error_msg)
+            nans = np.full(self._num_dofs, np.nan, dtype=linear_system.rhs.dtype)
+            return nans, IterativeLinearSolverFailure(
+                solve_time=0.0, construct_time=time() - t0, reason=error_msg
+            )
+        construct_time = time() - t0
+        logger.info("Linear solver constructed in %.2f seconds.", construct_time)
 
         # Project the right hand side to the local block matrix ordering, as was done
         # for the block matrix during assembly. We need to do this on the reordered rhs
         # vector (with contact eqs reordered).
         t0 = time()
-        x = solver.solve(rhs)
-        elapsed = time() - t0
+        x = solver.solve(linear_system.rhs)
+        solve_time = time() - t0
         num_it = len(solver.get_residuals())
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         logger.info(
             "Linear system solved in %.2f seconds with %d iterations, "
             "converged reason: %d.",
-            elapsed,
+            solve_time,
             num_it,
             info,
         )
-        self.linear_solver_statistics.linsolve_solve_time.append(elapsed)
-        self.linear_solver_statistics.petsc_converged_reason.append(info)
-        self.linear_solver_statistics.num_krylov_iters.append(num_it)
 
         if info <= 0:
             logger.warning(
@@ -285,89 +340,25 @@ class IterativeSolverMixin(pp.PorePyModel):
                 "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
                 info,
             )
-        # Transform the solution back to the global (PorePy) ordering.
-        for transformation in reversed(self._transformations):
-            x = transformation.transform_solution(x)
-
-        if self.linear_solver_params().get("delete_matrices", True):
-            del self.bmat
-
-        return np.atleast_1d(x), info
-
-    def assemble_linear_system(self):
-        super().assemble_linear_system()  # type: ignore[misc]
-
-        dof_manager = self._dof_manager
-        # Get the linear system from the equation system.
-
-        # TODO: Replace this with a different type of plugin
-        mat, rhs = self.linear_system
-        assert mat.getformat() == "csr"
-
-        # Creating the indices of DoFs for the BlockLinearSystem class.
-        linear_system = BlockLinearSystem(
-            mat=mat,
-            rhs=rhs,
-            indexer=LinearSystemIndexer(
-                dofs_row=dof_manager.eq_dofs(),
-                dofs_col=dof_manager.var_dofs(),
-                group_names_row=dof_manager.equation_names(),
-                group_names_col=dof_manager.variable_names(),
-            ),
-        )
-
-        # Apply transformations to the linear systems before passing it to the solver.
-        for transformation in self._transformations:
-            linear_system = transformation.transform_matrix_rhs(
-                linear_system, dof_manager=dof_manager
+            status = IterativeLinearSolverFailure(
+                reason="Linear solver did not converge.",
+                solve_time=solve_time,
+                construct_time=construct_time,
+                petsc_converged_reason=info,
+            )
+        else:
+            status = IterativeLinearSolverSuccess(
+                solve_time=solve_time,
+                construct_time=construct_time,
+                petsc_converged_reason=info,
+                num_krylov_iters=num_it,
             )
 
-        self.bmat = linear_system
+        # Transform the solution back to PorePy ordering.
+        for transformation in reversed(self.transformations):
+            x = transformation.transform_solution(x)
 
-        # Delete the original linear system to save memory unless instructed not to.
-        if self.linear_solver_params().get("delete_matrices", True):
-            del self.linear_system
-
-    def _initialize_linear_solver(self):
-        # Set up preconditioner.
-
-        # Add fields for the linear solver statistics to the nonlinear solver statistics
-        # object.
-        self.nonlinear_solver_statistics.linsolve_construction_time = []
-        self.nonlinear_solver_statistics.linsolve_solve_time = []
-        self.nonlinear_solver_statistics.petsc_converged_reason = []
-        self.nonlinear_solver_statistics.num_krylov_iters = []
-
-        linear_solver_params = self.linear_solver_params()
-        configuration_factory = linear_solver_params.get("preconditioner_factory", None)
-        if configuration_factory is None:
-            configuration_factory = default_preconditioner_factory(self)
-
-        configuration = configuration_factory()
-        validate_all_keys_are_unique(configuration.solver)
-        self._petsc_ksp_pc_configuration = configuration.solver
-        # The PorePyArrangementTransformation permutes the linear system from the PorePy
-        # ordering to the ordering declared by the DofManager. Then it transforms the
-        # solution back to the PorePy ordering. It is included by default for all the
-        # problems.
-        self._transformations = [
-            PorePyArrangementTransformation()
-        ] + configuration.transformations
-        self._dof_manager = DofManager(model=self, groups=configuration.groups)
-
-    def set_nonlinear_solver_statistics(self) -> None:
-        """Override the method to set the solver statistics, so that we also get fields
-        for the linear solver.
-
-        This is certainly not the intended way of doing this, and it hacky, but the
-        current PorePy implementation only caters to statistics objects being sent
-        as part of the parameter class, which would require modification of all
-        runscripts. Instead, we do it dirty for now.
-
-        """
-        super().set_nonlinear_solver_statistics()  # type: ignore[misc]
-        # The name of the attribute is really not meaningful..
-        self.linear_solver_statistics = LinearSolverStatistics()
+        return np.atleast_1d(x), status
 
 
 def default_preconditioner_factory(

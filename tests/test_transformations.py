@@ -13,6 +13,7 @@ import pytest
 import scipy.sparse as sp
 from porepy.applications.test_utils.models import add_mixin
 from scipy.sparse.linalg import inv, spsolve
+import pp_solvers
 from testing_utils import MockDofManager, generate_block_linear_system
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
@@ -25,7 +26,7 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureIntersectionsGroup,
 )
 from pp_solvers.mat_utils import inv_block_diag
-from pp_solvers.solver_mixin import IterativeSolverMixin, LinearSolverParams
+from pp_solvers.solver_mixin import IterativeLinearSolver
 from pp_solvers.transformations import (
     ContactLinearTransformation,
     LinearSystemTransformation,
@@ -56,9 +57,7 @@ def model(model_kind: str, with_fractures: bool):
         case default:
             raise ValueError(default)
 
-    class TailoredClass(
-        IterativeSolverMixin, pp.model_geometries.SquareDomainOrthogonalFractures
-    ):
+    class TailoredClass(pp.model_geometries.SquareDomainOrthogonalFractures):
         """Common base class for all models in this test suite."""
 
         def meshing_arguments(self):
@@ -68,9 +67,6 @@ def model(model_kind: str, with_fractures: bool):
         "cell_size": 0.5,
         "cartesian": True,
         "fracture_indices": [0, 1] if with_fractures else [],
-        "linear_solver": LinearSolverParams(
-            delete_matrices=False,
-        ),
     }
     model_class = add_mixin(TailoredClass, model_type)
     model = model_class(params=params)
@@ -87,9 +83,20 @@ def model(model_kind: str, with_fractures: bool):
 
 
 @pytest.fixture
-def linear_system(model: IterativeSolverMixin):
+def linear_solver(model: pp.PorePyModel):
+    linear_solver = pp_solvers.IterativeLinearSolver(delete_matrices=False)
+    linear_solver.initialize_linear_solver(model)
+    return linear_solver
+
+
+@pytest.fixture
+def dof_manager(linear_solver: pp_solvers.IterativeLinearSolver):
+    return linear_solver.dof_manager
+
+
+@pytest.fixture
+def linear_system(model: pp.PorePyModel, dof_manager: DofManager):
     mat, rhs = model.linear_system
-    dof_manager: DofManager = model._dof_manager
     return BlockLinearSystem(
         mat=mat.copy(),
         rhs=rhs.copy(),
@@ -103,14 +110,12 @@ def linear_system(model: IterativeSolverMixin):
 
 
 def test_porepy_arrangement_transformation(
-    model: IterativeSolverMixin,
+    dof_manager: DofManager,
     linear_system: BlockLinearSystem,
     model_kind: str,
     with_fractures: bool,
 ):
     """Solve the unpermuted system, permute it, solve, permute back, and compare."""
-    dof_manager: DofManager = model._dof_manager
-
     sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
 
     transformation = PorePyArrangementTransformation()
@@ -176,7 +181,7 @@ def test_schur_complement_reduction(
 
 
 def test_contact_transformation(
-    model: IterativeSolverMixin,
+    dof_manager: DofManager,
     linear_system: BlockLinearSystem,
     model_kind: str,
     with_fractures: bool,
@@ -186,7 +191,6 @@ def test_contact_transformation(
     Also checks that the contact submatrix is singular before the transformation
     and non-singular after, and that the rest of the matrix is unchanged.
     """
-    dof_manager: DofManager = model._dof_manager
 
     sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
 
@@ -235,7 +239,7 @@ def test_contact_transformation(
     ],
 )
 def test_scale_specific_volume(
-    model: IterativeSolverMixin,
+    dof_manager: DofManager,
     linear_system: BlockLinearSystem,
     model_kind: str,
     with_fractures: bool,
@@ -248,7 +252,6 @@ def test_scale_specific_volume(
     """
     if model_kind == "flow":
         return
-    dof_manager: DofManager = model._dof_manager
 
     sol = spsolve(linear_system.mat.tocsc(), linear_system.rhs)
 
@@ -303,13 +306,12 @@ def test_transformations_with_unsorted_dofs(
     transformation: LinearSystemTransformation,
     linear_system: BlockLinearSystem,
     model_kind: str,
-    model: IterativeSolverMixin,
+    dof_manager: DofManager,
 ):
     """Transformations that require sorted DoFs raise ValueError when given an
     unsorted (raw PorePy) linear system."""
     if model_kind == "flow":
         return
-    dof_manager: DofManager = model._dof_manager
 
     with pytest.raises(
         ValueError,
