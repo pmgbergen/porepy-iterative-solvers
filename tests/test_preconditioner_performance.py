@@ -130,7 +130,7 @@ def test_model(model_class):
     # for now.
     solver_opts = {"nl_convergence_res_atol": 1e-8, "nl_convergence_inc_atol": 1e-8}
 
-    direct_model = model_class(opts)
+    direct_model = model_class(model_options())
     try:
         status = pp.ModelRunner(direct_model, solver_opts).run()
         assert status.is_success()
@@ -155,7 +155,7 @@ def test_model(model_class):
         },
     )
 
-    iterative_model = iterative_class(iterative_opts)
+    iterative_model = model_class(model_options())
     iterative_model.prepare_simulation()
     try:
         status = pp.ModelRunner(
@@ -165,7 +165,7 @@ def test_model(model_class):
                 linear_solver=linear_solver,
             ),
             params={"prepare_simulation": False},
-        ).run()        
+        ).run()
         assert status.is_success()
         iterative_model_failed = False
     except RuntimeError as e:
@@ -227,7 +227,10 @@ def test_linear_solver_failure():
         pp.ModelRunner(
             iterative_model,
             {"prepare_simulation": False},
-            nonlinear_solver=nonlinear_solver,
+            nonlinear_solver=pp.NewtonSolver(
+                is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
+                linear_solver=linear_iterations,
+            ),
         ).run()
 
     linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
