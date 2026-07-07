@@ -16,6 +16,7 @@ from pp_solvers.fixed_stress import (
 )
 from pp_solvers.petsc_utils import petsc_to_csr
 from pp_solvers.preconditioners import FixedStressInverter
+from pp_solvers.transformations import PorePyArrangementTransformation
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -28,7 +29,6 @@ def model(with_fractures) -> pp.PorePyModel:
     """Instantiate a model for the test suites in this file."""
 
     class TailoredClass(
-        pp_solvers.IterativeSolverMixin,
         pp.model_geometries.SquareDomainOrthogonalFractures,
         pp.Thermoporomechanics,
     ):
@@ -38,7 +38,6 @@ def model(with_fractures) -> pp.PorePyModel:
             return {"cell_size": self.params["cell_size"]}
 
     params = {
-        "linear_solver": {},
         "cell_size": 0.25,
         "cartesian": True,
         "fracture_indices": [0, 1] if with_fractures else [],
@@ -69,14 +68,51 @@ def model(with_fractures) -> pp.PorePyModel:
     return model
 
 
-def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bool):
+@pytest.fixture(scope="module")
+def dof_manager(model: pp.PorePyModel) -> DofManager:
+    """Construct the DoF manager through the separate linear solver."""
+    solver = pp_solvers.IterativeLinearSolver(delete_matrices=False)
+    solver.initialize_with_model(model)
+    assert solver.dof_manager is not None
+    return solver.dof_manager
+
+
+@pytest.fixture(scope="module")
+def block_linear_system(
+    model: pp.PorePyModel, dof_manager: DofManager
+) -> BlockLinearSystem:
+    """Construct the transformed block system formerly assembled by the mixin."""
+    mat, rhs = model.linear_system
+    linear_system = BlockLinearSystem(
+        mat=mat,
+        rhs=rhs,
+        indexer=pp_solvers.LinearSystemIndexer(
+            dofs_row=dof_manager.eq_dofs(),
+            dofs_col=dof_manager.var_dofs(),
+            group_names_row=dof_manager.equation_names(),
+            group_names_col=dof_manager.variable_names(),
+        ),
+    )
+    transformations = [
+        PorePyArrangementTransformation()
+    ] + pp_solvers.thm_factory().transformations
+    for transformation in transformations:
+        linear_system = transformation.transform_matrix_rhs(
+            linear_system, dof_manager=dof_manager
+        )
+    return linear_system
+
+
+def test_fixed_stress(
+    model: pp.PorePyModel,
+    dof_manager: DofManager,
+    block_linear_system: BlockLinearSystem,
+    with_fractures: bool,
+):
     """The function to compose the fixed stress stabilization for the block matrix is
     `make_fs_analytical_slow_new`. This checks that it does the right things - modifies
     the pressure diagonal blocks and keeps everything else not touched."""
 
-    jacobian = model.bmat
-
-    dof_manager: DofManager = model._dof_manager
     num_groups = len(dof_manager.groups())
     try:
         p_mat_group, p_frac_group = dof_manager.indices_of_groups(
@@ -87,7 +123,7 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
 
     all_groups = list(range(num_groups))
     result = construct_fixed_stress_block_matrix(
-        indexer=jacobian.indexer,
+        indexer=block_linear_system.indexer,
         model=model,
         p_mat_group=p_mat_group,
         p_frac_group=p_frac_group,
@@ -114,12 +150,15 @@ def test_fixed_stress(model: pp_solvers.IterativeSolverMixin, with_fractures: bo
                 assert submat.nnz == 0, submat
 
 
-def test_fixed_stress_inverter(model: pp_solvers.IterativeSolverMixin):
+def test_fixed_stress_inverter(
+    model: pp.PorePyModel,
+    dof_manager: DofManager,
+    block_linear_system: BlockLinearSystem,
+):
     """Integration test that check that the configuration FixedStressInverter provides a
     correct fixed stress matrix."""
-    dof_manager: DofManager = model._dof_manager
     inverter = FixedStressInverter()
-    bmat: BlockLinearSystem = model.bmat
+    bmat = block_linear_system
 
     config = inverter.petsc_assembly_config(dof_manager=dof_manager)
     petsc_fs_matrix = petsc_to_csr(config["inverter_additive"](bmat.indexer))

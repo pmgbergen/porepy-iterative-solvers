@@ -85,7 +85,7 @@ def model(model_kind: str, with_fractures: bool):
 @pytest.fixture
 def linear_solver(model: pp.PorePyModel):
     linear_solver = pp_solvers.IterativeLinearSolver(delete_matrices=False)
-    linear_solver.initialize_linear_solver(model)
+    linear_solver.initialize_with_model(model)
     return linear_solver
 
 
@@ -107,6 +107,25 @@ def linear_system(model: pp.PorePyModel, dof_manager: DofManager):
             group_names_col=dof_manager.variable_names(),
         ),
     )
+
+
+def test_construct_block_matrix(
+    model: pp.PorePyModel, linear_solver: IterativeLinearSolver
+):
+    """IterativeLinearSolver.construct_block_matrix applies every configured
+    transformation.
+
+    """
+    mat, rhs = model.linear_system
+    block_system = linear_solver.construct_block_matrix(mat.copy(), rhs.copy())
+
+    transformed_solution = spsolve(block_system.mat.tocsc(), block_system.rhs)
+    actual_solution = transformed_solution
+    for transformation in reversed(linear_solver.transformations):
+        actual_solution = transformation.transform_solution(actual_solution)
+
+    expected_solution = spsolve(mat.tocsc(), rhs)
+    np.testing.assert_allclose(actual_solution, expected_solution)
 
 
 def test_porepy_arrangement_transformation(
