@@ -15,6 +15,10 @@ import numpy as np
 import porepy as pp
 import scipy.sparse as sps
 from porepy.viz.solver_statistics import SolverStatistics
+from porepy.numerics.linalg.linear_solver import (
+    LinearSolverStatusSuccess,
+    LinearSolverStatusFailure,
+)
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
@@ -57,22 +61,9 @@ https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
 
 
 @dataclass
-class LinearSolverStatus(ABC):
-    pass
-
-
-@dataclass
-class LinearSolverStatusSuccess(LinearSolverStatus):
-    pass
-
-
-@dataclass
-class LinearSolverStatusFailure(LinearSolverStatus):
-    pass
-
-
-@dataclass
 class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
+    """TODO YZ"""
+
     solve_time: float
     construct_time: float
     petsc_converged_reason: PETScKspConvergedReason
@@ -80,11 +71,14 @@ class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
 
 
 @dataclass
-class IterativeLinearSolverFailure(LinearSolverStatusSuccess):
+class IterativeLinearSolverFailure(LinearSolverStatusFailure):
+    """TODO YZ"""
+
     reason: str
     solve_time: float
     construct_time: float
     petsc_converged_reason: Optional[PETScKspConvergedReason] = None
+    num_krylov_iters: int = 0
 
 
 class IterativeLinearSolver(pp.LinearSolverBase):
@@ -142,7 +136,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         self._num_dofs: Optional[int] = None
         """TODO YZ"""
 
-    def initialize_linear_solver(self, model: pp.PorePyModel):
+    def initialize_with_model(self, model: pp.PorePyModel):
         """TODO YZ"""
         # Set up preconditioner.
 
@@ -199,6 +193,35 @@ class IterativeLinearSolver(pp.LinearSolverBase):
             )
             return np.full(self._num_dofs, np.nan, dtype=rhs.dtype), status
 
+        linear_system = self.construct_block_matrix(mat, rhs)
+
+        # Delete the original linear system to save memory unless instructed not to.
+        if self.delete_matrices:
+            del mat  # TODO YZ
+
+        if self.solver_selector is None:
+            return self._solve_linear_system(
+                linear_system, solver_options=self.solver_options
+            )
+        else:
+            return self._solve_linear_system_with_solver_selection(linear_system)
+
+    def construct_block_matrix(
+        self, mat: csr_matrix, rhs: np.ndarray
+    ) -> BlockLinearSystem:
+        """Construct and transform a block representation of a linear system.
+
+        Parameters:
+            mat: Matrix in PorePy's equation and variable ordering.
+            rhs: Right-hand side in PorePy's equation ordering.
+
+        Returns:
+            The linear system transformed to the ordering and scaling expected by the
+            configured iterative solver.
+
+        """
+        assert self.dof_manager is not None, "The linear solver is not initialized."
+
         # Creating the indices of DoFs for the BlockLinearSystem class.
         linear_system = BlockLinearSystem(
             mat=mat,
@@ -217,14 +240,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
                 linear_system, dof_manager=self.dof_manager
             )
 
-        # Delete the original linear system to save memory unless instructed not to.
-        if self.delete_matrices:
-            del mat  # TODO YZ
-
-        if self.solver_selector is None:
-            return self._solve_linear_system(linear_system)
-        else:
-            return self._solve_linear_system_with_solver_selection(linear_system)
+        return linear_system
 
     def _solve_linear_system_with_solver_selection(
         self, linear_system: BlockLinearSystem
@@ -345,6 +361,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
                 solve_time=solve_time,
                 construct_time=construct_time,
                 petsc_converged_reason=info,
+                num_krylov_iters=num_it,
             )
         else:
             status = IterativeLinearSolverSuccess(

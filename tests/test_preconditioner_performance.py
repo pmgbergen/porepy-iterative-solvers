@@ -18,11 +18,16 @@ to simple systems. For a given PorePy model, the tests consist of the following 
 
 import numpy as np
 import porepy as pp
+from porepy.models.protocol import PorePyModel
 import pytest
-from porepy.applications.test_utils.models import add_mixin
 from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
 
 import pp_solvers
+from pp_solvers.solver_mixin import (
+    IterativeLinearSolver,
+    IterativeLinearSolverFailure,
+    IterativeLinearSolverSuccess,
+)
 
 
 class FluidModel(
@@ -77,6 +82,21 @@ expected_linear_iterations = {
 }
 
 
+def fetch_linear_iterations_from_statistics(model: PorePyModel):
+    """TODO YZ"""
+    linear_iterations: list[int] = []
+    for x in model.nonlinear_solver_statistics.solver_status_history:
+        assert isinstance(
+            x, (pp.NonlinearSolverStatusConverged, pp.NonlinearSolverStatusFailed)
+        )
+        for y in x.linear_solver_statuses:
+            assert isinstance(
+                y, (IterativeLinearSolverSuccess, IterativeLinearSolverFailure)
+            )
+            linear_iterations.append(y.num_krylov_iters)
+    return linear_iterations
+
+
 def model_options():
     return {
         "material_constants": {
@@ -104,8 +124,6 @@ def model_options():
     ],
 )
 def test_model(model_class):
-    opts = model_options()
-
     # EK note to self: I could not go much further down here without running into
     # convergence problems with the nonlinear solver. I suspect this is due to the
     # fracture states changing, possibly because the grid is rather coarse. Leave this
@@ -125,10 +143,9 @@ def test_model(model_class):
         assert status.is_failure()
         direct_model_failed = True
 
-    iterative_opts = model_options()
-    iterative_opts["linear_solver"] = {
-        "options": {
-            # The iterations will not be printed during pytest (which surpresses
+    linear_solver = IterativeLinearSolver(
+        solver_options={
+            # The iterations will not be printed during pytest (which suppresses
             # output), but will be active during debugging, if the test is run as a
             # python script.
             "gmres": {"ksp_monitor": None},
@@ -136,12 +153,19 @@ def test_model(model_class):
             # expected iteration count.
             "mechanics_amg": {"pc_hypre_boomeramg_strong_threshold": 0.7},
         },
-    }
-    iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, model_class)
+    )
 
     iterative_model = iterative_class(iterative_opts)
+    iterative_model.prepare_simulation()
     try:
-        status = pp.ModelRunner(iterative_model, solver_opts).run()
+        status = pp.ModelRunner(
+            model=iterative_model,
+            nonlinear_solver=pp.NewtonSolver(
+                is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
+                linear_solver=linear_solver,
+            ),
+            params={"prepare_simulation": False},
+        ).run()        
         assert status.is_success()
         iterative_model_failed = False
     except RuntimeError as e:
@@ -170,7 +194,7 @@ def test_model(model_class):
     )
 
     # Fetch the actual and expected number of iterations.
-    linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
+    linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
     expected_iterations = expected_linear_iterations[model_class]
 
     np.testing.assert_equal(
@@ -186,26 +210,29 @@ def test_model(model_class):
 def test_linear_solver_failure():
     """Tests a case when a linear solver fails (due to iterations limit), but nonlinear
     iterations continue until they reach a limit."""
-    iterative_opts = model_options()
-    iterative_opts["linear_solver"] = {
-        "options": {
+    iterative_model = FluidModel(model_options())
+    # Need prepare_simulation to tell if the model is nonlinear.
+    iterative_model.prepare_simulation()
+    linear_solver = IterativeLinearSolver(
+        solver_options={
             "gmres": {
                 "ksp_monitor": None,
                 # Enforcing a single gmres iteration to ensure non-convergence.
                 "ksp_max_it": 1,
             },
-        },
-    }
-    iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, FluidModel)
-    iterative_model = iterative_class(iterative_opts)
+        }
+    )
     max_nonlinear_iterations = 7
     with pytest.raises(RuntimeError):
         pp.ModelRunner(
-            iterative_model, {"nl_max_iterations": max_nonlinear_iterations}
+            iterative_model,
+            {"prepare_simulation": False},
+            nonlinear_solver=nonlinear_solver,
         ).run()
-    linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
+
+    linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
     assert len(linear_iterations) == max_nonlinear_iterations, (
-        f"We did {linear_iterations} Newton iterations and did not converge."
+        f"We did {len(linear_iterations)} Newton iterations and did not converge."
     )
     # No idea why PETSc reports 2 and not 1, but it should not report anything else.
     assert np.all(np.array(linear_iterations) == 2)
