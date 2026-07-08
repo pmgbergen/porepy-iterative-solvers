@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from time import time
 from typing import Callable, Optional
-from scipy.sparse import csr_matrix
+
 import numpy as np
 import porepy as pp
 from porepy.numerics.linalg.linear_solver import (
@@ -14,10 +14,10 @@ from porepy.numerics.linalg.linear_solver import (
     LinearSolverStatusFailure,
     LinearSolverStatusSuccess,
 )
+from scipy.sparse import csr_matrix
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.mat_utils import csr_ones, inv_block_diag
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (
     LinearSolverConfiguration,
@@ -32,8 +32,8 @@ from pp_solvers.preconditioners import (
 )
 from pp_solvers.solver_selection.selector import SolverSelector
 from pp_solvers.transformations import (
-    PorePyArrangementTransformation,
     LinearSystemTransformation,
+    PorePyArrangementTransformation,
 )
 
 logger = logging.getLogger(__name__)

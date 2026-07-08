@@ -18,9 +18,9 @@ to simple systems. For a given PorePy model, the tests consist of the following 
 
 import numpy as np
 import porepy as pp
-from porepy.models.protocol import PorePyModel
 import pytest
 from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
+from porepy.models.protocol import PorePyModel
 
 import pp_solvers
 from pp_solvers.solver_mixin import (

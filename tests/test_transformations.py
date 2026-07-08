@@ -13,9 +13,9 @@ import pytest
 import scipy.sparse as sp
 from porepy.applications.test_utils.models import add_mixin
 from scipy.sparse.linalg import inv, spsolve
-import pp_solvers
 from testing_utils import MockDofManager, generate_block_linear_system
 
+import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
