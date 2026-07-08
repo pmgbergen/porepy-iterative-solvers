@@ -3,7 +3,7 @@ models as in dev_thm.py.
 
 """
 
-from examples.dev_thm import FullModel, model_params_2d
+from examples.dev_thm import FullModel, linear_solver_options, model_params_2d
 import porepy as pp
 import pp_solvers
 from pp_solvers.solver_selection import (
@@ -54,29 +54,19 @@ solver_selector = SolverSelector(
     performance_predictor=assemble_default_performance_predictor(),
 )
 
-model_params_2d = model_params_2d | {
-    "linear_solver": pp_solvers.LinearSolverParams(
-        # Pass the solver selector to enable it.
-        solver_selector=solver_selector,
-        # Optionally, pass the manual options. They are merged with the solver
-        # selector's output, but the solver selector takes priority on conflicts.
-        options={
-            "gmres": {
-                "ksp_monitor": None,
-            }
-        },
-    )
-}
-
-
 def main():
     model_2d = FullModel(model_params_2d)
-    pp.run_time_dependent_model(
-        model_2d,
-        {
-            "nl_convergence_tol_res": 1e-6,
-        },
+    linear_solver = pp_solvers.IterativeLinearSolver(
+        solver_selector=solver_selector,
+        solver_options=linear_solver_options,
+        configuration_factory=pp_solvers.thm_factory,
     )
+    pp.ModelRunner(
+        model_2d,
+        nonlinear_solver=pp.NewtonSolver(
+            params={"nl_convergence_res_atol": 1e-6}, linear_solver=linear_solver
+        ),
+    ).run()
 
 
 if __name__ == "__main__":

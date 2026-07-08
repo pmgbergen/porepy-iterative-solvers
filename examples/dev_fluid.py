@@ -20,7 +20,6 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 
 
 class FullModel(
-    pp_solvers.IterativeSolverMixin,
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMassDirNorthSouth,
     FlowBenchmark2dCase4Model,
@@ -53,17 +52,15 @@ model_params_2d = {
     "reference_variable_values": pp.ReferenceVariableValues(**{"pressure": 1}),
     "fracture_indices": [0, 1],
     "units": pp.Units(m=1e-4),
-    "linear_solver": pp_solvers.LinearSolverParams(
-        preconditioner_factory=pp_solvers.mass_balance_factory,
-        options={
-            "gmres": {
-                "ksp_monitor": None,
-            }
-        },
-    ),
 }
 model_2d = FullModel(model_params_2d)
-pp.run_time_dependent_model(model_2d)
+linear_solver = pp_solvers.IterativeLinearSolver(
+    configuration_factory=pp_solvers.mass_balance_factory,
+    solver_options={"gmres": {"ksp_monitor": None}},
+)
+pp.ModelRunner(
+    model_2d, nonlinear_solver=pp.NewtonSolver(linear_solver=linear_solver)
+).run()
 
 
 pressure = model_2d.pressure(model_2d.mdg.subdomains())

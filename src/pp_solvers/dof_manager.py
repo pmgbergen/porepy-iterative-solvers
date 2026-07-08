@@ -30,7 +30,6 @@ from weakref import ReferenceType, ref
 import numpy as np
 import porepy as pp
 
-import pp_solvers
 from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.equation_variable_groups import (
     ContactMechanicsGroup,
@@ -129,7 +128,7 @@ class DofManager:
             self._eq_dofs[contact_group] = self._permute_contact_dofs(contact_group)
 
     @property
-    def model(self) -> pp_solvers.IterativeSolverMixin:
+    def model(self) -> pp.PorePyModel:
         """The PorePy model of the given problem."""
         model = self._model()
         if model is None:
