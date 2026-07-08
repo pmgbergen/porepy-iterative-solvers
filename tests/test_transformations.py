@@ -117,7 +117,7 @@ def test_construct_block_matrix(
 
     """
     mat, rhs = model.linear_system
-    block_system = linear_solver.construct_block_matrix(mat.copy(), rhs.copy())
+    block_system = linear_solver.construct_block_linear_system(mat.copy(), rhs.copy())
 
     transformed_solution = spsolve(block_system.mat.tocsc(), block_system.rhs)
     actual_solution = transformed_solution
