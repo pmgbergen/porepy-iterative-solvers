@@ -73,7 +73,7 @@ expected_linear_iterations = {
     MechanicsModel: [5, 6],
     PoromechanicsModel: [8, 12, 10, 12],
     ThermoporomechanicsModel: [10, 15, 14],
-    ThermoporomechanicsTpsaModel: [13, 17, 19, 19, 18, 19, 19, 19],
+    ThermoporomechanicsTpsaModel: [13, 17, 19],
 }
 
 
@@ -110,10 +110,20 @@ def test_model(model_class):
     # convergence problems with the nonlinear solver. I suspect this is due to the
     # fracture states changing, possibly because the grid is rather coarse. Leave this
     # for now.
-    solver_opts = {"nl_convergence_tol_res": 1e-8, "nl_convergence_tol": 1e-8}
+    solver_opts = {"nl_convergence_res_atol": 1e-8, "nl_convergence_inc_atol": 1e-8}
 
     direct_model = model_class(opts)
-    pp.run_time_dependent_model(direct_model, solver_opts)
+    try:
+        status = pp.ModelRunner(direct_model, solver_opts).run()
+        assert status.is_success()
+        direct_model_failed = False
+    except RuntimeError as e:
+        # Some of the models are known to fail. This test ignores it.
+        status = e.args[0]
+        # But if it fails, we want to know that it is a normal simulation failure and
+        # not just some random exception.
+        assert status.is_failure()
+        direct_model_failed = True
 
     iterative_opts = model_options()
     iterative_opts["linear_solver"] = {
@@ -130,7 +140,21 @@ def test_model(model_class):
     iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, model_class)
 
     iterative_model = iterative_class(iterative_opts)
-    pp.run_time_dependent_model(iterative_model, solver_opts)
+    try:
+        status = pp.ModelRunner(iterative_model, solver_opts).run()
+        assert status.is_success()
+        iterative_model_failed = False
+    except RuntimeError as e:
+        # Some of the models are known to fail. This test ignores it.
+        status = e.args[0]
+        # But if it fails, we want to know that it is a normal simulation failure and
+        # not just some random exception.
+        assert status.is_failure()
+        iterative_model_failed = True
+
+    assert iterative_model_failed == direct_model_failed, (
+        "Both models must either succeed or fail regadless of the linear solver."
+    )
 
     # Check that the nonlinear solutions are the same for both models. The tolerance
     # used is not very strict, but is somewhat consistent with the nonlinear tolerances
@@ -148,18 +172,14 @@ def test_model(model_class):
     # Fetch the actual and expected number of iterations.
     linear_iterations = iterative_model.linear_solver_statistics.num_krylov_iters
     expected_iterations = expected_linear_iterations[model_class]
-    # The number of non-linear iterations taken may change, e.g., due to updates in
-    # PorePy's convergence criteria. To avoid having to update the expected number of
-    # iterations, we compare the number of Krylov iterations only for those non-linear
-    # iterations that were in common between the historic and current cases. This is in
-    # a sense something of a weakening of the test, but it reduces the risk of the known
-    # values being updated mindlessly.
-    min_length = min(len(linear_iterations), len(expected_iterations))
 
     np.testing.assert_equal(
-        linear_iterations[:min_length],
-        expected_iterations[:min_length],
-        err_msg="Number of linear iterations does not match expected value.",
+        linear_iterations,
+        expected_iterations,
+        err_msg=(
+            "Number of linear iterations does not match expected value. Expected: "
+            f"{expected_iterations}, actual: {linear_iterations}."
+        ),
     )
 
 
@@ -179,7 +199,7 @@ def test_linear_solver_failure():
     iterative_class = add_mixin(pp_solvers.IterativeSolverMixin, FluidModel)
     iterative_model = iterative_class(iterative_opts)
     max_nonlinear_iterations = 7
-    with pytest.warns(UserWarning, match="Failed to solve the nonlinear problem"):
+    with pytest.raises(RuntimeError):
         pp.ModelRunner(
             iterative_model, {"nl_max_iterations": max_nonlinear_iterations}
         ).run()
