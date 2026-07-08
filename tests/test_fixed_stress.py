@@ -64,7 +64,6 @@ def model(with_fractures) -> pp.PorePyModel:
 
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
-    model.assemble_linear_system()
     return model
 
 
@@ -78,14 +77,20 @@ def dof_manager(model: pp.PorePyModel) -> DofManager:
 
 
 @pytest.fixture(scope="module")
+def porepy_linear_system(model: pp.PorePyModel) -> pp.LinearSystem:
+    """Assemble the system using PorePy's standalone linear-system container."""
+    return model.assemble_linear_system()
+
+
+@pytest.fixture(scope="module")
 def block_linear_system(
-    model: pp.PorePyModel, dof_manager: DofManager
+    porepy_linear_system: pp.LinearSystem, dof_manager: DofManager
 ) -> BlockLinearSystem:
     """Construct the transformed block system formerly assembled by the mixin."""
-    mat, rhs = model.linear_system
+    assert porepy_linear_system.matrix is not None
     linear_system = BlockLinearSystem(
-        mat=mat,
-        rhs=rhs,
+        mat=porepy_linear_system.matrix,
+        rhs=porepy_linear_system.rhs,
         indexer=pp_solvers.LinearSystemIndexer(
             dofs_row=dof_manager.eq_dofs(),
             dofs_col=dof_manager.var_dofs(),
