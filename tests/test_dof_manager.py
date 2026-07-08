@@ -29,7 +29,7 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureMatrixGroup,
 )
 from pp_solvers.preconditioners import LinearSolverConfiguration
-from pp_solvers.solver_mixin import default_preconditioner_factory
+from pp_solvers.porepy_integration import default_preconditioner_factory
 
 
 @pytest.fixture(scope="module", params=[False, True])
