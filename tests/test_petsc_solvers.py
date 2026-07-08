@@ -99,10 +99,8 @@ def test_python_permutation(num_dofs_per_group: tuple[int, int]):
             block_linear_system=A,
             dof_manager=MockDofManager(groups=petsc_ksp_pc_configuration.groups),
             petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
-            user_options={
-                "python_permutation": {"ksp_type": "gmres"},
-                "delete_matrices": False,
-            },
+            user_options={"python_permutation": {"ksp_type": "gmres"}},
+            delete_matrices=False,
             petsc_matrices=petsc_matrices,
         )
     except ValueError:

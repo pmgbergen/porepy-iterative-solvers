@@ -82,8 +82,8 @@ expected_linear_iterations = {
 }
 
 
-def fetch_linear_iterations_from_statistics(model: PorePyModel):
-    """TODO YZ"""
+def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
+    """Collect Krylov iteration counts from all recorded nonlinear solves."""
     linear_iterations: list[int] = []
     for x in model.nonlinear_solver_statistics.solver_status_history:
         assert isinstance(
@@ -161,6 +161,7 @@ def test_model(model_class):
         status = pp.ModelRunner(
             model=iterative_model,
             nonlinear_solver=pp.NewtonSolver(
+                params=solver_opts,
                 is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
                 linear_solver=linear_solver,
             ),
@@ -228,8 +229,9 @@ def test_linear_solver_failure():
             iterative_model,
             {"prepare_simulation": False},
             nonlinear_solver=pp.NewtonSolver(
+                params={"nl_max_iterations": max_nonlinear_iterations},
                 is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
-                linear_solver=linear_iterations,
+                linear_solver=linear_solver,
             ),
         ).run()
 

@@ -30,6 +30,7 @@ def initialize_petsc_ksp(
     petsc_ksp_pc_configuration: PetscKspPcConfiguration,
     user_options: dict,
     petsc_matrices: Optional[dict] = None,
+    delete_matrices: bool = True,
 ):
     """Initialize a PETSc KSP solver from a block linear system and solver config.
 
@@ -46,6 +47,8 @@ def initialize_petsc_ksp(
         user_options: Runtime overrides forwarded to the configuration.
         petsc_matrices: If provided, populated with references to the PETSc Amat/Pmat
             for each sub-solver key (useful for debugging and testing).
+        delete_matrices: Delete the linear solver matrix when it is not needed to free
+            the memory as early as possible. Defaults to True.
 
     Returns:
         A `PetscKrylovSolver` wrapping the assembled PETSc KSP.
@@ -54,7 +57,7 @@ def initialize_petsc_ksp(
 
     # Construct a PETSc matrix from the scipy matrix.
     petsc_mat = csr_to_petsc(block_linear_system.mat)
-    if user_options.get("delete_matrices", True):
+    if delete_matrices:
         del block_linear_system.mat  # Delete the scipy matrix to save memory.
 
     # Clear the PETSc options from a previous solve.
