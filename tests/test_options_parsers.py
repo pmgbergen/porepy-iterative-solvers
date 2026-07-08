@@ -464,7 +464,8 @@ def test_petsc_invertors(params: dict):
         block_linear_system=A,
         dof_manager=dof_manager,
         petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
-        user_options={"delete_matrices": False},
+        user_options={},
+        delete_matrices=False,
         petsc_matrices=petsc_matrices,
     )
 
@@ -511,7 +512,8 @@ def test_petsc_no_invertor():
         block_linear_system=A,
         dof_manager=dof_manager,
         petsc_ksp_pc_configuration=petsc_ksp_pc_configuration,
-        user_options={"delete_matrices": False},
+        user_options={},
+        delete_matrices=False,
         petsc_matrices=petsc_matrices,
     )
 

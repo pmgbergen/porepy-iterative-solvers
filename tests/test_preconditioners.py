@@ -512,10 +512,8 @@ def test_petsc_ksp_scheme():
         block_linear_system=block_linear_system,
         dof_manager=MockDofManager(groups=["mock_g1"]),
         petsc_ksp_pc_configuration=GMRES(preconditioner=Identity(groups=["mock_g1"])),
-        user_options={
-            "gmres": {"ksp_type": "fgmres"},
-            "delete_matrices": False,
-        },
+        user_options={"gmres": {"ksp_type": "fgmres"}},
+        delete_matrices=False,
     )
     # Check that the custom option applied.
     assert krylov_solver.ksp.type == "fgmres"

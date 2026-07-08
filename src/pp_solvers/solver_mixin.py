@@ -1,23 +1,18 @@
-"""TODO YZ This module contains the `IterativeSolverMixin` class, which provides the capabilitiy
-of using iterative linear solvers to a PorePy model.
-
-"""
+"""PETSc-based iterative linear solver for PorePy models."""
 
 from __future__ import annotations
 
 import logging
-from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from time import time
-from typing import Callable, Optional, TypedDict
+from typing import Callable, Optional
 from scipy.sparse import csr_matrix
 import numpy as np
 import porepy as pp
-import scipy.sparse as sps
-from porepy.viz.solver_statistics import SolverStatistics
 from porepy.numerics.linalg.linear_solver import (
-    LinearSolverStatusSuccess,
+    LinearSolverStatus,
     LinearSolverStatusFailure,
+    LinearSolverStatusSuccess,
 )
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
@@ -57,42 +52,62 @@ essentially bearers of options for the solver.
 
 type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
-https://petsc.org/release/manualpages/KSP/KSPConvergedReason/"""
+https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
+
+"""
 
 
 @dataclass
 class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
-    """TODO YZ"""
+    """Status of a successful PETSc iterative solve."""
 
-    solve_time: float
     construct_time: float
+    """Time it took to construct a linear solver."""
     petsc_converged_reason: PETScKspConvergedReason
+    """A status returned by PETSc KSP. See
+    https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
+
+    """
     num_krylov_iters: int
+    """Number of Krylov subspace-based iterative method iterations."""
 
 
 @dataclass
 class IterativeLinearSolverFailure(LinearSolverStatusFailure):
-    """TODO YZ"""
+    """Status of a failed PETSc iterative solve.
+
+    PETSc details are optional because a failure can occur before KSP construction.
+
+    """
 
     reason: str
-    solve_time: float
+    """Human readible failure description."""
     construct_time: float
+    """Wall-clock time spent constructing the linear solver, in seconds."""
+    solve_time: float
+    """Wall-clock time spent solving the linear system, in seconds."""
     petsc_converged_reason: Optional[PETScKspConvergedReason] = None
+    """A status returned by PETSc KSP. See
+    https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
+
+    """
     num_krylov_iters: int = 0
+    """Number of Krylov subspace-based iterative method iterations."""
 
 
 class IterativeLinearSolver(pp.LinearSolverBase):
-    """TODO YZ
+    """Solve PorePy linear systems with configurable PETSc preconditioners.
 
     Parameters:
-        options: A dict of parameters to tune the solver configuration. See examples for
-            the structure.
+        solver_options: Parameters used to tune the solver configuration. See examples
+            for the expected structure.
         solver_selector: A solver selector object providing multiple linear solver
             configurations. If not passed (default), ML solver selection is disabled.
         delete_matrices: Delete the linear solver matrix when it is not needed to free
             the memory as early as possible. Defaults to True.
-        preconditioner_factory: A factory to build a PETSc preconditioned linear solver.
-            If None (default), using a default factory for a given model.
+        configuration_factory: A factory that defines the PETSc solver, variable groups,
+            and linear-system transformations. If None (default), using a default
+            factory for a given model.
 
     """
 
@@ -128,19 +143,25 @@ class IterativeLinearSolver(pp.LinearSolverBase):
 
         """
         self.petsc_ksp_pc_configuration: Optional[PetscKspPcConfiguration] = None
-        """TODO YZ"""
+        """PETSc solver and preconditioner configuration, set in
+        :meth:`initialize_with_model`.
+
+        """
         self.transformations: list[LinearSystemTransformation] = []
-        """TODO YZ"""
+        """Transformations applied before solving and reversed on the solution, set in
+        :meth:`initialize_with_model`.
+
+        """
         self.dof_manager: Optional[DofManager] = None
-        """TODO YZ"""
+        """Mapping between PorePy degrees of freedom and configured solver groups, set
+        in :meth:`initialize_with_model`.
+
+        """
         self._num_dofs: Optional[int] = None
-        """TODO YZ"""
+        """Size of solution vectors, set in :meth:`initialize_with_model`."""
 
-    def initialize_with_model(self, model: pp.PorePyModel):
-        """TODO YZ"""
-        # Set up preconditioner.
-
-        # TODO YZ: Resetting the statistics was here.
+    def initialize_with_model(self, model: pp.PorePyModel) -> None:
+        """Initialize configuration, transformations, and DoF mappings for ``model``."""
 
         if self.configuration_factory is None:
             self.configuration_factory = default_preconditioner_factory(model)
@@ -162,12 +183,12 @@ class IterativeLinearSolver(pp.LinearSolverBase):
     def solve_linear_system(
         self, mat: csr_matrix, rhs: np.ndarray
     ) -> tuple[np.ndarray, LinearSolverStatus]:
-        """Solve the linear system. TODO YZ
+        """Solve a linear system and return its solution and solver status.
 
         This function returns a solution array even if the underlying linear solver did
-        not converge. A warning will be logged in this case. It may also return nans if
-        things go particularly bad. It is the caller's responsibility to validate the
-        returned values, same as for the direct linear solver counterpart.
+        not converge, and it might contain nans. A warning will be logged in this case,
+        and the returned status is set to "failure". It is the caller's responsibility
+        to check the returned status.
 
         Dispatches to one of two paths:
 
@@ -175,11 +196,14 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         - With ML selection: delegates to `_solve_linear_system_with_solver_selection`.
 
         Returns:
-            Solution array of the linear system.
+            Solution array of the linear system and solver status.
+
         """
         assert (
-            self.dof_manager is not None and self.petsc_ksp_pc_configuration is not None
-        ), "TODO YZ"
+            self.dof_manager is not None
+            and self.petsc_ksp_pc_configuration is not None
+            and self._num_dofs is not None
+        ), "The linear solver must be initialized with a model before solving."
 
         # Check for NaN or Inf in the RHS.
         if np.any(np.isnan(rhs) | np.isinf(rhs)):
@@ -197,7 +221,9 @@ class IterativeLinearSolver(pp.LinearSolverBase):
 
         # Delete the original linear system to save memory unless instructed not to.
         if self.delete_matrices:
-            del mat  # TODO YZ
+            # TODO YZ: The problem is that a reference to the matrix remains on the
+            # caller side. YZ know how to address it but we need to discuss it.
+            del mat
 
         if self.solver_selector is None:
             return self._solve_linear_system(
@@ -262,7 +288,9 @@ class IterativeLinearSolver(pp.LinearSolverBase):
                 - Solution array of the linear system.
                 - PETSc KSP converged reason
         """
-        assert self.solver_selector is not None, "TODO YZ"
+        assert self.solver_selector is not None, (
+            "Solver selection was requested without a configured solver selector."
+        )
         characteristics = np.array([])  # Not implemented yet.
 
         # Perform the ML selection.
@@ -291,7 +319,10 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         self.solver_selector.provide_performance_feedback(
             solve_time=status.solve_time,
             construct_time=status.construct_time,
-            success=status.petsc_converged_reason > 0,
+            success=(
+                status.petsc_converged_reason is not None
+                and status.petsc_converged_reason > 0
+            ),
         )
         return solution, status
 
@@ -306,11 +337,13 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         Returns:
             A tuple of two elements:
                 - Solution array of the linear system.
-                - PETSc KSP converged reason TODO YZ
+                - Status containing timing, iteration, and PETSc convergence details.
         """
         assert (
-            self.dof_manager is not None and self.petsc_ksp_pc_configuration is not None
-        ), "TODO YZ"
+            self.dof_manager is not None
+            and self.petsc_ksp_pc_configuration is not None
+            and self._num_dofs is not None
+        ), "The linear solver must be initialized with a model before solving."
 
         t0 = time()
         try:
@@ -319,6 +352,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
                 dof_manager=self.dof_manager,
                 petsc_ksp_pc_configuration=self.petsc_ksp_pc_configuration,
                 user_options=solver_options,
+                delete_matrices=self.delete_matrices,
             )
         except Exception:
             error_msg = (
