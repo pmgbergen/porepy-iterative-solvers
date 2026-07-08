@@ -11,7 +11,7 @@ from typing import Callable
 
 import numpy as np
 import porepy as pp
-from porepy.applications.test_utils.models import Thermoporomechanics, add_mixin
+from porepy.applications.test_utils.models import Thermoporomechanics
 
 import pp_solvers
 
@@ -154,18 +154,18 @@ def create_fractured_model(
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    model_class = add_mixin(
-        pp_solvers.IterativeSolverMixin, TailoredThermoporomechanicsTpsa
-    )
     model_params = {
         "u_north": [0.0, 0.001],
-        "linear_solver": pp_solvers.LinearSolverParams(
-            preconditioner_factory=pp_solvers.thm_tpsa_factory,
-            options={},
-        ),
     }
-    model = create_fractured_model({}, {}, model_params, model_class)
-    pp.ModelRunner(model).run()
+    model = create_fractured_model(
+        {}, {}, model_params, TailoredThermoporomechanicsTpsa
+    )
+    linear_solver = pp_solvers.IterativeLinearSolver(
+        configuration_factory=pp_solvers.thm_tpsa_factory
+    )
+    pp.ModelRunner(
+        model, nonlinear_solver=pp.NewtonSolver(linear_solver=linear_solver)
+    ).run()
 
 
 if __name__ == "__main__":

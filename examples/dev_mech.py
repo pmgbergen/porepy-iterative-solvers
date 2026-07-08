@@ -21,7 +21,6 @@ from porepy.examples.flow_benchmark_3d_case_3 import (
 class FullModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    pp_solvers.IterativeSolverMixin,
     pp.MomentumBalance,
 ):
     def check_convergence(
@@ -53,15 +52,15 @@ model_params_2d = {
     "meshing_arguments": {"cell_size": 0.25},
     "fracture_indices": [1],
     # "units": pp.Units(kg=1e2),
-    "linear_solver": pp_solvers.LinearSolverParams(
-        preconditioner_factory=pp_solvers.momentum_balance_factory,
-        options={"gmres": {"ksp_monitor": None}},
-    ),
 }
 model_2d = FullModel(model_params_2d)
-pp.run_time_dependent_model(
-    model_2d,
-    {
-        "nl_convergence_tol_res": 1e-6,
-    },
+linear_solver = pp_solvers.IterativeLinearSolver(
+    configuration_factory=pp_solvers.momentum_balance_factory,
+    solver_options={"gmres": {"ksp_monitor": None}},
 )
+pp.ModelRunner(
+    model_2d,
+    nonlinear_solver=pp.NewtonSolver(
+        params={"nl_convergence_res_atol": 1e-6}, linear_solver=linear_solver
+    ),
+).run()
