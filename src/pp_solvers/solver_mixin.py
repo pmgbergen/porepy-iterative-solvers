@@ -181,7 +181,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         self._num_dofs = model.equation_system.num_dofs()
 
     def solve_linear_system(
-        self, mat: csr_matrix, rhs: np.ndarray
+        self, linear_system: pp.LinearSystem
     ) -> tuple[np.ndarray, LinearSolverStatus]:
         """Solve a linear system and return its solution and solver status.
 
@@ -195,6 +195,11 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         - No ML selection: calls `_solve_linear_system` directly.
         - With ML selection: delegates to `_solve_linear_system_with_solver_selection`.
 
+        Parameters:
+            linear_system: PorePy's container for a linear system. If the attribute
+                :attr:`delete_matrices` is `True`, it modifies the linear system by
+                dropping the matrix reference.
+
         Returns:
             Solution array of the linear system and solver status.
 
@@ -206,7 +211,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         ), "The linear solver must be initialized with a model before solving."
 
         # Check for NaN or Inf in the RHS.
-        if np.any(np.isnan(rhs) | np.isinf(rhs)):
+        if np.any(np.isnan(linear_system.rhs) | np.isinf(linear_system.rhs)):
             # This should never be the case, as this situation should cut off by the
             # nonlinear convergence criterion from the earliear nonlinear iteration. We
             # keep this safeguard until the iterative solver is in a more mature state.
@@ -215,31 +220,27 @@ class IterativeLinearSolver(pp.LinearSolverBase):
             status = IterativeLinearSolverFailure(
                 reason=error_msg, solve_time=0.0, construct_time=0.0
             )
-            return np.full(self._num_dofs, np.nan, dtype=rhs.dtype), status
+            dtype = linear_system.rhs.dtype
+            return np.full(self._num_dofs, np.nan, dtype=dtype), status
 
-        linear_system = self.construct_block_matrix(mat, rhs)
-
-        # Delete the original linear system to save memory unless instructed not to.
-        if self.delete_matrices:
-            # TODO YZ: The problem is that a reference to the matrix remains on the
-            # caller side. YZ know how to address it but we need to discuss it.
-            del mat
+        block_linear_system = self.construct_block_linear_system(linear_system)
 
         if self.solver_selector is None:
             return self._solve_linear_system(
-                linear_system, solver_options=self.solver_options
+                block_linear_system, solver_options=self.solver_options
             )
         else:
-            return self._solve_linear_system_with_solver_selection(linear_system)
+            return self._solve_linear_system_with_solver_selection(block_linear_system)
 
-    def construct_block_matrix(
-        self, mat: csr_matrix, rhs: np.ndarray
+    def construct_block_linear_system(
+        self, linear_system: pp.LinearSystem
     ) -> BlockLinearSystem:
         """Construct and transform a block representation of a linear system.
 
         Parameters:
-            mat: Matrix in PorePy's equation and variable ordering.
-            rhs: Right-hand side in PorePy's equation ordering.
+            linear_system: PorePy's container for a linear system. If the attribute
+                :attr:`delete_matrices` is `True`, it modifies the linear system by
+                dropping the matrix reference.
 
         Returns:
             The linear system transformed to the ordering and scaling expected by the
@@ -247,11 +248,14 @@ class IterativeLinearSolver(pp.LinearSolverBase):
 
         """
         assert self.dof_manager is not None, "The linear solver is not initialized."
+        assert linear_system.matrix is not None, (
+            "The linear system must contain an assembled matrix."
+        )
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
-        linear_system = BlockLinearSystem(
-            mat=mat,
-            rhs=rhs,
+        block_linear_system = BlockLinearSystem(
+            mat=linear_system.matrix,
+            rhs=linear_system.rhs,
             indexer=LinearSystemIndexer(
                 dofs_row=self.dof_manager.eq_dofs(),
                 dofs_col=self.dof_manager.var_dofs(),
@@ -260,13 +264,17 @@ class IterativeLinearSolver(pp.LinearSolverBase):
             ),
         )
 
+        # Delete the original linear system to save memory unless instructed not to.
+        if self.delete_matrices:
+            linear_system.release_matrix_reference()
+
         # Apply transformations to the linear systems before passing it to the solver.
         for transformation in self.transformations:
-            linear_system = transformation.transform_matrix_rhs(
-                linear_system, dof_manager=self.dof_manager
+            block_linear_system = transformation.transform_matrix_rhs(
+                block_linear_system, dof_manager=self.dof_manager
             )
 
-        return linear_system
+        return block_linear_system
 
     def _solve_linear_system_with_solver_selection(
         self, linear_system: BlockLinearSystem
