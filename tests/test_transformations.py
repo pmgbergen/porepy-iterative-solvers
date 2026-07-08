@@ -74,12 +74,15 @@ def model(model_kind: str, with_fractures: bool):
     model.before_time_step()
     model.before_nonlinear_loop()
     model.before_nonlinear_iteration()
-    model.assemble_linear_system()
-
-    mat, rhs = model.linear_system
-    rhs[:] = np.arange(rhs.size) + 1
 
     return model
+
+
+@pytest.fixture
+def porepy_linear_system(model: pp.PorePyModel) -> pp.LinearSystem:
+    linear_system = model.assemble_linear_system()
+    linear_system.rhs[:] = np.arange(linear_system.rhs.size) + 1
+    return linear_system
 
 
 @pytest.fixture
@@ -95,11 +98,11 @@ def dof_manager(linear_solver: pp_solvers.IterativeLinearSolver):
 
 
 @pytest.fixture
-def linear_system(model: pp.PorePyModel, dof_manager: DofManager):
-    mat, rhs = model.linear_system
+def linear_system(porepy_linear_system: pp.LinearSystem, dof_manager: DofManager):
+    assert porepy_linear_system.matrix is not None
     return BlockLinearSystem(
-        mat=mat.copy(),
-        rhs=rhs.copy(),
+        mat=porepy_linear_system.matrix.copy(),
+        rhs=porepy_linear_system.rhs.copy(),
         indexer=LinearSystemIndexer(
             dofs_row=dof_manager.eq_dofs(),
             dofs_col=dof_manager.var_dofs(),
@@ -110,14 +113,18 @@ def linear_system(model: pp.PorePyModel, dof_manager: DofManager):
 
 
 def test_construct_block_matrix(
-    model: pp.PorePyModel, linear_solver: IterativeLinearSolver
+    porepy_linear_system: pp.LinearSystem, linear_solver: IterativeLinearSolver
 ):
     """IterativeLinearSolver.construct_block_matrix applies every configured
     transformation.
 
     """
-    mat, rhs = model.linear_system
-    block_system = linear_solver.construct_block_linear_system(mat.copy(), rhs.copy())
+    assert porepy_linear_system.matrix is not None
+    mat = porepy_linear_system.matrix.copy()
+    rhs = porepy_linear_system.rhs.copy()
+    block_system = linear_solver.construct_block_linear_system(
+        pp.LinearSystem(matrix=mat.copy(), rhs=rhs.copy())
+    )
 
     transformed_solution = spsolve(block_system.mat.tocsc(), block_system.rhs)
     actual_solution = transformed_solution
