@@ -26,7 +26,7 @@ from pp_solvers.equation_variable_groups import (
     MassBalancePressureIntersectionsGroup,
 )
 from pp_solvers.mat_utils import inv_block_diag
-from pp_solvers.solver_mixin import IterativeLinearSolver
+from pp_solvers.porepy_integration import IterativeLinearSolver
 from pp_solvers.transformations import (
     ContactLinearTransformation,
     LinearSystemTransformation,

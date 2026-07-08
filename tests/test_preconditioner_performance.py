@@ -23,7 +23,7 @@ from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
 from porepy.models.protocol import PorePyModel
 
 import pp_solvers
-from pp_solvers.solver_mixin import (
+from pp_solvers.porepy_integration import (
     IterativeLinearSolver,
     IterativeLinearSolverFailure,
     IterativeLinearSolverSuccess,
