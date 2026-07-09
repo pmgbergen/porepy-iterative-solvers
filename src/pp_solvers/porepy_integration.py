@@ -42,6 +42,10 @@ logger.addHandler(logging.NullHandler())
 
 __all__ = [
     "IterativeLinearSolver",
+    "PETScKspConvergedReason",
+    "IterativeLinearSolverSuccess",
+    "IterativeLinearSolverFailure",
+    "IterativeLinearSolver",
 ]
 
 """Below are methods that are used to create specific schemes for different equations.
