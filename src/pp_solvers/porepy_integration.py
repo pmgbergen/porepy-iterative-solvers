@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 import numpy as np
 import porepy as pp
-from porepy.numerics.linalg.linear_solver import (
+from porepy.numerics.solvers import (
     LinearSolverStatus,
     LinearSolverStatusFailure,
     LinearSolverStatusSuccess,
