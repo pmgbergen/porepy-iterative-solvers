@@ -14,7 +14,6 @@ from porepy.numerics.solvers import (
     LinearSolverStatusFailure,
     LinearSolverStatusSuccess,
 )
-from scipy.sparse import csr_matrix
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
@@ -185,7 +184,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
         self._num_dofs = model.equation_system.num_dofs()
 
     def solve_linear_system(
-        self, linear_system: pp.LinearSystem
+        self, linear_system: pp.solvers.LinearSystem
     ) -> tuple[np.ndarray, LinearSolverStatus]:
         """Solve a linear system and return its solution and solver status.
 
@@ -214,11 +213,8 @@ class IterativeLinearSolver(pp.LinearSolverBase):
             and self._num_dofs is not None
         ), "The linear solver must be initialized with a model before solving."
 
-        # Check for NaN or Inf in the RHS.
+        # If the rhs contains nans or infs, exiting early.
         if np.any(np.isnan(linear_system.rhs) | np.isinf(linear_system.rhs)):
-            # This should never be the case, as this situation should cut off by the
-            # nonlinear convergence criterion from the earliear nonlinear iteration. We
-            # keep this safeguard until the iterative solver is in a more mature state.
             error_msg = "RHS contains NaN or Inf values"
             logger.warning(error_msg)
             status = IterativeLinearSolverFailure(
@@ -237,7 +233,7 @@ class IterativeLinearSolver(pp.LinearSolverBase):
             return self._solve_linear_system_with_solver_selection(block_linear_system)
 
     def construct_block_linear_system(
-        self, linear_system: pp.LinearSystem
+        self, linear_system: pp.solvers.LinearSystem
     ) -> BlockLinearSystem:
         """Construct and transform a block representation of a linear system.
 
