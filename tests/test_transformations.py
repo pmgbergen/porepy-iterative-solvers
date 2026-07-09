@@ -79,7 +79,7 @@ def model(model_kind: str, with_fractures: bool):
 
 
 @pytest.fixture
-def porepy_linear_system(model: pp.PorePyModel) -> pp.LinearSystem:
+def porepy_linear_system(model: pp.PorePyModel) -> pp.solvers.LinearSystem:
     linear_system = model.assemble_linear_system()
     linear_system.rhs[:] = np.arange(linear_system.rhs.size) + 1
     return linear_system
@@ -98,7 +98,9 @@ def dof_manager(linear_solver: pp_solvers.IterativeLinearSolver):
 
 
 @pytest.fixture
-def linear_system(porepy_linear_system: pp.LinearSystem, dof_manager: DofManager):
+def linear_system(
+    porepy_linear_system: pp.solvers.LinearSystem, dof_manager: DofManager
+):
     assert porepy_linear_system.matrix is not None
     return BlockLinearSystem(
         mat=porepy_linear_system.matrix.copy(),
@@ -113,7 +115,7 @@ def linear_system(porepy_linear_system: pp.LinearSystem, dof_manager: DofManager
 
 
 def test_construct_block_matrix(
-    porepy_linear_system: pp.LinearSystem, linear_solver: IterativeLinearSolver
+    porepy_linear_system: pp.solvers.LinearSystem, linear_solver: IterativeLinearSolver
 ):
     """IterativeLinearSolver.construct_block_matrix applies every configured
     transformation.
@@ -123,7 +125,7 @@ def test_construct_block_matrix(
     mat = porepy_linear_system.matrix.copy()
     rhs = porepy_linear_system.rhs.copy()
     block_system = linear_solver.construct_block_linear_system(
-        pp.LinearSystem(matrix=mat.copy(), rhs=rhs.copy())
+        pp.solvers.LinearSystem(matrix=mat.copy(), rhs=rhs.copy())
     )
 
     transformed_solution = spsolve(block_system.mat.tocsc(), block_system.rhs)

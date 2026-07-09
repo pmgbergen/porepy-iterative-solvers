@@ -87,7 +87,11 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     linear_iterations: list[int] = []
     for x in model.nonlinear_solver_statistics.solver_status_history:
         assert isinstance(
-            x, (pp.NonlinearSolverStatusConverged, pp.NonlinearSolverStatusFailed)
+            x,
+            (
+                pp.solvers.NonlinearSolverStatusConverged,
+                pp.solvers.NonlinearSolverStatusFailed,
+            ),
         )
         for y in x.linear_solver_statuses:
             assert isinstance(
@@ -160,7 +164,7 @@ def test_model(model_class):
     try:
         status = pp.ModelRunner(
             model=iterative_model,
-            nonlinear_solver=pp.NewtonSolver(
+            nonlinear_solver=pp.solvers.NewtonSolver(
                 params=solver_opts,
                 is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
                 linear_solver=linear_solver,
@@ -228,7 +232,7 @@ def test_linear_solver_failure():
         pp.ModelRunner(
             iterative_model,
             {"prepare_simulation": False},
-            nonlinear_solver=pp.NewtonSolver(
+            nonlinear_solver=pp.solvers.NewtonSolver(
                 params={"nl_max_iterations": max_nonlinear_iterations},
                 is_nonlinear_problem=iterative_model._is_nonlinear_problem(),
                 linear_solver=linear_solver,
