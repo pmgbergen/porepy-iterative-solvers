@@ -98,7 +98,7 @@ class IterativeLinearSolverFailure(LinearSolverStatusFailure):
     """Number of Krylov subspace-based iterative method iterations."""
 
 
-class IterativeLinearSolver(pp.LinearSolverBase):
+class IterativeLinearSolver(pp.solvers.LinearSolverBase):
     """Solve PorePy linear systems with configurable PETSc preconditioners.
 
     Parameters:
