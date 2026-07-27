@@ -4,8 +4,8 @@ from .block_linear_system import *
 from .mat_utils import *
 from .petsc_utils import *
 from .plot_linear_system import *
-from .preconditioners import *
 from .porepy_integration import *
+from .preconditioners import *
 
 __all__ = []
 __all__.extend(block_linear_system.__all__)

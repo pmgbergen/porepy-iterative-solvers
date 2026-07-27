@@ -16,10 +16,11 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, Optional, Sequence
 
 import porepy as pp
+
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    EquationVariableGroup,
     DefaultEquationVariableGroups,
+    EquationVariableGroup,
 )
 from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
 from pp_solvers.petsc_utils import csr_to_petsc
