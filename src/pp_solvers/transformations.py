@@ -306,7 +306,7 @@ class ScaleSpecificVolume(LinearSystemTransformation):
 
         subdomains = []
         for i in idx_to_scale:
-            domains = [eq.domain for eq in dof_manager._equations_per_group[i]]
+            domains = [eq.domain for eq in dof_manager.equations_per_group[i]]
             subdomains.extend(domains)
 
         if len(subdomains) == 0:
