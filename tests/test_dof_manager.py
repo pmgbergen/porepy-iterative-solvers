@@ -19,14 +19,8 @@ from porepy.applications.test_utils.models import add_mixin
 from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    EnergyBalanceTemperatureGroup,
-    EquationOnDomains,
+    DefaultEquationVariableGroups,
     EquationVariableGroup,
-    InterfaceForceBalanceGroup,
-    MassBalancePressureFracturesGroup,
-    MassBalancePressureIntersectionsGroup,
-    MassBalancePressureMatrixGroup,
 )
 from pp_solvers.preconditioners import LinearSolverConfiguration
 from pp_solvers.porepy_integration import default_preconditioner_factory
@@ -83,9 +77,16 @@ def solver_configuration(model: pp.PorePyModel) -> LinearSolverConfiguration:
 
 @pytest.fixture(scope="module")
 def dof_manager(
-    model: pp.PorePyModel, solver_configuration: LinearSolverConfiguration
+    model: pp.PorePyModel,
+    solver_configuration: LinearSolverConfiguration,
 ) -> DofManager:
-    return DofManager(model, solver_configuration.solver.groups)
+    equation_system = model.equation_system
+    return DofManager(
+        model=model,
+        equation_indexer=equation_system.equation_indexer,
+        variable_indexer=equation_system.variable_indexer,
+        groups=solver_configuration.solver.groups,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -223,15 +224,23 @@ def test_eq_var_dofs(
     "params",
     [
         pytest.param(
-            {"keys": ["energy_balance"], "groups": [EnergyBalanceTemperatureGroup()]},
+            {
+                "keys": ["energy_balance"],
+                "groups": [
+                    DefaultEquationVariableGroups.energy_balance_temperature_group
+                ],
+            },
             id="energy_balance",
         ),
         pytest.param(
-            {"keys": ["intf_force_balance"], "groups": [InterfaceForceBalanceGroup()]},
+            {
+                "keys": ["intf_force_balance"],
+                "groups": [DefaultEquationVariableGroups.interface_force_balance_group],
+            },
             id="u_intf",
         ),
         pytest.param(
-            {"keys": ["contact"], "groups": [ContactMechanicsGroup()]}, id="contact"
+            {"keys": ["contact"], "groups": [DefaultEquationVariableGroups.contact_mechanics_group]}, id="contact"
         ),
         pytest.param(
             {
@@ -241,9 +250,9 @@ def test_eq_var_dofs(
                     "mass_balance_intersections",
                 ],
                 "groups": [
-                    MassBalancePressureFracturesGroup(),
-                    MassBalancePressureMatrixGroup(),
-                    MassBalancePressureIntersectionsGroup(),
+                    DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+                    DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+                    DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
                 ],
             },
             id="mass_balance",
@@ -251,7 +260,10 @@ def test_eq_var_dofs(
         pytest.param(
             {
                 "keys": ["contact", "energy_balance"],
-                "groups": [ContactMechanicsGroup(), EnergyBalanceTemperatureGroup()],
+                "groups": [
+                    DefaultEquationVariableGroups.contact_mechanics_group,
+                    DefaultEquationVariableGroups.energy_balance_temperature_group,
+                ],
             },
             id="contact_and_energy",
         ),
@@ -290,7 +302,9 @@ def test_permute_contact_dofs(dof_manager: DofManager):
 
     # Checking if there is contact mechanics in the model.
     try:
-        contact_group = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
+        contact_group = dof_manager.indices_of_groups(
+            [DefaultEquationVariableGroups.contact_mechanics_group]
+        )[0]
     except ValueError:
         return  # Skipping this test if no contact group.
 
@@ -318,36 +332,27 @@ def test_equation_variable_names(dof_manager: DofManager):
     assert all(isinstance(name, str) for name in variable_names)
 
 
-class DuplicatingGroup(EquationVariableGroup):
-    """This group has the same equation as the `EnergyBalanceTemperatureGroup` group
-    and same variable as the `MassBalancePressureMatrixGroup` group.
-
-    """
-
-    def equation_group(self, model: pp.PorePyModel) -> EquationOnDomains:
-        return EnergyBalanceTemperatureGroup().equation_group(model=model)
-
-    def variable_group(self, model: pp.PorePyModel) -> MixedDimensionalVariable:
-        return MassBalancePressureMatrixGroup().variable_group(model=model)
-
-    def equation_name(self, model: pp.PorePyModel) -> str:
-        return "something"
-
-    def variable_name(self, model: pp.PorePyModel) -> str:
-        return "something"
-
-
 def test_duplicating_equations(model: pp.PorePyModel, model_kind: str):
     if model_kind not in ["TH", "THM"]:
         return  # Skip this test for other models.
-    groups = [EnergyBalanceTemperatureGroup(), DuplicatingGroup()]
+    eq_name = (
+        DefaultEquationVariableGroups.energy_balance_temperature_group.equation_tag.name
+    )
+    var_name = (
+        DefaultEquationVariableGroups.energy_balance_temperature_group.variable_tag.name
+    )
+    groups = [
+        DefaultEquationVariableGroups.energy_balance_temperature_group,
+        EquationVariableGroup(
+            equation_tag=pp.solvers.EquationTag(name=eq_name),
+            variable_tag=pp.solvers.VariableTag(name=var_name),
+        ),
+    ]
+    equation_system = model.equation_system
     with pytest.raises(ValueError):
-        _ = DofManager(model=model, groups=groups)
-
-
-def test_duplicating_variables(model: pp.PorePyModel, model_kind: str):
-    if model_kind not in ["TH", "THM"]:
-        return  # Skip this test for other models.
-    groups = [MassBalancePressureMatrixGroup(), DuplicatingGroup()]
-    with pytest.raises(ValueError):
-        _ = DofManager(model=model, groups=groups)
+        _ = DofManager(
+            model=model,
+            groups=groups,
+            equation_indexer=equation_system.equation_indexer,
+            variable_indexer=equation_system.variable_indexer,
+        )

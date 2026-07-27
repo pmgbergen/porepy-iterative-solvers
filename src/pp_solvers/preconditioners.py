@@ -15,23 +15,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Final, Literal, Optional, Sequence
 
+import porepy as pp
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    CustomEquationVariableGroup,
-    EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
-    InterfaceDarcyFluxGroup,
-    InterfaceEnthalpyFluxGroup,
-    InterfaceForceBalanceGroup,
-    InterfaceFourierFluxGroup,
-    MassBalancePressureFracturesGroup,
-    MassBalancePressureGroup,
-    MassBalancePressureIntersectionsGroup,
-    MassBalancePressureMatrixGroup,
-    MechanicsGroup,
-    WellEnthalpyFluxGroup,
-    WellFluxGroup,
+    DefaultEquationVariableGroups,
 )
 from pp_solvers.fixed_stress import construct_fixed_stress_block_matrix
 from pp_solvers.petsc_utils import csr_to_petsc
@@ -229,14 +217,19 @@ class FixedStressInverter(PetscInverter):
 
     def petsc_assembly_config(self, dof_manager: DofManager) -> dict:
         flow_mat_group, flow_frac_group = dof_manager.indices_of_groups(
-            [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+            [
+                DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+                DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+            ]
         )
         # Check that the MassBalancePressureGroup (common for porous media, fractures
         # and interfaces) is not used by mistake. The fixed stress code relies on
         # separate groups for different dimensions.
         try:
             # Not using the return value, just checking that it is present.
-            _ = dof_manager.indices_of_groups([MassBalancePressureGroup()])
+            _ = dof_manager.indices_of_groups(
+                [DefaultEquationVariableGroups.mass_balance_pressure_group]
+            )
         except ValueError:
             pass  # It's ok, this group is not present.
         else:
@@ -1045,10 +1038,12 @@ def mass_balance_factory():
 
     """
     interface_groups: list[EquationVariableGroup] = [
-        InterfaceDarcyFluxGroup(),
-        WellFluxGroup(),
+        DefaultEquationVariableGroups.interface_darcy_flux_group,
+        DefaultEquationVariableGroups.well_flux_group,
     ]
-    mass_balance_groups: list[EquationVariableGroup] = [MassBalancePressureGroup()]
+    mass_balance_groups: list[EquationVariableGroup] = [
+        DefaultEquationVariableGroups.mass_balance_pressure_group
+    ]
 
     solver = GMRES(
         preconditioner=FieldSplitSchur(
@@ -1090,10 +1085,12 @@ def momentum_balance_factory():
     https://petsc.org/main/manual/ksp/#preconditioners
 
     """
-    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    contact_groups: list[EquationVariableGroup] = [
+        DefaultEquationVariableGroups.contact_mechanics_group
+    ]
     mechanics_groups: list[EquationVariableGroup] = [
-        MechanicsGroup(),
-        InterfaceForceBalanceGroup(),
+        DefaultEquationVariableGroups.mechanics_group,
+        DefaultEquationVariableGroups.interface_force_balance_group,
     ]
     solver = GMRES(
         preconditioner=FieldSplitSchur(
@@ -1150,19 +1147,21 @@ def hm_factory():
     https://petsc.org/main/manual/ksp/#preconditioners
 
     """
-    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    contact_groups: list[EquationVariableGroup] = [
+        DefaultEquationVariableGroups.contact_mechanics_group
+    ]
     interface_flux_groups: list[EquationVariableGroup] = [
-        InterfaceDarcyFluxGroup(),
-        WellFluxGroup(),
+        DefaultEquationVariableGroups.interface_darcy_flux_group,
+        DefaultEquationVariableGroups.well_flux_group,
     ]
     mechanics_groups: list[EquationVariableGroup] = [
-        MechanicsGroup(),
-        InterfaceForceBalanceGroup(),
+        DefaultEquationVariableGroups.mechanics_group,
+        DefaultEquationVariableGroups.interface_force_balance_group,
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
-        MassBalancePressureMatrixGroup(),
-        MassBalancePressureFracturesGroup(),
-        MassBalancePressureIntersectionsGroup(),
+        DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
     ]
 
     solver = GMRES(
@@ -1243,19 +1242,19 @@ def th_factory():
 
     """
     interface_groups: list[EquationVariableGroup] = [
-        InterfaceDarcyFluxGroup(),
-        InterfaceEnthalpyFluxGroup(),
-        InterfaceFourierFluxGroup(),
-        WellFluxGroup(),
-        WellEnthalpyFluxGroup(),
+        DefaultEquationVariableGroups.interface_darcy_flux_group,
+        DefaultEquationVariableGroups.interface_enthalpy_flux_group,
+        DefaultEquationVariableGroups.interface_fourier_flux_group,
+        DefaultEquationVariableGroups.well_flux_group,
+        DefaultEquationVariableGroups.well_enthalpy_flux_group,
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
-        MassBalancePressureMatrixGroup(),
-        MassBalancePressureFracturesGroup(),
-        MassBalancePressureIntersectionsGroup(),
+        DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
     ]
     energy_balance_groups: list[EquationVariableGroup] = [
-        EnergyBalanceTemperatureGroup(),
+        DefaultEquationVariableGroups.energy_balance_temperature_group,
     ]
 
     solver = GMRES(
@@ -1280,7 +1279,9 @@ def th_factory():
     )
     return LinearSolverConfiguration(
         transformations=[
-            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+            ScaleSpecificVolume(
+                groups=[DefaultEquationVariableGroups.energy_balance_temperature_group]
+            ),
         ],
         solver=solver,
     )
@@ -1332,25 +1333,27 @@ def thm_factory():
     https://petsc.org/main/manual/ksp/#preconditioners
 
     """
-    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    contact_groups: list[EquationVariableGroup] = [
+        DefaultEquationVariableGroups.contact_mechanics_group
+    ]
     interface_groups: list[EquationVariableGroup] = [
-        InterfaceDarcyFluxGroup(),
-        InterfaceEnthalpyFluxGroup(),
-        InterfaceFourierFluxGroup(),
-        WellFluxGroup(),
-        WellEnthalpyFluxGroup(),
+        DefaultEquationVariableGroups.interface_darcy_flux_group,
+        DefaultEquationVariableGroups.interface_enthalpy_flux_group,
+        DefaultEquationVariableGroups.interface_fourier_flux_group,
+        DefaultEquationVariableGroups.well_flux_group,
+        DefaultEquationVariableGroups.well_enthalpy_flux_group,
     ]
     mechanics_groups: list[EquationVariableGroup] = [
-        MechanicsGroup(),
-        InterfaceForceBalanceGroup(),
+        DefaultEquationVariableGroups.mechanics_group,
+        DefaultEquationVariableGroups.interface_force_balance_group,
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
-        MassBalancePressureMatrixGroup(),
-        MassBalancePressureFracturesGroup(),
-        MassBalancePressureIntersectionsGroup(),
+        DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
     ]
     energy_balance_groups: list[EquationVariableGroup] = [
-        EnergyBalanceTemperatureGroup(),
+        DefaultEquationVariableGroups.energy_balance_temperature_group,
     ]
 
     solver = GMRES(
@@ -1406,7 +1409,9 @@ def thm_factory():
     return LinearSolverConfiguration(
         transformations=[
             ContactLinearTransformation(),
-            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+            ScaleSpecificVolume(
+                groups=[DefaultEquationVariableGroups.energy_balance_temperature_group]
+            ),
         ],
         solver=solver,
     )
@@ -1423,28 +1428,32 @@ def thm_tpsa_factory():
     - We do not scale variables in the preconditioner. We rely on PorePy scaling.
 
     """
-    contact_groups: list[EquationVariableGroup] = [ContactMechanicsGroup()]
+    contact_groups: list[EquationVariableGroup] = [
+        DefaultEquationVariableGroups.contact_mechanics_group
+    ]
     interface_groups: list[EquationVariableGroup] = [
-        InterfaceDarcyFluxGroup(),
-        InterfaceEnthalpyFluxGroup(),
-        InterfaceFourierFluxGroup(),
-        WellFluxGroup(),
-        WellEnthalpyFluxGroup(),
+        DefaultEquationVariableGroups.interface_darcy_flux_group,
+        DefaultEquationVariableGroups.interface_enthalpy_flux_group,
+        DefaultEquationVariableGroups.interface_fourier_flux_group,
+        DefaultEquationVariableGroups.well_flux_group,
+        DefaultEquationVariableGroups.well_enthalpy_flux_group,
     ]
     mass_balance_groups: list[EquationVariableGroup] = [
-        MassBalancePressureMatrixGroup(),
-        MassBalancePressureFracturesGroup(),
-        MassBalancePressureIntersectionsGroup(),
+        DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
     ]
     energy_balance_groups: list[EquationVariableGroup] = [
-        EnergyBalanceTemperatureGroup(),
+        DefaultEquationVariableGroups.energy_balance_temperature_group,
     ]
 
-    solid_mass_pressure_group = CustomEquationVariableGroup(
-        "Solid_mass_equation_poromechanics", "total_pressure"
+    solid_mass_pressure_group = EquationVariableGroup(
+        equation_tag=pp.solvers.DefaultEquationTags.poromechanics_solid_mass,
+        variable_tag=pp.solvers.DefaultVariableTags.total_pressure,
     )
-    angular_momentum_rotation_group = CustomEquationVariableGroup(
-        "angular_momentum_balance_equation", "rotation_stress"
+    angular_momentum_rotation_group = EquationVariableGroup(
+        equation_tag=pp.solvers.DefaultEquationTags.angular_momentum_balance,
+        variable_tag=pp.solvers.DefaultVariableTags.rotation_stress,
     )
 
     solver = GMRES(
@@ -1462,7 +1471,10 @@ def thm_tpsa_factory():
                 },
                 {
                     "subsolver": DiagonalPreconditioner(
-                        groups=[InterfaceForceBalanceGroup()], key="intf_force_balance"
+                        groups=[
+                            DefaultEquationVariableGroups.interface_force_balance_group
+                        ],
+                        key="intf_force_balance",
                     ),
                     "approximate_inverter": DiagonalInverter(),
                 },
@@ -1481,7 +1493,7 @@ def thm_tpsa_factory():
                                 key="angular_momentum_rotation",
                             ),
                             AMG(
-                                groups=[MechanicsGroup()],
+                                groups=[DefaultEquationVariableGroups.mechanics_group],
                                 key="mechanics_amg",
                                 vector_problem=True,
                             ),
@@ -1523,7 +1535,9 @@ def thm_tpsa_factory():
     return LinearSolverConfiguration(
         transformations=[
             ContactLinearTransformation(),
-            ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+            ScaleSpecificVolume(
+                groups=[DefaultEquationVariableGroups.energy_balance_temperature_group]
+            ),
         ],
         solver=solver,
         groups=solver.groups,

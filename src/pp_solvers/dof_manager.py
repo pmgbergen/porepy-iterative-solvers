@@ -23,18 +23,14 @@ rhs_mass_balance = rhs[dofs_mass_balance_eq]
 
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Optional
-from weakref import ReferenceType, ref
+from collections import Counter
 
 import numpy as np
 import porepy as pp
 
 from pp_solvers.block_linear_system import concatenate_dof_indices
 from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    EquationNames,
-    EquationOnDomains,
+    CONTACT_MECHANICS_EQUATION_TAG,
     EquationVariableGroup,
 )
 
@@ -56,7 +52,13 @@ class DofManager:
 
     """
 
-    def __init__(self, model: pp.PorePyModel, groups: list[EquationVariableGroup]):
+    def __init__(
+        self,
+        model: pp.PorePyModel,
+        equation_indexer: pp.ad.EquationIndexer,
+        variable_indexer: pp.ad.VariableIndexer,
+        groups: list[EquationVariableGroup],
+    ):
         """Constructs the DoFs mapping for the passed groups of equations and
         variables.
 
@@ -65,32 +67,16 @@ class DofManager:
             more than once.
 
         """
-        # We need a weak reference here to avoid a reference cycle, which can lead to a
-        # memory leak. The weak reference is alive until the PorePy model is alive.
-        # DofManager is used inside a PorePy model, so a DofManager without an active
-        # PorePy model would not make sense anyway.
-        self._model: ReferenceType[pp.PorePyModel] = ref(model)
+        self.model: pp.PorePyModel = model
         """The PorePy model of the given problem."""
 
         self._groups: list[EquationVariableGroup] = groups
         """Groups that define the DofManager."""
 
-        # Extracting equation and variable names, these are used for debugging purposes.
-        self._equation_names: list[str] = [g.equation_name(model) for g in groups]
-        self._variable_names: list[str] = [g.variable_name(model) for g in groups]
-
+        # TODO YZ: ensure docstring up to date
         # Collecting and validation equation and variable groups. This ensures no
         # duplicates. More validation regarding meaningful dofs is made in
         # BlockLinearSystem constructor.
-
-        equation_groups = [g.equation_group(model) for g in groups]
-        self._equation_groups: list[EquationOnDomains] = equation_groups
-        _validate_equation_groups(equation_groups=equation_groups)
-
-        variable_groups = [g.variable_group(model) for g in groups]
-        self._variable_groups: list[pp.ad.MixedDimensionalVariable] = variable_groups
-        _validate_variable_groups(variable_groups=variable_groups)
-
         # Assembling DoFs that correspond to each group:
         # 1. PorePy provides us with a list of arrays, each array corresponds to the
         #   DoFs of a single equation/variable on a single (not mixed-dimensional)
@@ -101,52 +87,26 @@ class DofManager:
         # 3. We concatenate arrays of DoFs, so that now a single array correspond to a
         #   single group.
 
-        # First, we treat equations:
-        eq_dofs_porepy_order = self._eq_dofs_porepy_order()
-        mapping_equation_groups = self._equation_block_indices()
-        self._eq_dofs: list[np.ndarray] = [
-            concatenate_dof_indices([eq_dofs_porepy_order[i] for i in dofs_in_group])
-            for dofs_in_group in mapping_equation_groups
-        ]
-        """List of arrays, i-th array contains the DoFs of the i-th equation group."""
-
-        # Second, we treat variables:
-        var_dofs_porepy_order = self._var_dofs_porepy_order()
-        mapping_variable_groups = self._variable_block_indices()
-        self._var_dofs: list[np.ndarray] = [
-            concatenate_dof_indices([var_dofs_porepy_order[i] for i in dofs_in_group])
-            for dofs_in_group in mapping_variable_groups
-        ]
-        """List of arrays, i-th array contains the DoFs of the i-th variable group."""
-
-        # Contact mechanics permutation.
-        try:
-            contact_group = self.indices_of_groups([ContactMechanicsGroup()])[0]
-        except ValueError:
-            pass  # Do nothing if no contact groups is present.
-        else:
-            self._eq_dofs[contact_group] = self._permute_contact_dofs(contact_group)
-
-    @property
-    def model(self) -> pp.PorePyModel:
-        """The PorePy model of the given problem."""
-        model = self._model()
-        if model is None:
-            # This should never happen, as the DofManager is meant to be used together
-            # with a PorePy model.
-            raise ValueError("The underlying PorePy model is destroyed.")
-        return model
+        self._eq_dofs, self._equations_per_group = _collect_group_dofs(
+            indexer=equation_indexer,
+            tags_by_group=[group.equation_tag for group in groups],
+            model=model,
+        )
+        self._var_dofs, self._variables_per_group = _collect_group_dofs(
+            indexer=variable_indexer,
+            tags_by_group=[group.variable_tag for group in groups],
+            model=model,
+        )
 
     def groups(self) -> list[EquationVariableGroup]:
         """Groups of equations and variables that define the DofManager."""
         return self._groups
 
-    def indices_of_groups(self, groups: list[EquationVariableGroup]):
-        """Return unique numerical identifiers of the passed groups.
+    def indices_of_groups(self, groups: list[EquationVariableGroup]) -> list[int]:
+        """Return unique numerical identifiers of ``groups``.
 
         Raises:
-            ValueError: If any of the groups is not found in this DofManager, or if
-                repeating groups are requestsd.
+            ValueError: If a group is absent or repeated.
 
         """
         indices = [self._groups.index(x) for x in groups]
@@ -160,23 +120,25 @@ class DofManager:
 
     def equation_names(self) -> list[str]:
         """Get the names of equations in the DofManager. These names are not generally
-        equal to the PorePy model equation names, and are intended for debugging.
+        equal to the PorePy model equation names, and are intended for debugging and
+        matrix visualization.
 
         Returns:
             A list of strings containing the names of equations in the DofManager.
 
         """
-        return self._equation_names
+        return [group.equation_tag.name for group in self._groups]
 
     def variable_names(self) -> list[str]:
         """Get the names of variables in the DofManager. These names are not generally
-        equal to the PorePy model variable names, and are intended for debugging.
+        equal to the PorePy model variable names, and are intended for debugging and
+        matrix visualization.
 
         Returns:
             A list of strings containing the names of equations in the DofManager.
 
         """
-        return self._variable_names
+        return [group.variable_tag.name for group in self._groups]
 
     def eq_dofs(self) -> list[np.ndarray]:
         """List of arrays, i-th array contains the DoFs of the i-th equation group."""
@@ -186,236 +148,97 @@ class DofManager:
         """List of arrays, i-th array contains the DoFs of the i-th variable group."""
         return self._var_dofs
 
-    def _eq_dofs_porepy_order(self) -> list[np.ndarray]:
-        """Equation degrees of freedom (rows of the Jacobian) in the PorePy order (how
-        they are arranged in the PorePy model).
 
-        Returns:
-            List of numpy arrays. Each array contains the degrees of freedom for a
-                single equation on a single (not mixed-dimensional) grid.
+def _collect_group_dofs[T: (pp.ad.EquationOnDomain, pp.ad.Variable)](
+    indexer: pp.ad.Indexer[T],
+    tags_by_group: list[pp.solvers.OperatorTag[T]],
+    model: pp.PorePyModel,
+) -> tuple[list[np.ndarray], list[list[T]]]:
+    """Collect indexer DoFs in group and tag order and validate a partition."""
+    dofs_by_groups: list[np.ndarray] = []
+    operators_by_groups: list[list[T]] = []
 
-        """
-        eq_dofs: list[np.ndarray] = []
-        model = self.model
-        offset = 0
-        for data in model.equation_system._equation_image_space_composition.values():
-            local_offset = 0
-            for dofs in data.values():
-                eq_dofs.append(dofs + offset)
-                local_offset += len(dofs)
-            offset += local_offset
-        return eq_dofs
-
-    def _var_dofs_porepy_order(self) -> list[np.ndarray]:
-        """Variable degrees of freedom (columns of the Jacobian) in the PorePy order
-        (how they are arranged in the PorePy model).
-
-        Returns:
-            List of numpy arrays. Each array contains the degrees of freedom for a
-                single variable on a single (not mixed-dimensional) grid.
-
-        """
-        model = self.model
-        var_dofs: list[np.ndarray] = []
-        for var in model.equation_system.variables:
-            var_dofs.append(model.equation_system.dofs_of([var]))
-        return var_dofs
-
-    def _permute_contact_dofs(self, contact_group: int) -> np.ndarray:
-        """Get a permuted array of the DoFs in the contact group.
-
-        This is used to reorder the equations so that the contact equations for single
-        fracture cells form a diagonal block.
-
-        The PorePy arrangement in 3D is:
-
-            [C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k],
-
-        where `C_n` is a normal component, `C_y` and `C_z` are two tangential
-        components. The superscript corresponds to cell index. We permute it to
-
-            `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
-
-        Parameters:
-            contact_group: The group index of the contact mechanics equations.
-
-        Raises:
-            ValueError: If the model dimension is not 2 or 3.
-
-        Returns:
-            A numpy array with the permuted DoFs for the contact group.
-
-        """
-        # Get the dofs of the contact mechanics equations.
-        dofs_contact = self._eq_dofs[contact_group]
-
-        if len(dofs_contact) == 0:
-            # If contact is formally present, but no equations are defined for it,
-            # no permutation is needed.
-            return dofs_contact
-
-        nd = self.model.nd
-        num_contact_cells = dofs_contact.size // nd
-
-        # Extracting normal equation DoFs: [C_n^0, C_n^1, ...]. They go first, as
-        # defined in the DofManager._equation_block_indices method.
-        dofs_normal = dofs_contact[:num_contact_cells]
-
-        # Extracting tangential equation DoFs.
-        if nd == 2:
-            # For 2D, it is a single DoF per cell: [C_y^0, C_y^1, ...].
-            dofs_tangential = [dofs_contact[num_contact_cells:]]
-        elif nd == 3:
-            # For 3D, it is two DoFs per equation, already interleaved:
-            # [C_y^0, C_z^0, C_y^1, C_z^1, ...]. We extract two arrays: for C_y and C_z.
-            dofs_tangential = [
-                dofs_contact[num_contact_cells::2],
-                dofs_contact[num_contact_cells + 1 :: 2],
-            ]
-        return np.vstack([dofs_normal] + dofs_tangential).ravel("F")
-
-    def _variable_block_indices(self) -> list[list[int]]:
-        """Used to assemble the index that will later help accessing the submatrix
-        corresponding to a group of variables, which may include one or more variable.
-
-        Example: Group 0 corresponds to the pressure on all the subdomains. It will
-        contain indices [0, 1, 2] which point to the pressure variable dofs on sd1, sd2
-        and sd3, respectively. Combination of different variables in one group is also
-        possible.
-
-        Returns:
-            List of lists of integers. i-th inner list contains the indices of the
-                variables defined in the i-th group of `self._variable_groups`.
-
-        """
-        # Create a 0-based index for each variable.
-        variable_to_idx = {
-            var: i for i, var in enumerate(self.model.equation_system.variables)
-        }
-        indices = []
-        for md_var in self._variable_groups:
-            # If we ever get a variable in here, we need to handle it directly, and
-            # not call sub_vars.
-            assert isinstance(md_var, pp.ad.MixedDimensionalVariable)
-            indices.append([variable_to_idx.pop(var) for var in md_var.sub_vars])
-        if len(variable_to_idx) != 0:
-            raise ValueError(
-                "Variables are defined in the PorePy model, but not in the "
-                "LinearSolverConfiguration, or their definition domain does not match: "
-                f"{set([k.name for k in variable_to_idx.keys()])}"
+    for tag in tags_by_group:
+        if not tag == CONTACT_MECHANICS_EQUATION_TAG:
+            selected, _ = indexer.filter_by_tags(tags=[tag], model=model)
+            dofs_selected = concatenate_dof_indices(
+                [indexer.operators_to_dofs[operator] for operator in selected]
             )
-        return indices
-
-    def _equation_block_indices(self) -> list[list[int]]:
-        """Assembles the index that will later help accessing the submatrix
-        corresponding to a group of equation, which may include one or more equation.
-
-        The contact mechanics equation is defined in PorePy as two equations: normal and
-        tangential. Here, we compose them into a single equation group.
-
-        Returns:
-            List of lists of integers. i-th inner list contains the indices of the
-                equations in defined in the i-th item in `self._equation_groups`.
-                The indices refer to the block indices defined in
-                model.equation_system._equation_image_space_composition.
-
-        """
-        # Assign a unique index to each equation-domain pair.
-        equation_to_idx: dict[tuple[str, pp.GridLike], int] = {}
-        idx: int = 0
-        composition = self.model.equation_system._equation_image_space_composition
-        for eq_name, domains in composition.items():
-            for domain in domains:
-                equation_to_idx[(eq_name, domain)] = idx
-                idx += 1
-
-        indices: list[list[int]] = []
-        # The outer loop define different groups of equations (to become blocks in the
-        # block matrix).
-        for equation_on_domains in self._equation_groups:
-            eq_name = equation_on_domains.name
-            domains = equation_on_domains.domains
-            # Items in the group will contain a single equation defined on one or more
-            # domains (subdomains or interfaces). Loop over equations an over all their
-            # domains to add the indices to the group.
-            indices_group: list[int] = []
-            for domain in domains:
-                if (eq_name, domain) in equation_to_idx:
-                    indices_group.append(equation_to_idx.pop((eq_name, domain)))
-
-            # Exception: Special treatment for contact.
-            if eq_name == EquationNames.CONTACT.value:
-                # PorePy model contains 2 equations: one for normal and one for
-                # tangential contact mechanics. If the "CONTACT" group is passed, we
-                # treat them as a single group.
-                for eq_name in [
-                    EquationNames.CONTACT_NORMAL.value,
-                    EquationNames.CONTACT_TANGENTIAL.value,
-                ]:
-                    # First, we append the normal equation in all domains of definition.
-                    # Second - the tangential equation. The method
-                    # DofManager._permute_contact_dofs relies on this order.
-                    for domain in domains:
-                        if (eq_name, domain) in equation_to_idx:
-                            indices_group.append(equation_to_idx.pop((eq_name, domain)))
-
-            indices.append(indices_group)
-
-        # TODO EK: Added this assert just to verify that my understanding of the
-        # function is correct. Delete it later.
-        assert len(indices) == len(self._equation_groups)
-        if len(equation_to_idx) != 0:
-            raise ValueError(
-                "Equations are defined in the PorePy model, but not in the "
-                "LinearSolverConfiguration, or their definition domain does not match: "
-                f"{set([k[0] for k in equation_to_idx.keys()])}"
+        else:
+            normal_operators, _ = indexer.filter_by_tags(
+                tags=[pp.solvers.DefaultEquationTags.normal_fracture_deformation],
+                model=model,
             )
+            normal_dofs = concatenate_dof_indices(
+                [indexer.operators_to_dofs[op] for op in normal_operators]
+            )
+            tangential_operators, _ = indexer.filter_by_tags(
+                tags=[pp.solvers.DefaultEquationTags.tangential_fracture_deformation],
+                model=model,
+            )
+            tangential_dofs = concatenate_dof_indices(
+                [indexer.operators_to_dofs[op] for op in tangential_operators]
+            )
+            dofs_selected = _permute_contact_dofs(
+                normal_dofs=normal_dofs,
+                tangential_dofs=tangential_dofs,
+            )
+            selected = normal_operators + tangential_operators
 
-        return indices
+        operators_by_groups.append(selected)
+        dofs_by_groups.append(dofs_selected)
 
-
-def _validate_equation_groups(equation_groups: list[EquationOnDomains]):
-    """Ensures no duplicates in equation_groups.
-
-    Raises:
-        ValueError: If a a pair of equation_names and subdomains is encountered more
-            than once.
-
-    """
-    # The key is a tuple (equation_name: str, domain: pp.GridLike). The value is how
-    # many times we encountered this key. We make sure we encounter each combination
-    # only once.
-    equation_domain_counter = defaultdict(lambda: 0)
-    for group in equation_groups:
-        for domain in group.domains:
-            equation_domain_counter[(group.name, domain)] += 1
-
-    for (eq_name, domain), count in equation_domain_counter.items():
+    # Each operator of the indexer must be encountered exactly once.
+    encountered = Counter(op for group in operators_by_groups for op in group)
+    for operator, count in encountered.items():
+        if count < 1:
+            raise ValueError(
+                "Equation / Variable in the assembled linear system is not covered by "
+                f"the requested solver configuration: {operator}."
+            )
         if count > 1:
             raise ValueError(
-                f"{eq_name}, {domain} encountered more than once. Check the"
-                " equation groups."
+                "Equation / Variable is duplicated in the requested solver "
+                f"configuration: {operator}."
             )
 
+    return dofs_by_groups, operators_by_groups
 
-def _validate_variable_groups(variable_groups: list[pp.ad.MixedDimensionalVariable]):
-    """Ensures no duplicates in variable_groups.
+
+def _permute_contact_dofs(
+    normal_dofs: np.ndarray, tangential_dofs: np.ndarray
+) -> np.ndarray:
+    """Get a permuted array of the DoFs in the contact group.
+
+    This is used to reorder the equations so that the contact equations for single
+    fracture cells form a diagonal block.
+
+    The PorePy arrangement in 3D is:
+
+        [C_n^0, C_n^1, ..., C_n^K, C_y^0, C_z^0, C_y^1, C_z^1, ..., C_z^K, C_z^k],
+
+    where `C_n` is a normal component, `C_y` and `C_z` are two tangential
+    components. The superscript corresponds to cell index. We permute it to
+
+        `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
+
+    Parameters:
+        contact_group: The group index of the contact mechanics equations.
 
     Raises:
-        ValueError: If a variable defined on a single domain is encountered more than
-        once.
+        ValueError: If the model dimension is not 2 or 3.
+
+    Returns:
+        A numpy array with the permuted DoFs for the contact group.
 
     """
-    # The key is a tuple (variable_name: str, domain: pp.GridLike). The value is how
-    # many times we encountered this key. We make sure we encounter each combination
-    # only once.
-    variable_domain_counter = defaultdict(lambda: 0)
-    for md_var in variable_groups:
-        for domain in md_var.domains:
-            variable_domain_counter[(md_var.name, domain)] += 1
-
-    for (var_name, domain), count in variable_domain_counter.items():
-        if count > 1:
-            raise ValueError(
-                f"Variable group encountered more than once: {var_name} on {domain}"
-            )
+    if len(normal_dofs) == len(tangential_dofs):
+        # 2D
+        return np.vstack([normal_dofs, tangential_dofs]).ravel("F")
+    elif len(normal_dofs) * 2 == len(tangential_dofs):
+        # 3D
+        dofs_y = tangential_dofs[::2]
+        dofs_z = tangential_dofs[1::2]
+        return np.vstack([normal_dofs, dofs_y, dofs_z]).ravel("F")
+    else:
+        raise ValueError("Unknown dimension, must be either 2D or 3D.")

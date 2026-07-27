@@ -5,10 +5,7 @@ import pytest
 import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem
 from pp_solvers.dof_manager import DofManager
-from pp_solvers.equation_variable_groups import (
-    MassBalancePressureFracturesGroup,
-    MassBalancePressureMatrixGroup,
-)
+from pp_solvers.equation_variable_groups import DefaultEquationVariableGroups
 from pp_solvers.fixed_stress import (
     construct_fixed_stress_block_matrix,
     get_fixed_stress_stabilization_fractures,
@@ -72,19 +69,22 @@ def dof_manager(model: pp.PorePyModel) -> DofManager:
     """Construct the DoF manager through the separate linear solver."""
     solver = pp_solvers.IterativeLinearSolver(delete_matrices=False)
     solver.initialize_with_model(model)
-    assert solver.dof_manager is not None
-    return solver.dof_manager
+    return solver.construct_dof_manager(
+        equation_indexer=model.equation_system.equation_indexer,
+        variable_indexer=model.equation_system.variable_indexer,
+    )
 
 
 @pytest.fixture(scope="module")
-def porepy_linear_system(model: pp.PorePyModel) -> pp.LinearSystem:
+def porepy_linear_system(model: pp.PorePyModel) -> pp.solvers.LinearSystem:
     """Assemble the system using PorePy's standalone linear-system container."""
-    return model.assemble_linear_system()
+    return model.equation_system.assemble()
 
 
 @pytest.fixture(scope="module")
 def block_linear_system(
-    porepy_linear_system: pp.LinearSystem, dof_manager: DofManager
+    porepy_linear_system: pp.solvers.LinearSystem,
+    dof_manager: DofManager,
 ) -> BlockLinearSystem:
     """Construct the transformed block system formerly assembled by the mixin."""
     assert porepy_linear_system.matrix is not None
@@ -121,7 +121,10 @@ def test_fixed_stress(
     num_groups = len(dof_manager.groups())
     try:
         p_mat_group, p_frac_group = dof_manager.indices_of_groups(
-            [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+            [
+                DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+                DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+            ]
         )
     except:
         assert False, "These groups should be present."
@@ -169,7 +172,10 @@ def test_fixed_stress_inverter(
     petsc_fs_matrix = petsc_to_csr(config["inverter_additive"](bmat.indexer))
 
     p_mat_group, p_frac_group = dof_manager.indices_of_groups(
-        [MassBalancePressureMatrixGroup(), MassBalancePressureFracturesGroup()]
+        [
+            DefaultEquationVariableGroups.mass_balance_pressure_matrix_group,
+            DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        ]
     )
 
     expected_matrix = construct_fixed_stress_block_matrix(

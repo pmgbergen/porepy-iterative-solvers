@@ -3,6 +3,8 @@ models as in dev_thm.py.
 
 """
 
+import logging
+
 from examples.dev_thm import FullModel, linear_solver_options, model_params_2d
 import porepy as pp
 import pp_solvers
@@ -54,7 +56,10 @@ solver_selector = SolverSelector(
     performance_predictor=assemble_default_performance_predictor(),
 )
 
+
 def main():
+    logging.basicConfig(level=logging.INFO)
+
     model_2d = FullModel(model_params_2d)
     linear_solver = pp_solvers.IterativeLinearSolver(
         solver_selector=solver_selector,
@@ -63,7 +68,7 @@ def main():
     )
     pp.ModelRunner(
         model_2d,
-        nonlinear_solver=pp.NewtonSolver(
+        nonlinear_solver=pp.solvers.NewtonSolver(
             params={"nl_convergence_res_atol": 1e-6}, linear_solver=linear_solver
         ),
     ).run()
