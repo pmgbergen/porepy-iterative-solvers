@@ -298,9 +298,7 @@ class ScaleSpecificVolume(LinearSystemTransformation):
         try:
             idx_to_scale = dof_manager.indices_of_groups(self.groups)
         except ValueError:
-            # ?????
-            logger.warning("You're using ScaleSpecificVolume with empty groups.")
-            return block_linear_system
+            raise ValueError(f"Groups not found in the dof manager: {self.groups}.")
 
         model = dof_manager.model
 
