@@ -4,14 +4,14 @@ from dataclasses import dataclass, replace
 
 import porepy as pp
 from porepy.numerics.solvers import (
+    DefaultEquationTags,
+    DefaultVariableTags,
+    DomainFilter,
+    EquationTag,
     OnAmbientDimension,
     OnFractures,
     OnInterfaces,
-    DefaultEquationTags,
-    DefaultVariableTags,
-    EquationTag,
     VariableTag,
-    DomainFilter,
 )
 
 __all__ = [

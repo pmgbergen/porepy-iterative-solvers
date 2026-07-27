@@ -1,20 +1,20 @@
 import logging
 
 import porepy as pp
-import pp_solvers
-
+from porepy.examples.flow_benchmark_2d_case_1 import Geometry as Geometry_2d_case_1
 from porepy.examples.flow_benchmark_2d_case_1 import (
-    Geometry as Geometry_2d_case_1,
     solid_constants_conductive_fractures as solid_constants_2d_1,
 )
+from porepy.examples.flow_benchmark_2d_case_4 import Geometry as Geometry_2d_case_4
 from porepy.examples.flow_benchmark_2d_case_4 import (
-    Geometry as Geometry_2d_case_4,
     solid_constants as solid_constants_2d,
 )
+from porepy.examples.flow_benchmark_3d_case_3 import Geometry as Geometry_3d_case_3
 from porepy.examples.flow_benchmark_3d_case_3 import (
-    Geometry as Geometry_3d_case_3,
     solid_constants as solid_constants_3d,
 )
+
+import pp_solvers
 
 
 class FullModel(

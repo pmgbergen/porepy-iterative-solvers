@@ -240,7 +240,11 @@ def test_eq_var_dofs(
             id="u_intf",
         ),
         pytest.param(
-            {"keys": ["contact"], "groups": [DefaultEquationVariableGroups.contact_mechanics_group]}, id="contact"
+            {
+                "keys": ["contact"],
+                "groups": [DefaultEquationVariableGroups.contact_mechanics_group],
+            },
+            id="contact",
         ),
         pytest.param(
             {

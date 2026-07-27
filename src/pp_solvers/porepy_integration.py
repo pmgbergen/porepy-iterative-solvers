@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from functools import partial
 from dataclasses import dataclass
+from functools import partial
 from time import time
 from typing import Callable, Optional
 

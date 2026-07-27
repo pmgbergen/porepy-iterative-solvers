@@ -5,14 +5,15 @@ models as in dev_thm.py.
 
 import logging
 
-from examples.dev_thm import FullModel, linear_solver_options, model_params_2d
 import porepy as pp
+
 import pp_solvers
+from examples.dev_thm import FullModel, linear_solver_options, model_params_2d
 from pp_solvers.solver_selection import (
-    SolverSpace,
-    SolverSelector,
-    NumericalChoices,
     CategoricalChoices,
+    NumericalChoices,
+    SolverSelector,
+    SolverSpace,
     assemble_default_performance_predictor,
 )
 
