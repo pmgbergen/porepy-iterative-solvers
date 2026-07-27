@@ -1448,13 +1448,9 @@ def thm_tpsa_factory():
         DefaultEquationVariableGroups.energy_balance_temperature_group,
     ]
 
-    solid_mass_pressure_group = EquationVariableGroup(
-        equation_tag=pp.solvers.DefaultEquationTags.poromechanics_solid_mass,
-        variable_tag=pp.solvers.DefaultVariableTags.total_pressure,
-    )
-    angular_momentum_rotation_group = EquationVariableGroup(
-        equation_tag=pp.solvers.DefaultEquationTags.angular_momentum_balance,
-        variable_tag=pp.solvers.DefaultVariableTags.rotation_stress,
+    solid_mass_pressure_group = DefaultEquationVariableGroups.solid_mass_pressure_group
+    angular_momentum_rotation_group = (
+        DefaultEquationVariableGroups.angular_momentum_rotation_group
     )
 
     solver = GMRES(

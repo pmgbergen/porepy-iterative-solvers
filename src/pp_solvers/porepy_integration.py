@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from functools import partial
 from time import time
 from typing import Callable, Optional
 
@@ -156,10 +155,9 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
 
         """
         self._groups: list[EquationVariableGroup] | None = None
-        """Groups configured at model initialization and resolved on first solve."""
-
-        self._num_dofs: Optional[int] = None
-        """Size of solution vectors, set from the first assembled linear system."""
+        """Groups of equations and variables. Set in :meth:`initialize_with_model."""
+        self._model: pp.PorePyModel | None = None
+        """PorePy model. Set in :meth:`initialize_with_model."""
 
     def initialize_with_model(self, model: pp.PorePyModel) -> None:
         """Initialize configuration, transformations, and DoF mappings for ``model``."""
@@ -181,7 +179,6 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         self._model = model
         self._groups = configuration.groups
         self.dof_manager = None
-        self._num_dofs = None
 
     def construct_dof_manager(
         self,
@@ -385,7 +382,9 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
                 "Failed to build a PETSc linear solver based on the given linear system"
             )
             logger.exception(error_msg)
-            nans = np.full(self._num_dofs, np.nan, dtype=linear_system.rhs.dtype)
+            nans = np.full(
+                self.dof_manager.num_dofs, np.nan, dtype=linear_system.rhs.dtype
+            )
             return nans, IterativeLinearSolverFailure(
                 solve_time=0.0, construct_time=time() - t0, reason=error_msg
             )

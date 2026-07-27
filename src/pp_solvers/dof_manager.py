@@ -1,20 +1,30 @@
 """This module defines the class DofManager - a layer of translation between a PorePy
 model and the equation-variable groups defined in `equation_variable_groups.py`.
-Given the `MassBalancePressureGroup()` as example, the DofManager can tell us:
+
+Consider the linear system split by two groups: `mass_balance_pressure_group` and
+`mechanics_group`, which can be taken from `pp_solvers.DefaultEquationVariableGroups`:
+```
+linear_system = model.equation_system.assemble(...)
+
+dof_manager = DofManager(
+    model=model,
+    equation_indexer=linear_system.equation_indexer,
+    variable_indexer=linear_system.variable_indexer,
+    groups=[mass_balance_pressure_group, mechanics_group],
+)
+```
+The DofManager can tell us:
 - Is this group present in the problem?
 - If yes, what PorePy DoFs correspond to this equation?
-
-This is done by:
 ```
-dof_manager = DofManager(...)
-mass_balance_group = dof_manager.indices_of_groups([MassBalancePressureGroup()])[0]
-
+mass_balance_group = dof_manager.indices_of_groups([mass_balance_pressure_group])[0]
 dofs_mass_balance_eq = dof_manager.eq_dofs()[mass_balance_group]
 dofs_pressure_var = dof_manager.var_dofs()[mass_balance_group]
-
-# These dofs now can be used to slice the matrix, produced by the PorePy model:
-mat, rhs = model.linear_system
-
+```
+These dofs now can be used to slice the matrix, produced by the PorePy model:
+```
+mat = linear_system.matrix
+rhs = linear_system.rhs
 submatrix_mass_balance_pressure = mat[dofs_mass_balance_eq, dofs_pressure_var]
 rhs_mass_balance = rhs[dofs_mass_balance_eq]
 ```
@@ -73,26 +83,19 @@ class DofManager:
         self._groups: list[EquationVariableGroup] = groups
         """Groups that define the DofManager."""
 
-        # TODO YZ: ensure docstring up to date
-        # Collecting and validation equation and variable groups. This ensures no
-        # duplicates. More validation regarding meaningful dofs is made in
-        # BlockLinearSystem constructor.
-        # Assembling DoFs that correspond to each group:
-        # 1. PorePy provides us with a list of arrays, each array corresponds to the
-        #   DoFs of a single equation/variable on a single (not mixed-dimensional)
-        #   grid.
-        # 2. We construct a mapping from what PorePy provided to the groups, which
-        #   equations/variables on which collection grids we will treat monolithically
-        #   in this DofManager.
-        # 3. We concatenate arrays of DoFs, so that now a single array correspond to a
-        #   single group.
+        self.num_dofs: int = equation_indexer.num_dofs
+        """Total number of DoFs in the linear system."""
 
-        self._eq_dofs, self._equations_per_group = _collect_group_dofs(
+        # Collecting and validation equation and variable DoFs. This ensures no
+        # duplicates. More validation regarding meaningful dofs is made in
+        # BlockLinearSystem constructor. The contact mechanics special case is treated
+        # here.
+        self._eq_dofs, self.equations_per_group = _collect_group_dofs(
             indexer=equation_indexer,
             tags_by_group=[group.equation_tag for group in groups],
             model=model,
         )
-        self._var_dofs, self._variables_per_group = _collect_group_dofs(
+        self._var_dofs, self.variables_per_group = _collect_group_dofs(
             indexer=variable_indexer,
             tags_by_group=[group.variable_tag for group in groups],
             model=model,
@@ -149,40 +152,74 @@ class DofManager:
         return self._var_dofs
 
 
-def _collect_group_dofs[T: (pp.ad.EquationOnDomain, pp.ad.Variable)](
-    indexer: pp.ad.Indexer[T],
-    tags_by_group: list[pp.solvers.OperatorTag[T]],
+def _collect_group_dofs[
+    EquationOrVariableType: (pp.ad.EquationOnDomain, pp.ad.Variable)
+](
+    indexer: pp.ad.Indexer[EquationOrVariableType],
+    tags_by_group: list[pp.solvers.OperatorTag[EquationOrVariableType]],
     model: pp.PorePyModel,
-) -> tuple[list[np.ndarray], list[list[T]]]:
-    """Collect indexer DoFs in group and tag order and validate a partition."""
+) -> tuple[list[np.ndarray], list[list[EquationOrVariableType]]]:
+    """Collect DoFs in groups and validate a partition.
+
+    Treatment of the contact mechanics special case is localized here, see the docstring
+    of :class:`DofManager`.
+
+    Parameters:
+        indexer: Indexer of the corresponding linear systems.
+        tags_by_groups: Equation or variable tags, one per group.
+        model: PorePy model.
+
+    Raises:
+        ValueError: If an equation / variable in the indexer is not covered by any
+            group.
+        ValueError: If groups have overlapping equations / variables.
+
+    Returns:
+        A tuple of 2 elements:
+        - A list of numpy arrays, each is the DoF indices of the corresponding group.
+        - A list of lists of atomic equations / variable. Each inner lists corresponds
+            to a group.
+
+    """
     dofs_by_groups: list[np.ndarray] = []
-    operators_by_groups: list[list[T]] = []
+    operators_by_groups: list[list[EquationOrVariableType]] = []
 
     for tag in tags_by_group:
-        if not tag == CONTACT_MECHANICS_EQUATION_TAG:
+        if tag != CONTACT_MECHANICS_EQUATION_TAG:
+            # A general case. Get atomic equations / variables corresponding to the tag.
             selected, _ = indexer.filter_by_tags(tags=[tag], model=model)
+            # Get and concatenate the dofs of these atomic equations / variables.
             dofs_selected = concatenate_dof_indices(
                 [indexer.operators_to_dofs[operator] for operator in selected]
             )
         else:
+            # Contact mechanics special case. Need to treat normal and tangential
+            # separately. The same logic as the general case applied twice.
+
+            # Get atomic equations for the normal contact mecahnics equation.
             normal_operators, _ = indexer.filter_by_tags(
                 tags=[pp.solvers.DefaultEquationTags.normal_fracture_deformation],
                 model=model,
             )
+            # Get dofs for the normal equation.
             normal_dofs = concatenate_dof_indices(
                 [indexer.operators_to_dofs[op] for op in normal_operators]
             )
+            # Get atomic equations for the tangential equation.
             tangential_operators, _ = indexer.filter_by_tags(
                 tags=[pp.solvers.DefaultEquationTags.tangential_fracture_deformation],
                 model=model,
             )
+            # Get dofs for the tangential equation.
             tangential_dofs = concatenate_dof_indices(
                 [indexer.operators_to_dofs[op] for op in tangential_operators]
             )
+            # Apply the permutation.
             dofs_selected = _permute_contact_dofs(
                 normal_dofs=normal_dofs,
                 tangential_dofs=tangential_dofs,
             )
+            # Register normal and tangential contact equation as seen.
             selected = normal_operators + tangential_operators
 
         operators_by_groups.append(selected)
@@ -223,10 +260,14 @@ def _permute_contact_dofs(
         `[C_n^0, C_y^0, C_z^0, ..., C_n^K, C_y^K, C_z^K]`.
 
     Parameters:
-        contact_group: The group index of the contact mechanics equations.
+        normal_dofs: An flat array with the normal equation dofs C_n.
+        tangentail_dofs: An flat array with the tangential equation dofs. In the 2D
+            case, must be of the same shape as `normal_dofs`. In the 3D case, must be
+            double the size of the `tangential_dofs`.
 
     Raises:
-        ValueError: If the model dimension is not 2 or 3.
+        ValueError: If the shape of `tangential_dofs` does not align with the shape of
+            `normal_dofs`.
 
     Returns:
         A numpy array with the permuted DoFs for the contact group.
