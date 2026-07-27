@@ -1,7 +1,7 @@
+import logging
+
 import numpy as np
 import porepy as pp
-import scipy.sparse as sps
-from petsc4py import PETSc
 import pp_solvers
 
 from porepy.examples.flow_benchmark_2d_case_1 import (
@@ -24,24 +24,7 @@ class FullModel(
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
     pp.Thermoporomechanics,
 ):
-    def check_convergence(
-        self,
-        nonlinear_increment: np.ndarray,
-        residual,
-        reference_residual: np.ndarray,
-        nl_params,
-    ) -> tuple[bool, bool]:
-        # nonlinear_increment based norm
-        nonlinear_increment_norm = self.compute_nonlinear_increment_norm(
-            nonlinear_increment
-        )
-        # Residual based norm
-        residual_norm = self.compute_residual_norm(residual, reference_residual)
-
-        print(f"nl_inc: {nonlinear_increment_norm}, res: {residual_norm}")
-        return super().check_convergence(
-            nonlinear_increment_norm, residual, reference_residual, nl_params
-        )
+    pass
 
 
 model_params_2d = {
@@ -57,6 +40,7 @@ linear_solver_options = {"gmres": {"ksp_monitor": None}}
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     model_2d = FullModel(model_params_2d)
     linear_solver = pp_solvers.IterativeLinearSolver(
         configuration_factory=pp_solvers.thm_factory,
@@ -64,7 +48,7 @@ def main():
     )
     pp.ModelRunner(
         model_2d,
-        nonlinear_solver=pp.NewtonSolver(
+        nonlinear_solver=pp.solvers.NewtonSolver(
             params={"nl_convergence_res_atol": 1e-6}, linear_solver=linear_solver
         ),
     ).run()

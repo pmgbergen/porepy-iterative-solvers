@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from dataclasses import dataclass
 from time import time
 from typing import Callable, Optional
@@ -17,6 +18,7 @@ from porepy.numerics.solvers import (
 
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
+from pp_solvers.equation_variable_groups import EquationVariableGroup
 from pp_solvers.options_parsers import initialize_petsc_ksp
 from pp_solvers.preconditioners import (
     LinearSolverConfiguration,
@@ -44,14 +46,7 @@ __all__ = [
     "PETScKspConvergedReason",
     "IterativeLinearSolverSuccess",
     "IterativeLinearSolverFailure",
-    "IterativeLinearSolver",
 ]
-
-"""Below are methods that are used to create specific schemes for different equations.
-Note that these consider PETSc configurations, and have no responsibility for
-taking care of equations etc. (CURRENT IMPLEMENTATION IS NOT RIGHT). This means they are
-essentially bearers of options for the solver.
-"""
 
 type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
@@ -157,11 +152,14 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         """
         self.dof_manager: Optional[DofManager] = None
         """Mapping between PorePy degrees of freedom and configured solver groups, set
-        in :meth:`initialize_with_model`.
+        from the first assembled linear system.
 
         """
+        self._groups: list[EquationVariableGroup] | None = None
+        """Groups configured at model initialization and resolved on first solve."""
+
         self._num_dofs: Optional[int] = None
-        """Size of solution vectors, set in :meth:`initialize_with_model`."""
+        """Size of solution vectors, set from the first assembled linear system."""
 
     def initialize_with_model(self, model: pp.PorePyModel) -> None:
         """Initialize configuration, transformations, and DoF mappings for ``model``."""
@@ -179,9 +177,29 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         self.transformations = [
             PorePyArrangementTransformation()
         ] + configuration.transformations
-        self.dof_manager = DofManager(model=model, groups=configuration.groups)
 
-        self._num_dofs = model.equation_system.num_dofs()
+        self._model = model
+        self._groups = configuration.groups
+        self.dof_manager = None
+        self._num_dofs = None
+
+    def construct_dof_manager(
+        self,
+        equation_indexer: pp.ad.EquationIndexer,
+        variable_indexer: pp.ad.VariableIndexer,
+    ) -> DofManager:
+        """Initialize or validate DoF mappings from an assembled linear system."""
+        if self._groups is None or self._model is None:
+            raise ValueError(
+                "The linear solver must be initialized with a model first."
+            )
+
+        return DofManager(
+            model=self._model,
+            equation_indexer=equation_indexer,
+            variable_indexer=variable_indexer,
+            groups=self._groups,
+        )
 
     def solve_linear_system(
         self, linear_system: pp.solvers.LinearSystem
@@ -207,11 +225,9 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
             Solution array of the linear system and solver status.
 
         """
-        assert (
-            self.dof_manager is not None
-            and self.petsc_ksp_pc_configuration is not None
-            and self._num_dofs is not None
-        ), "The linear solver must be initialized with a model before solving."
+        assert self.petsc_ksp_pc_configuration is not None, (
+            "The linear solver must be initialized with a model before solving."
+        )
 
         # If the rhs contains nans or infs, exiting early.
         if np.any(np.isnan(linear_system.rhs) | np.isinf(linear_system.rhs)):
@@ -221,7 +237,7 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
                 reason=error_msg, solve_time=0.0, construct_time=0.0
             )
             dtype = linear_system.rhs.dtype
-            return np.full(self._num_dofs, np.nan, dtype=dtype), status
+            return np.full(linear_system.rhs.size, np.nan, dtype=dtype), status
 
         block_linear_system = self.construct_block_linear_system(linear_system)
 
@@ -247,10 +263,14 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
             configured iterative solver.
 
         """
-        assert self.dof_manager is not None, "The linear solver is not initialized."
         assert linear_system.matrix is not None, (
             "The linear system must contain an assembled matrix."
         )
+        if self.dof_manager is None:
+            self.dof_manager = self.construct_dof_manager(
+                equation_indexer=linear_system.equation_indexer,
+                variable_indexer=linear_system.variable_indexer,
+            )
 
         # Creating the indices of DoFs for the BlockLinearSystem class.
         block_linear_system = BlockLinearSystem(
@@ -348,9 +368,7 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
                 - Status containing timing, iteration, and PETSc convergence details.
         """
         assert (
-            self.dof_manager is not None
-            and self.petsc_ksp_pc_configuration is not None
-            and self._num_dofs is not None
+            self.dof_manager is not None and self.petsc_ksp_pc_configuration is not None
         ), "The linear solver must be initialized with a model before solving."
 
         t0 = time()

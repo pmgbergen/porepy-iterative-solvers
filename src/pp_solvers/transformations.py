@@ -8,9 +8,8 @@ from scipy.sparse import csr_matrix
 from pp_solvers.block_linear_system import BlockLinearSystem, concatenate_dof_indices
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
+    DefaultEquationVariableGroups,
     EquationVariableGroup,
-    InterfaceForceBalanceGroup,
 )
 from pp_solvers.mat_utils import csr_ones, inv_block_diag
 
@@ -197,7 +196,9 @@ class ContactLinearTransformation(LinearSystemTransformation):
                 "Use ContactLinearTransformation after PorePyArrangementTransformation."
             )
         try:
-            idx_contact = dof_manager.indices_of_groups([ContactMechanicsGroup()])[0]
+            idx_contact = dof_manager.indices_of_groups(
+                [DefaultEquationVariableGroups.contact_mechanics_group]
+            )[0]
         except ValueError:
             logger.warning(
                 "You're using ContactLinearTransformation with no contact mechanics"
@@ -206,7 +207,7 @@ class ContactLinearTransformation(LinearSystemTransformation):
 
         try:
             idx_intf_force = dof_manager.indices_of_groups(
-                [InterfaceForceBalanceGroup()]
+                [DefaultEquationVariableGroups.interface_force_balance_group]
             )
         except ValueError:
             logger.warning(
@@ -259,14 +260,14 @@ class ContactLinearTransformation(LinearSystemTransformation):
         self.transformation_matrix = transformation_matrix
 
         block_linear_system.mat @= transformation_matrix
-        # The rhs remains untouched, since this is a right transfomration that applies
+        # The rhs remains untouched, since this is a right transformation that applies
         # only to equations (rows), and not variables (columns): A * Q * Q^-1 x = rhs.
         return block_linear_system
 
     def transform_solution(self, sol: np.ndarray) -> np.ndarray:
         """Applies Q to map the raw solver solution back to the original space."""
         if self.transformation_matrix is None:
-            # Transformation matrix may be not set if transform_matrix_rhs return early
+            # Transformation matrix may be not set if transform_matrix_rhs returns early
             # due to no transformation.
             return sol
         return self.transformation_matrix @ sol
@@ -289,7 +290,7 @@ class ScaleSpecificVolume(LinearSystemTransformation):
     def transform_matrix_rhs(
         self, block_linear_system: BlockLinearSystem, dof_manager: DofManager
     ) -> BlockLinearSystem:
-        """Assemble the right linear transformation for scaling energy fluxes."""
+        """Assemble the left row-scaling transformation."""
         if not block_linear_system.dofs_are_sorted:
             raise ValueError(
                 "Use ScaleSpecificVolume after PorePyArrangementTransformation."
@@ -297,15 +298,16 @@ class ScaleSpecificVolume(LinearSystemTransformation):
         try:
             idx_to_scale = dof_manager.indices_of_groups(self.groups)
         except ValueError:
+            # ?????
             logger.warning("You're using ScaleSpecificVolume with empty groups.")
             return block_linear_system
 
         model = dof_manager.model
 
         subdomains = []
-        for group in self.groups:
-            equation = group.equation_group(model=model)
-            subdomains.extend(equation.domains)
+        for i in idx_to_scale:
+            domains = [eq.domain for eq in dof_manager._equations_per_group[i]]
+            subdomains.extend(domains)
 
         if len(subdomains) == 0:
             # No subdomains, hence no scaling.

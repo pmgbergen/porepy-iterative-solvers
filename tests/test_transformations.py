@@ -19,11 +19,8 @@ import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    ContactMechanicsGroup,
-    EnergyBalanceTemperatureGroup,
     EquationVariableGroup,
-    MassBalancePressureFracturesGroup,
-    MassBalancePressureIntersectionsGroup,
+    DefaultEquationVariableGroups,
 )
 from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.porepy_integration import IterativeLinearSolver
@@ -80,7 +77,7 @@ def model(model_kind: str, with_fractures: bool):
 
 @pytest.fixture
 def porepy_linear_system(model: pp.PorePyModel) -> pp.solvers.LinearSystem:
-    linear_system = model.assemble_linear_system()
+    linear_system = model.equation_system.assemble()
     linear_system.rhs[:] = np.arange(linear_system.rhs.size) + 1
     return linear_system
 
@@ -89,11 +86,16 @@ def porepy_linear_system(model: pp.PorePyModel) -> pp.solvers.LinearSystem:
 def linear_solver(model: pp.PorePyModel):
     linear_solver = pp_solvers.IterativeLinearSolver(delete_matrices=False)
     linear_solver.initialize_with_model(model)
+    linear_solver.dof_manager = linear_solver.construct_dof_manager(
+        equation_indexer=model.equation_system.equation_indexer,
+        variable_indexer=model.equation_system.variable_indexer,
+    )
     return linear_solver
 
 
 @pytest.fixture
 def dof_manager(linear_solver: pp_solvers.IterativeLinearSolver):
+    assert linear_solver.dof_manager is not None
     return linear_solver.dof_manager
 
 
@@ -122,10 +124,15 @@ def test_construct_block_matrix(
 
     """
     assert porepy_linear_system.matrix is not None
-    mat = porepy_linear_system.matrix.copy()
-    rhs = porepy_linear_system.rhs.copy()
+    mat = porepy_linear_system.matrix
+    rhs = porepy_linear_system.rhs
     block_system = linear_solver.construct_block_linear_system(
-        pp.solvers.LinearSystem(matrix=mat.copy(), rhs=rhs.copy())
+        pp.solvers.LinearSystem(
+            matrix=porepy_linear_system.matrix.copy(),
+            rhs=porepy_linear_system.rhs.copy(),
+            equation_indexer=porepy_linear_system.equation_indexer,
+            variable_indexer=porepy_linear_system.variable_indexer,
+        )
     )
 
     transformed_solution = spsolve(block_system.mat.tocsc(), block_system.rhs)
@@ -234,7 +241,9 @@ def test_contact_transformation(
     should_do_something = model_kind != "flow" and with_fractures
 
     if should_do_something:
-        contact_idx = dof_manager.indices_of_groups([ContactMechanicsGroup()])
+        contact_idx = dof_manager.indices_of_groups(
+            [DefaultEquationVariableGroups.contact_mechanics_group]
+        )
         contact_submat = linear_system[contact_idx]
         permuted_contact_submat = permuted_linear_system[contact_idx]
         # Matrix should be singular.
@@ -244,7 +253,11 @@ def test_contact_transformation(
         _ = inv(permuted_contact_submat.mat.tocsc())
 
     # Check that the rest of the matrix did not change.
-    unchanged_groups = [g for g in dof_manager.groups() if g != ContactMechanicsGroup()]
+    unchanged_groups = [
+        g
+        for g in dof_manager.groups()
+        if g != DefaultEquationVariableGroups.contact_mechanics_group
+    ]
     unchanged_groups_idx = dof_manager.indices_of_groups(unchanged_groups)
     original_submat = linear_system[unchanged_groups_idx].mat
     submat_after_transformation = permuted_linear_system[unchanged_groups_idx].mat
@@ -262,8 +275,11 @@ def test_contact_transformation(
 @pytest.mark.parametrize(
     "groups_to_scale",
     [
-        [EnergyBalanceTemperatureGroup()],
-        [MassBalancePressureIntersectionsGroup(), MassBalancePressureFracturesGroup()],
+        [DefaultEquationVariableGroups.energy_balance_temperature_group],
+        [
+            DefaultEquationVariableGroups.mass_balance_pressure_intersections_group,
+            DefaultEquationVariableGroups.mass_balance_pressure_fractures_group,
+        ],
     ],
 )
 def test_scale_specific_volume(
@@ -327,7 +343,9 @@ def test_scale_specific_volume(
     "transformation",
     [
         ContactLinearTransformation(),
-        ScaleSpecificVolume(groups=[EnergyBalanceTemperatureGroup()]),
+        ScaleSpecificVolume(
+            groups=[DefaultEquationVariableGroups.energy_balance_temperature_group]
+        ),
     ],
 )
 def test_transformations_with_unsorted_dofs(

@@ -164,7 +164,7 @@ def main():
         configuration_factory=pp_solvers.thm_tpsa_factory
     )
     pp.ModelRunner(
-        model, nonlinear_solver=pp.NewtonSolver(linear_solver=linear_solver)
+        model, nonlinear_solver=pp.solvers.NewtonSolver(linear_solver=linear_solver)
     ).run()
 
 
