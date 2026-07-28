@@ -227,8 +227,9 @@ def _collect_group_dofs[
 
     # Each operator of the indexer must be encountered exactly once.
     encountered = Counter(op for group in operators_by_groups for op in group)
-    for operator, count in encountered.items():
-        if count < 1:
+    for operator in indexer.operators_to_dofs:
+        count = encountered[operator]
+        if count == 0:
             raise ValueError(
                 "Equation / Variable in the assembled linear system is not covered by "
                 f"the requested solver configuration: {operator}."

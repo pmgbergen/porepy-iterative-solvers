@@ -360,3 +360,23 @@ def test_duplicating_equations(model: pp.PorePyModel, model_kind: str):
             equation_indexer=equation_system.equation_indexer,
             variable_indexer=equation_system.variable_indexer,
         )
+
+
+def test_uncovered_operators_raise(
+    model: pp.PorePyModel, dof_manager: DofManager
+):
+    """A solver configuration must cover every assembled equation and variable."""
+    omitted_group_index = next(
+        i for i, dofs in enumerate(dof_manager.eq_dofs()) if dofs.size > 0
+    )
+    groups = dof_manager.groups().copy()
+    groups.pop(omitted_group_index)
+    equation_system = model.equation_system
+
+    with pytest.raises(ValueError, match="not covered"):
+        _ = DofManager(
+            model=model,
+            groups=groups,
+            equation_indexer=equation_system.equation_indexer,
+            variable_indexer=equation_system.variable_indexer,
+        )
