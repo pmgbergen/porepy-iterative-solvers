@@ -19,8 +19,8 @@ import pp_solvers
 from pp_solvers.block_linear_system import BlockLinearSystem, LinearSystemIndexer
 from pp_solvers.dof_manager import DofManager
 from pp_solvers.equation_variable_groups import (
-    EquationVariableGroup,
     DefaultEquationVariableGroups,
+    EquationVariableGroup,
 )
 from pp_solvers.mat_utils import inv_block_diag
 from pp_solvers.porepy_integration import IterativeLinearSolver

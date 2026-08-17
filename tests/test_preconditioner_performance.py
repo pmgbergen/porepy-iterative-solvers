@@ -21,8 +21,11 @@ import porepy as pp
 import pytest
 from porepy.examples.flow_benchmark_2d_case_4 import solid_constants
 from porepy.models.protocol import PorePyModel
+from porepy.time_stepper.time_step_status import (
+    TimeStepperStatusFailure,
+    TimeStepperStatusSuccess,
+)
 
-import pp_solvers
 from pp_solvers.porepy_integration import (
     IterativeLinearSolver,
     IterativeLinearSolverFailure,
@@ -85,15 +88,9 @@ expected_linear_iterations = {
 def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     """Collect Krylov iteration counts from all recorded nonlinear solves."""
     linear_iterations: list[int] = []
-    for x in model.nonlinear_solver_statistics.solver_status_history:
-        assert isinstance(
-            x,
-            (
-                pp.solvers.NonlinearSolverStatusConverged,
-                pp.solvers.NonlinearSolverStatusFailed,
-            ),
-        )
-        for y in x.linear_solver_statuses:
+    for x in model.nonlinear_solver_statistics.simulation_status_history:
+        assert isinstance(x, (TimeStepperStatusFailure, TimeStepperStatusSuccess))
+        for y in x.nonlinear_solver_status.linear_solver_statuses:
             assert isinstance(
                 y, (IterativeLinearSolverSuccess, IterativeLinearSolverFailure)
             )
