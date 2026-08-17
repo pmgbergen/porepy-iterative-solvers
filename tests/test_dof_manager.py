@@ -22,8 +22,8 @@ from pp_solvers.equation_variable_groups import (
     DefaultEquationVariableGroups,
     EquationVariableGroup,
 )
-from pp_solvers.preconditioners import LinearSolverConfiguration
 from pp_solvers.porepy_integration import default_preconditioner_factory
+from pp_solvers.preconditioners import LinearSolverConfiguration
 
 
 @pytest.fixture(scope="module", params=[False, True])
@@ -362,9 +362,7 @@ def test_duplicating_equations(model: pp.PorePyModel, model_kind: str):
         )
 
 
-def test_uncovered_operators_raise(
-    model: pp.PorePyModel, dof_manager: DofManager
-):
+def test_uncovered_operators_raise(model: pp.PorePyModel, dof_manager: DofManager):
     """A solver configuration must cover every assembled equation and variable."""
     omitted_group_index = next(
         i for i, dofs in enumerate(dof_manager.eq_dofs()) if dofs.size > 0

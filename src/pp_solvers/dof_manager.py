@@ -83,7 +83,7 @@ class DofManager:
         self._groups: list[EquationVariableGroup] = groups
         """Groups that define the DofManager."""
 
-        self.num_dofs: int = equation_indexer.num_dofs
+        self.num_dofs: int = equation_indexer.size
         """Total number of DoFs in the linear system."""
 
         # Collecting and validation equation and variable DoFs. This ensures no
@@ -190,7 +190,7 @@ def _collect_group_dofs[
             selected, _ = indexer.filter_by_tags(tags=[tag], model=model)
             # Get and concatenate the dofs of these atomic equations / variables.
             dofs_selected = concatenate_dof_indices(
-                [indexer.operators_to_dofs[operator] for operator in selected]
+                [indexer.indices[operator] for operator in selected]
             )
         else:
             # Contact mechanics special case. Need to treat normal and tangential
@@ -203,7 +203,7 @@ def _collect_group_dofs[
             )
             # Get dofs for the normal equation.
             normal_dofs = concatenate_dof_indices(
-                [indexer.operators_to_dofs[op] for op in normal_operators]
+                [indexer.indices[op] for op in normal_operators]
             )
             # Get atomic equations for the tangential equation.
             tangential_operators, _ = indexer.filter_by_tags(
@@ -212,7 +212,7 @@ def _collect_group_dofs[
             )
             # Get dofs for the tangential equation.
             tangential_dofs = concatenate_dof_indices(
-                [indexer.operators_to_dofs[op] for op in tangential_operators]
+                [indexer.indices[op] for op in tangential_operators]
             )
             # Apply the permutation.
             dofs_selected = _permute_contact_dofs(
@@ -227,7 +227,7 @@ def _collect_group_dofs[
 
     # Each operator of the indexer must be encountered exactly once.
     encountered = Counter(op for group in operators_by_groups for op in group)
-    for operator in indexer.operators_to_dofs:
+    for operator in indexer.indices:
         count = encountered[operator]
         if count == 0:
             raise ValueError(
