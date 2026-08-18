@@ -1318,6 +1318,9 @@ def compositional_solver_factory(model: pp.PorePyModel):
         ),
 
         # new variables and equations here
+        CustomEquationVariableGroup(
+            eq_name="actual_reaction_rate_LiX_dissolution", var_name="r_LiX_dissolution"
+        ),
     ]
     # for component in model.fluid.components:
     #     if model.has_independent_fraction(component):
