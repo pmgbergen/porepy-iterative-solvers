@@ -1,0 +1,98 @@
+# Runs pp_solvers' test suite (inside the pre-built porepy/extended Docker
+# image) against a specific porepy ref/SHA, dispatched by porepy's
+# trigger-downstream-tests.yml (post-merge) or, in a later phase, by a porepy
+# pull request. Separate from test-in-docker.yml so pp_solvers' own
+# PR/push/nightly CI (which always tests against porepy's current default
+# branch) is untouched.
+#
+# On failure, if a porepy PR number was supplied, upserts a marked comment on
+# that PR; otherwise the failure is only visible in this run's job summary.
+name: PorePy integration test
+
+on:
+  workflow_dispatch:
+    inputs:
+      porepy_ref:
+        description: 'porepy branch to check out if porepy_sha is not set'
+        required: true
+        default: 'develop'
+      porepy_sha:
+        description: 'porepy commit SHA to check out (takes precedence over porepy_ref)'
+        required: false
+        default: ''
+      porepy_pr_number:
+        description: 'porepy PR number to comment on if the run fails (empty = no comment)'
+        required: false
+        default: ''
+      trigger_event:
+        description: 'What triggered this dispatch (push, pull_request, ...)'
+        required: false
+        default: 'push'
+
+concurrency:
+  group: downstream-dispatch-${{ inputs.porepy_pr_number || inputs.porepy_sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_IMAGE: porepy/extended:latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull Docker image
+        run: docker pull $DOCKER_IMAGE
+
+      - name: Run tests inside container against requested porepy ref
+        env:
+          CHECKOUT_REF: ${{ inputs.porepy_sha != '' && inputs.porepy_sha || inputs.porepy_ref }}
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workspace" \
+            -e CHECKOUT_REF="$CHECKOUT_REF" \
+            $DOCKER_IMAGE \
+            bash -c "
+              set -e
+              cd ~/porepy &&
+              git fetch origin &&
+              git checkout \"\$CHECKOUT_REF\" &&
+              cd ~/pp_solvers &&
+              git fetch origin develop &&
+              git checkout develop &&
+              git pull origin develop &&
+              pip install -e .
+              pytest -v
+            "
+
+      - name: Comment on porepy PR if failed
+        if: failure() && inputs.porepy_pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_PAT }}
+        run: |
+          MARKER="<!-- downstream-ci-comment: pp_solvers -->"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY="$MARKER
+          ### ❌ pp_solvers integration test failed
+
+          Testing against porepy \`${{ inputs.porepy_sha || inputs.porepy_ref }}\` (triggered by \`${{ inputs.trigger_event }}\`) failed in [pp_solvers]($RUN_URL).
+
+          [View run]($RUN_URL)"
+
+          EXISTING=$(gh api "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)
+
+          if [ -n "$EXISTING" ]; then
+            gh api --method PATCH "repos/pmgbergen/porepy/issues/comments/$EXISTING" -f body="$BODY"
+          else
+            gh api --method POST "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" -f body="$BODY"
+          fi
+
+      - name: Log failure to job summary if no PR to comment on
+        if: failure() && inputs.porepy_pr_number == ''
+        run: |
+          echo "### pp_solvers integration test failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "No originating porepy PR was resolved for \`${{ inputs.porepy_sha || inputs.porepy_ref }}\`; nowhere to comment." >> "$GITHUB_STEP_SUMMARY"
