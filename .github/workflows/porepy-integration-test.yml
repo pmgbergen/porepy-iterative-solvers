@@ -1,12 +1,63 @@
 # Runs pp_solvers' test suite (inside the pre-built porepy/extended Docker
-# image) against a specific porepy ref/SHA, dispatched by porepy's
-# trigger-downstream-tests.yml (post-merge) or, in a later phase, by a porepy
-# pull request. Separate from test-in-docker.yml so pp_solvers' own
-# PR/push/nightly CI (which always tests against porepy's current default
-# branch) is untouched.
+# image) against a specific porepy ref/SHA. This workflow only has a
+# `workflow_dispatch` trigger, meaning nothing in pp_solvers itself starts
+# it -- it is started by an API call from porepy's
+# `.github/workflows/trigger-downstream-tests.yml`, on a push to porepy's
+# `develop` branch or on a porepy pull request. See that file's header
+# comment (in the porepy repo) for the cross-repo picture, and
+# `.claude/downstream_testing.md` for the full design this follows. This
+# file is separate from test-in-docker.yml so pp_solvers' own PR/push/nightly
+# CI (which tests whatever porepy the `porepy/extended` Docker image already
+# has baked in / whatever `git pull` picks up, unrelated to this dispatch
+# mechanism) is untouched.
 #
-# On failure, if a porepy PR number was supplied, upserts a marked comment on
-# that PR; otherwise the failure is only visible in this run's job summary.
+# On failure, if a porepy PR number was supplied, upserts (edits-or-creates)
+# a marked comment on that PR; otherwise the failure is only visible in this
+# run's job summary.
+#
+# --- How this fits together (read this if you only know GitHub Actions
+#     superficially, or if Docker-in-CI is the unfamiliar part) ---
+#
+#   1. `on: workflow_dispatch: inputs:` is this workflow's parameter list,
+#      filled in by whatever calls `gh workflow run` (see porepy's
+#      trigger-downstream-tests.yml). Docs:
+#      https://docs.github.com/en/actions/using-workflows/manually-running-a-workflow
+#   2. Unlike mpxa, this repo's heavy dependencies (PETSc, an existing porepy
+#      checkout, etc.) are pre-baked into the `porepy/extended` Docker image
+#      (built elsewhere, out of scope for this workflow) -- so the runner
+#      just `docker pull`s that image and execs a bash script *inside* the
+#      container, rather than installing everything on the bare runner VM.
+#   3. That container has no direct access to this job's inputs, so the
+#      requested porepy ref/SHA is passed in as a Docker environment variable
+#      (`-e CHECKOUT_REF=...`), and the container script does a `git fetch` +
+#      `git checkout` on the porepy clone that already lives inside the
+#      image, before running pp_solvers' own tests.
+#   4. If any of that fails, the same marked-comment-on-porepy-PR /
+#      job-summary fallback logic as mpxa's equivalent workflow runs
+#      afterward, on the runner (outside the container) -- Docker exit
+#      status alone determines pass/fail here.
+#
+# Debugging / extending:
+#   - To manually re-run this without a real porepy push/PR: GitHub Actions
+#     tab -> this workflow -> "Run workflow", filling in inputs by hand.
+#   - If `docker pull` or the container script fails for reasons unrelated to
+#     the actual pp_solvers tests (image not found, checkout of a SHA that
+#     doesn't exist on the image's porepy remote, etc.), that shows up as a
+#     failure of the "Run tests inside container..." step specifically --
+#     check its full log (it's one long `docker run`, so scroll for the
+#     first `set -e`-triggered exit) before assuming it's a real test
+#     failure.
+#   - If the run never starts at all: check porepy's
+#     trigger-downstream-tests.yml log for its `gh workflow run` call --
+#     a bad PAT scope or wrong ref/workflow_file in porepy's
+#     downstream-repos.json means this workflow is never invoked.
+#   - If no comment appears on the porepy PR despite a real failure: see the
+#     "Comment on porepy PR if failed" step's own log, and confirm
+#     `DOWNSTREAM_DISPATCH_PAT` still has "Pull requests: Read and write" on
+#     porepy. The upsert mechanics (hidden marker comment, GitHub treating
+#     PRs as "issues" for the comments API, PATCH-to-edit vs POST-to-create)
+#     are the same as in mpxa's equivalent step; see that file's header
+#     comment if the marker/PATCH-or-POST pattern itself is unclear.
 name: PorePy integration test
 
 on:
@@ -29,6 +80,9 @@ on:
         required: false
         default: 'push'
 
+# Matches the group key used in porepy's trigger-downstream-tests.yml and in
+# mpxa's porepy-integration-test.yml, so concurrency behavior for a given
+# porepy PR/SHA is consistent across all three repos.
 concurrency:
   group: downstream-dispatch-${{ inputs.porepy_pr_number || inputs.porepy_sha }}
   cancel-in-progress: true
