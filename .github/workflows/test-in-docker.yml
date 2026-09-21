@@ -34,10 +34,13 @@ jobs:
             bash -c "
               cd ~/porepy &&
               git pull &&
+              pip install pyproject.toml --upgrade
               cd ~/pp_solvers &&
               git fetch origin $TEST_BRANCH &&
               git checkout $TEST_BRANCH &&
               git pull origin $TEST_BRANCH &&
+              pip install pyproject.toml --upgrade
               pip install -e .  # If a new dependency is listed, and the image is not updated yet.
+              pip freeze
               pytest -v
             "
