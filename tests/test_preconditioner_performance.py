@@ -90,11 +90,12 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     linear_iterations: list[int] = []
     for x in model.nonlinear_solver_statistics.simulation_status_history:
         assert isinstance(x, (TimeStepperStatusFailure, TimeStepperStatusSuccess))
-        for y in x.nonlinear_solver_status.linear_solver_statuses:
-            assert isinstance(
-                y, (IterativeLinearSolverSuccess, IterativeLinearSolverFailure)
-            )
-            linear_iterations.append(y.num_krylov_iters)
+        for attempt in x.attempts:
+            for y in attempt.nonlinear_solve_status.linear_solver_statuses:
+                assert isinstance(
+                    y, (IterativeLinearSolverSuccess, IterativeLinearSolverFailure)
+                )
+                linear_iterations.append(y.num_krylov_iters)
     return linear_iterations
 
 
