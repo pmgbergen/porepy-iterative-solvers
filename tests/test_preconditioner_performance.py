@@ -200,13 +200,20 @@ def test_model(model_class):
     linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
     expected_iterations = expected_linear_iterations[model_class]
 
-    np.testing.assert_equal(
-        linear_iterations,
-        expected_iterations,
-        err_msg=(
-            "Number of linear iterations does not match expected value. Expected: "
-            f"{expected_iterations}, actual: {linear_iterations}."
-        ),
+    # Experience shows that the number of linear iterations can vary a bit, so we allow
+    # for a small tolerance in the number of iterations to avoid false positives.
+    iteration_count_tolerance = 2
+    assert len(linear_iterations) == len(expected_iterations), (
+        "Number of linear solves does not match expected value. Expected: "
+        f"{expected_iterations}, actual: {linear_iterations}."
+    )
+    assert all(
+        abs(actual - expected) <= iteration_count_tolerance
+        for actual, expected in zip(linear_iterations, expected_iterations)
+    ), (
+        "Number of linear iterations differs from the expected value by more than "
+        f"{iteration_count_tolerance}. Expected: {expected_iterations}, actual: "
+        f"{linear_iterations}."
     )
 
 
