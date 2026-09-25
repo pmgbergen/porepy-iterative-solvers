@@ -1289,6 +1289,10 @@ def compositional_solver_factory(model: pp.PorePyModel):
         CustomEquationVariableGroup(
             eq_name="partial_fraction_equation_X-_aqueous", var_name="x_X-_aqueous"
         ),
+        CustomEquationVariableGroup(
+            eq_name="partial_fraction_equation_Y-_aqueous", var_name="x_Y-_aqueous"
+        ),
+
     ]
 
     mass_balance_groups: list[EquationVariableGroup] = [
@@ -1316,10 +1320,18 @@ def compositional_solver_factory(model: pp.PorePyModel):
         CustomEquationVariableGroup(
             eq_name="component_mass_balance_equation_X-", var_name="z_X-"
         ),
-
         # new variables and equations here
         CustomEquationVariableGroup(
             eq_name="actual_reaction_rate_LiX_dissolution", var_name="r_LiX_dissolution"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_LiY", var_name="ms_LiY"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="component_mass_balance_equation_Y-", var_name="z_Y-"
+        ),
+        CustomEquationVariableGroup(
+            eq_name="actual_reaction_rate_LiY_dissolution", var_name="r_LiY_dissolution"
         ),
     ]
     # for component in model.fluid.components:
@@ -1352,3 +1364,5 @@ def compositional_solver_factory(model: pp.PorePyModel):
             ),
         )
     )
+
+
