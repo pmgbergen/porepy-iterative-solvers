@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from time import time
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import porepy as pp
 from porepy.numerics.solvers import (
     LinearSolverStatus,
     LinearSolverStatusFailure,
+    LinearSolverStatusNotConverged,
     LinearSolverStatusSuccess,
 )
 
@@ -44,12 +45,28 @@ __all__ = [
     "IterativeLinearSolver",
     "PETScKspConvergedReason",
     "IterativeLinearSolverSuccess",
+    "IterativeLinearSolverNotConverged",
     "IterativeLinearSolverFailure",
 ]
 
 type PETScKspConvergedReason = int
 """A type alias for PETSc return codes. See
 https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
+
+"""
+
+UNUSABLE_SOLUTION_KSP_REASONS: dict[PETScKspConvergedReason, str] = {
+    -4: "KSP_DIVERGED_DTOL",
+    -9: "KSP_DIVERGED_NANORINF",
+    -11: "KSP_DIVERGED_PC_FAILED",
+}
+"""Negative PETSc KSP reasons after which the returned solution is not to be used.
+
+The residual has grown beyond the divergence tolerance, the iteration produced NaN or
+infinite values, or the preconditioner could not be set up. All other negative reasons,
+e.g. reaching the iteration cap (``KSP_DIVERGED_ITS``) or a breakdown of the Krylov
+process, leave a finite solution that has usually reduced the residual, only by less
+than requested; see :func:`classify_ksp_outcome`.
 
 """
 
@@ -60,6 +77,32 @@ class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
 
     construct_time: float
     """Time it took to construct a linear solver."""
+    petsc_converged_reason: PETScKspConvergedReason
+    """A status returned by PETSc KSP. See
+    https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
+
+    """
+    num_krylov_iters: int
+    """Number of Krylov subspace-based iterative method iterations."""
+
+
+@dataclass
+class IterativeLinearSolverNotConverged(LinearSolverStatusNotConverged):
+    """Status of a PETSc iterative solve that stopped before reaching its tolerance,
+    but returned a finite, possibly useful solution.
+
+    Typical causes are reaching the iteration cap (``KSP_DIVERGED_ITS``) and a breakdown
+    of the Krylov process. The caller decides whether to use the solution; PorePy's
+    Newton solver applies it as an inexact Newton step. See
+    :class:`~porepy.numerics.solvers.LinearSolverStatusNotConverged` for the rationale,
+    and :func:`classify_ksp_outcome` for which PETSc reasons end up here.
+
+    """
+
+    construct_time: float
+    """Wall-clock time spent constructing the linear solver, in seconds."""
+    solve_time: float
+    """Wall-clock time spent solving the linear system, in seconds."""
     petsc_converged_reason: PETScKspConvergedReason
     """A status returned by PETSc KSP. See
     https://petsc.org/release/manualpages/KSP/KSPConvergedReason/
@@ -353,7 +396,12 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
 
     def _solve_linear_system(
         self, linear_system: BlockLinearSystem, solver_options: dict
-    ) -> tuple[np.ndarray, IterativeLinearSolverSuccess | IterativeLinearSolverFailure]:
+    ) -> tuple[
+        np.ndarray,
+        IterativeLinearSolverSuccess
+        | IterativeLinearSolverNotConverged
+        | IterativeLinearSolverFailure,
+    ]:
         """Assembles the PETSc linear solver and solves the linear system.
 
         Parameters:
@@ -407,34 +455,83 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
             info,
         )
 
-        if info <= 0:
-            logger.warning(
-                "Linear solver did not converge. Reason: %d. "
-                "Check the solver options and the problem setup. "
-                "See detailed description of PETSc error codes: "
-                "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
-                info,
-            )
-            status = IterativeLinearSolverFailure(
-                reason="Linear solver did not converge.",
-                solve_time=solve_time,
-                construct_time=construct_time,
-                petsc_converged_reason=info,
-                num_krylov_iters=num_it,
-            )
-        else:
+        # Transform the solution back to PorePy ordering.
+        for transformation in reversed(self.transformations):
+            x = transformation.transform_solution(x)
+        x = np.atleast_1d(x)
+
+        status: (
+            IterativeLinearSolverSuccess
+            | IterativeLinearSolverNotConverged
+            | IterativeLinearSolverFailure
+        )
+        outcome = classify_ksp_outcome(info, x)
+        if outcome == "success":
             status = IterativeLinearSolverSuccess(
                 solve_time=solve_time,
                 construct_time=construct_time,
                 petsc_converged_reason=info,
                 num_krylov_iters=num_it,
             )
+            return x, status
 
-        # Transform the solution back to PorePy ordering.
-        for transformation in reversed(self.transformations):
-            x = transformation.transform_solution(x)
+        logger.warning(
+            "Linear solver did not converge. Reason: %d, solution finite: %s. "
+            "Check the solver options and the problem setup. "
+            "See detailed description of PETSc error codes: "
+            "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
+            info,
+            bool(np.all(np.isfinite(x))),
+        )
+        if outcome == "not_converged":
+            status = IterativeLinearSolverNotConverged(
+                reason="Linear solver stopped before reaching its tolerance.",
+                solve_time=solve_time,
+                construct_time=construct_time,
+                petsc_converged_reason=info,
+                num_krylov_iters=num_it,
+            )
+        else:
+            status = IterativeLinearSolverFailure(
+                reason="Linear solver failed; the solution is not usable.",
+                solve_time=solve_time,
+                construct_time=construct_time,
+                petsc_converged_reason=info,
+                num_krylov_iters=num_it,
+            )
+        return x, status
 
-        return np.atleast_1d(x), status
+
+def classify_ksp_outcome(
+    reason: PETScKspConvergedReason, solution: np.ndarray
+) -> Literal["success", "not_converged", "failure"]:
+    """Classify the outcome of a PETSc KSP solve for PorePy's linear solver statuses.
+
+    - ``"success"``: PETSc reports convergence (positive reason) and the solution is
+      finite.
+    - ``"failure"``: the solution must not be used. This is the case if it has
+      non-finite entries, whatever PETSc reports; if the reason is one of
+      :data:`UNUSABLE_SOLUTION_KSP_REASONS`; or if the reason is zero, which means that
+      the solve had not terminated.
+    - ``"not_converged"``: any other negative reason, e.g. the iteration cap or a
+      breakdown of the Krylov process. The solution is finite and may serve as an
+      inexact solution.
+
+    Parameters:
+        reason: The converged reason reported by PETSc KSP.
+        solution: The solution vector returned by the solve.
+
+    Returns:
+        The outcome category.
+
+    """
+    if not np.all(np.isfinite(solution)):
+        return "failure"
+    if reason > 0:
+        return "success"
+    if reason == 0 or reason in UNUSABLE_SOLUTION_KSP_REASONS:
+        return "failure"
+    return "not_converged"
 
 
 def default_preconditioner_factory(

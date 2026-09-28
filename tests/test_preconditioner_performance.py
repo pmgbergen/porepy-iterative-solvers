@@ -29,6 +29,7 @@ from porepy.time_stepper.time_step_status import (
 from pp_solvers.porepy_integration import (
     IterativeLinearSolver,
     IterativeLinearSolverFailure,
+    IterativeLinearSolverNotConverged,
     IterativeLinearSolverSuccess,
 )
 
@@ -93,7 +94,12 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
         for attempt in x.attempts:
             for y in attempt.nonlinear_solve_status.linear_solver_statuses:
                 assert isinstance(
-                    y, (IterativeLinearSolverSuccess, IterativeLinearSolverFailure)
+                    y,
+                    (
+                        IterativeLinearSolverSuccess,
+                        IterativeLinearSolverNotConverged,
+                        IterativeLinearSolverFailure,
+                    ),
                 )
                 linear_iterations.append(y.num_krylov_iters)
     return linear_iterations
@@ -218,8 +224,8 @@ def test_model(model_class):
 
 
 def test_linear_solver_failure():
-    """Tests a case when a linear solver fails (due to iterations limit), but nonlinear
-    iterations continue until they reach a limit."""
+    """Tests a case when a linear solver does not converge (due to iterations limit),
+    but nonlinear iterations continue until they reach a limit."""
     iterative_model = FluidModel(model_options())
     # Need prepare_simulation to tell if the model is nonlinear.
     iterative_model.prepare_simulation()
