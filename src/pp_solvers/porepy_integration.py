@@ -70,6 +70,16 @@ than requested; see :func:`classify_ksp_outcome`.
 
 """
 
+DEFAULT_NOT_CONVERGED_RTOL = 1e-3
+"""Default of :attr:`IterativeLinearSolver.not_converged_rtol`.
+
+The value is somewhat arbitrary. It was chosen to separate solves that reached the
+iteration cap after reducing the residual by many orders of magnitude, which Newton can
+use, from solves that reached it without reducing the residual at all, which make
+Newton fail. It has not been tuned.
+
+"""
+
 
 @dataclass
 class IterativeLinearSolverSuccess(LinearSolverStatusSuccess):
@@ -148,6 +158,10 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         configuration_factory: A factory that defines the PETSc solver, variable groups,
             and linear-system transformations. If None (default), using a default
             factory for a given model.
+        not_converged_rtol: Largest relative residual at which a solve that stopped
+            short of its tolerance is still reported as not converged, rather than as
+            failed. Defaults to :data:`DEFAULT_NOT_CONVERGED_RTOL`, i.e. a reduction of
+            the residual by three orders of magnitude; the value is somewhat arbitrary.
 
     """
 
@@ -157,6 +171,7 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         solver_selector: Optional[SolverSelector] = None,
         delete_matrices: bool = True,
         configuration_factory: Optional[Callable[[], LinearSolverConfiguration]] = None,
+        not_converged_rtol: float = DEFAULT_NOT_CONVERGED_RTOL,
     ):
         if solver_options is None:
             solver_options = {}
@@ -180,6 +195,13 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         ] = configuration_factory
         """A factory to build a PETSc preconditioned linear solver. If None, a default
         factory will be set for a given model in :meth:`initialize_linear_solver`.
+
+        """
+        self.not_converged_rtol: float = not_converged_rtol
+        """Largest relative residual, final over initial Krylov residual norm, at which
+        a solve that stopped short of its tolerance is reported as not converged, so
+        that Newton uses it as an inexact step. Above it the solve is reported as
+        failed: a solve that has barely reduced the residual gives no usable update.
 
         """
         self.petsc_ksp_pc_configuration: Optional[PetscKspPcConfiguration] = None
@@ -445,7 +467,8 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         t0 = time()
         x = solver.solve(linear_system.rhs)
         solve_time = time() - t0
-        num_it = len(solver.get_residuals())
+        residuals = solver.get_residuals()
+        num_it = len(residuals)
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
         logger.info(
             "Linear system solved in %.2f seconds with %d iterations, "
@@ -465,7 +488,12 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
             | IterativeLinearSolverNotConverged
             | IterativeLinearSolverFailure
         )
-        outcome = classify_ksp_outcome(info, x)
+        outcome = classify_ksp_outcome(
+            info,
+            x,
+            relative_residual=relative_residual(residuals),
+            not_converged_rtol=self.not_converged_rtol,
+        )
         if outcome == "success":
             status = IterativeLinearSolverSuccess(
                 solve_time=solve_time,
@@ -476,12 +504,14 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
             return x, status
 
         logger.warning(
-            "Linear solver did not converge. Reason: %d, solution finite: %s. "
+            "Linear solver did not converge. Reason: %d, solution finite: %s, "
+            "relative residual: %.1e. "
             "Check the solver options and the problem setup. "
             "See detailed description of PETSc error codes: "
             "https://petsc.org/release/manualpages/KSP/KSPConvergedReason/",
             info,
             bool(np.all(np.isfinite(x))),
+            relative_residual(residuals),
         )
         if outcome == "not_converged":
             status = IterativeLinearSolverNotConverged(
@@ -503,7 +533,10 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
 
 
 def classify_ksp_outcome(
-    reason: PETScKspConvergedReason, solution: np.ndarray
+    reason: PETScKspConvergedReason,
+    solution: np.ndarray,
+    relative_residual: float,
+    not_converged_rtol: float = DEFAULT_NOT_CONVERGED_RTOL,
 ) -> Literal["success", "not_converged", "failure"]:
     """Classify the outcome of a PETSc KSP solve for PorePy's linear solver statuses.
 
@@ -511,15 +544,22 @@ def classify_ksp_outcome(
       finite.
     - ``"failure"``: the solution must not be used. This is the case if it has
       non-finite entries, whatever PETSc reports; if the reason is one of
-      :data:`UNUSABLE_SOLUTION_KSP_REASONS`; or if the reason is zero, which means that
-      the solve had not terminated.
+      :data:`UNUSABLE_SOLUTION_KSP_REASONS`; if the reason is zero, which means that
+      the solve had not terminated; or if the solve stopped short with a relative
+      residual above ``not_converged_rtol``, having made too little progress for its
+      solution to be a useful Newton step.
     - ``"not_converged"``: any other negative reason, e.g. the iteration cap or a
-      breakdown of the Krylov process. The solution is finite and may serve as an
-      inexact solution.
+      breakdown of the Krylov process, after the residual was reduced to at most
+      ``not_converged_rtol``. The solution is finite and may serve as an inexact
+      solution.
 
     Parameters:
         reason: The converged reason reported by PETSc KSP.
         solution: The solution vector returned by the solve.
+        relative_residual: Final over initial residual norm of the Krylov iteration;
+            see :func:`relative_residual`.
+        not_converged_rtol: Largest relative residual at which a solve that stopped
+            short is classified as not converged rather than failed.
 
     Returns:
         The outcome category.
@@ -531,7 +571,32 @@ def classify_ksp_outcome(
         return "success"
     if reason == 0 or reason in UNUSABLE_SOLUTION_KSP_REASONS:
         return "failure"
+    if relative_residual > not_converged_rtol:
+        return "failure"
     return "not_converged"
+
+
+def relative_residual(residual_history: np.ndarray) -> float:
+    """Final over initial residual norm of a Krylov iteration.
+
+    The norms are those PETSc's convergence test uses, so the value is comparable to
+    the relative tolerance ``ksp_rtol``. A zero initial residual means the zero initial
+    guess solved the system exactly.
+
+    Parameters:
+        residual_history: Residual norms per iteration, starting with the initial one,
+            as returned by ``KSP.getConvergenceHistory()``.
+
+    Returns:
+        The relative residual; infinite for an empty history, which carries no
+        evidence of progress.
+
+    """
+    if len(residual_history) == 0:
+        return np.inf
+    if residual_history[0] == 0:
+        return 0.0
+    return float(residual_history[-1] / residual_history[0])
 
 
 def default_preconditioner_factory(
