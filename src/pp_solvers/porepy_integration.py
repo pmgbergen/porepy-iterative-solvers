@@ -399,7 +399,8 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
         solve_time = time() - t0
         num_it = len(solver.get_residuals())
         info: PETScKspConvergedReason = solver.ksp.getConvergedReason()
-        logger.info(
+        logger.log(
+            logging.INFO if info > 0 else logging.WARNING,
             "Linear system solved in %.2f seconds with %d iterations, "
             "converged reason: %d.",
             solve_time,
@@ -429,6 +430,11 @@ class IterativeLinearSolver(pp.solvers.LinearSolverBase):
                 petsc_converged_reason=info,
                 num_krylov_iters=num_it,
             )
+
+        if info == -9:
+            # Nan or inf, the solution is all zeros. Set it to nans to fail the time
+            # step attempt.
+            x[:] = np.nan
 
         # Transform the solution back to PorePy ordering.
         for transformation in reversed(self.transformations):
