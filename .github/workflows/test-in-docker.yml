@@ -1,29 +1,8 @@
-# pp_solvers' own everyday CI: builds/tests inside the pre-built
-# `porepy/extended` Docker image on every push/PR to this repo, plus a
-# nightly run. `TEST_BRANCH` controls which *pp_solvers* branch is checked
-# out inside the container (the porepy checkout in that image is just
-# whatever `git pull` on its default branch picks up -- not pinned to any
-# specific porepy commit). This is intentionally unrelated to the
-# porepy-triggered dispatch mechanism in porepy-integration-test.yml (which
-# tests a *specific* porepy PR/SHA and is only ever started by porepy) -- the
-# two workflows share no state.
-#
-# The one addition on top of the pre-existing CI: record which porepy commit
-# was tested, and on a failed nightly (`schedule`) run, write it to the job
-# summary so the failure can be traced to a porepy commit. It deliberately
-# does not comment on any porepy PR: porepy changes are already reported on
-# the responsible PR by porepy-integration-test.yml, right when they are
-# opened or merged. A nightly failure is more likely caused by a change in
-# pp_solvers itself or in the Docker image, and blaming whichever porepy PR
-# happens to be at the tip of develop would be wrong.
-#
-# `-v "${{ github.workspace }}:/workspace"` bind-mounts this job's checkout
-# directory into the container as /workspace -- the only way for a value
-# computed *inside* the container (the porepy SHA) to become visible to a
-# step running *outside* it afterward. The container writes it to
-# /workspace/porepy_sha.txt; the runner-side step reads it back as the plain
-# file `porepy_sha.txt` (relative to github.workspace, the default working
-# directory).
+# Run pp_solvers' tests in the porepy/extended Docker image, against PorePy's
+# current develop. On a failed nightly run, the tested PorePy commit is written
+# to the job summary; the container passes it out through the mounted
+# workspace. Testing of specific PorePy commits is done in
+# porepy-integration-test.yml.
 name: Test in Docker
 
 on:
@@ -62,11 +41,8 @@ jobs:
               git pull &&
               pip install pyproject.toml --upgrade
               (git rev-parse HEAD > /workspace/porepy_sha.txt || true) &&
-              # ^ record the exact commit under test into the mounted
-              #   workspace, so the runner-side comment-back step (which has
-              #   no visibility into the container) can read it afterward.
-              #   Never fatal: a failed write must not break the chain and
-              #   leave pytest running in the porepy directory.
+              # ^ read by the nightly failure step. Never fatal, so a failed
+              #   write cannot skip the cd into pp_solvers below.
               cd ~/pp_solvers &&
               git fetch origin $TEST_BRANCH &&
               git checkout $TEST_BRANCH &&
