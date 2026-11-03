@@ -100,10 +100,12 @@ jobs:
               cd ~/porepy &&
               git pull &&
               pip install -e . &&
-              git rev-parse HEAD > /workspace/porepy_sha.txt &&
+              (git rev-parse HEAD > /workspace/porepy_sha.txt || true) &&
               # ^ record the exact commit under test into the mounted
               #   workspace, so the runner-side comment-back step (which has
               #   no visibility into the container) can read it afterward.
+              #   Never fatal: a failed write must not break the chain and
+              #   leave pytest running in the porepy directory.
               cd ~/pp_solvers &&
               git fetch origin $TEST_BRANCH &&
               git checkout $TEST_BRANCH &&
@@ -143,7 +145,7 @@ jobs:
 
           [View run]($RUN_URL)"
 
-          EXISTING=$(gh api "repos/pmgbergen/porepy/issues/$PR_NUMBER/comments" \
+          EXISTING=$(gh api --paginate "repos/pmgbergen/porepy/issues/$PR_NUMBER/comments" \
             --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)
 
           if [ -n "$EXISTING" ]; then
