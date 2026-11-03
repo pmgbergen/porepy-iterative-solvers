@@ -114,6 +114,7 @@ jobs:
               cd ~/porepy &&
               git fetch origin &&
               git checkout \"\$CHECKOUT_REF\" &&
+              pip install -e . &&
               cd ~/pp_solvers &&
               git fetch origin develop &&
               git checkout develop &&
@@ -136,7 +137,7 @@ jobs:
 
           [View run]($RUN_URL)"
 
-          EXISTING=$(gh api "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" \
+          EXISTING=$(gh api --paginate "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" \
             --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)
 
           if [ -n "$EXISTING" ]; then
