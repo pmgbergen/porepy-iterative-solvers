@@ -13,7 +13,9 @@
 #
 # On failure, if a porepy PR number was supplied, upserts (edits-or-creates)
 # a marked comment on that PR; otherwise the failure is only visible in this
-# run's job summary.
+# run's job summary. On success, an existing marked comment is edited to say
+# the tests now pass, but no new comment is created -- a PR that never broke
+# pp_solvers gets no comment at all.
 #
 # --- How this fits together (read this if you only know GitHub Actions
 #     superficially, or if Docker-in-CI is the unfamiliar part) ---
@@ -32,10 +34,10 @@
 #      (`-e CHECKOUT_REF=...`), and the container script does a `git fetch` +
 #      `git checkout` on the porepy clone that already lives inside the
 #      image, before running pp_solvers' own tests.
-#   4. If any of that fails, the same marked-comment-on-porepy-PR /
-#      job-summary fallback logic as mpxa's equivalent workflow runs
-#      afterward, on the runner (outside the container) -- Docker exit
-#      status alone determines pass/fail here.
+#   4. Afterward, on the runner (outside the container), the same
+#      comment-on-porepy-PR / job-summary fallback logic as mpxa's
+#      equivalent workflow reports the outcome -- Docker exit status alone
+#      determines pass/fail here.
 #
 # Debugging / extending:
 #   - To manually re-run this without a real porepy push/PR: GitHub Actions
@@ -52,7 +54,7 @@
 #     a bad PAT scope or wrong ref/workflow_file in porepy's
 #     downstream-repos.json means this workflow is never invoked.
 #   - If no comment appears on the porepy PR despite a real failure: see the
-#     "Comment on porepy PR if failed" step's own log, and confirm
+#     "Update comment on porepy PR" step's own log, and confirm
 #     `DOWNSTREAM_DISPATCH_PAT` still has "Pull requests: Read and write" on
 #     porepy. The upsert mechanics (hidden marker comment, GitHub treating
 #     PRs as "issues" for the comments API, PATCH-to-edit vs POST-to-create)
@@ -80,11 +82,13 @@ on:
         required: false
         default: 'push'
 
-# Matches the group key used in porepy's trigger-downstream-tests.yml and in
-# mpxa's porepy-integration-test.yml, so concurrency behavior for a given
-# porepy PR/SHA is consistent across all three repos.
+# Concurrency groups are scoped to this repo, so this is independent of the
+# group used in porepy's trigger-downstream-tests.yml. Keying by the tested
+# SHA means a re-dispatch of the same porepy commit cancels the older run,
+# while runs for different commits (e.g. a PR's last pre-merge run and the
+# post-merge run for its merge commit) never cancel each other.
 concurrency:
-  group: downstream-dispatch-${{ inputs.porepy_pr_number || inputs.porepy_sha }}
+  group: downstream-dispatch-${{ inputs.porepy_sha || inputs.porepy_ref }}
   cancel-in-progress: true
 
 jobs:
@@ -123,27 +127,44 @@ jobs:
               pytest -v
             "
 
-      - name: Comment on porepy PR if failed
-        if: failure() && inputs.porepy_pr_number != ''
+      # Runs on success and failure, but not on cancellation (a superseded run
+      # has nothing to report). `job.status` is the outcome of the steps so
+      # far. On failure, create or edit the marked comment; on success, only
+      # edit an existing one, so the PR stops showing a stale failure.
+      - name: Update comment on porepy PR
+        if: (success() || failure()) && inputs.porepy_pr_number != ''
         env:
           GH_TOKEN: ${{ secrets.DOWNSTREAM_DISPATCH_PAT }}
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ inputs.porepy_pr_number }}
+          TESTED_REF: ${{ inputs.porepy_sha || inputs.porepy_ref }}
+          TRIGGER_EVENT: ${{ inputs.trigger_event }}
         run: |
           MARKER="<!-- downstream-ci-comment: pp_solvers -->"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "$JOB_STATUS" = "success" ]; then
+            HEADLINE="### ✅ pp_solvers integration test passed"
+            RESULT="passed"
+          else
+            HEADLINE="### ❌ pp_solvers integration test failed"
+            RESULT="failed"
+          fi
           BODY="$MARKER
-          ### ❌ pp_solvers integration test failed
+          $HEADLINE
 
-          Testing against porepy \`${{ inputs.porepy_sha || inputs.porepy_ref }}\` (triggered by \`${{ inputs.trigger_event }}\`) failed in [pp_solvers]($RUN_URL).
+          Testing against porepy \`$TESTED_REF\` (triggered by \`$TRIGGER_EVENT\`) $RESULT in [pp_solvers]($RUN_URL).
 
           [View run]($RUN_URL)"
 
-          EXISTING=$(gh api --paginate "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" \
+          EXISTING=$(gh api --paginate "repos/pmgbergen/porepy/issues/$PR_NUMBER/comments" \
             --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n1)
 
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/pmgbergen/porepy/issues/comments/$EXISTING" -f body="$BODY"
+          elif [ "$JOB_STATUS" != "success" ]; then
+            gh api --method POST "repos/pmgbergen/porepy/issues/$PR_NUMBER/comments" -f body="$BODY"
           else
-            gh api --method POST "repos/pmgbergen/porepy/issues/${{ inputs.porepy_pr_number }}/comments" -f body="$BODY"
+            echo "Passed, and no earlier comment on porepy PR #$PR_NUMBER; nothing to update."
           fi
 
       - name: Log failure to job summary if no PR to comment on
