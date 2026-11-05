@@ -13,6 +13,13 @@ to simple systems. For a given PorePy model, the tests consist of the following 
             the same as a historical value.
         Tests number iii) and iv) gives this a regression test character.
 
+For the regression values to be reproducible across platforms, the contact state of
+every fracture cell must be well defined at each Newton iterate. If a cell sits at
+the switch of the complementarity function (e.g. zero contact traction and zero
+normal jump), floating-point round-off (which differs between CPUs and BLAS kernels)
+decides the active branch, and with it the Newton path and the Krylov counts. The test
+setup is chosen to avoid this, and :func:`assert_contact_state_well_defined` guards
+against it.
 
 """
 
@@ -41,9 +48,12 @@ class FluidModel(
     pass
 
 
+# The ContactIndicators mixin is only used to check that the contact state is well
+# defined, see assert_contact_state_well_defined.
 class MechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.MomentumBalance,
 ):
     pass
@@ -52,6 +62,7 @@ class MechanicsModel(
 class PoromechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.Poromechanics,
 ):
     pass
@@ -60,6 +71,7 @@ class PoromechanicsModel(
 class ThermoporomechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.Thermoporomechanics,
 ):
     pass
@@ -68,6 +80,7 @@ class ThermoporomechanicsModel(
 class ThermoporomechanicsTpsaModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.poromechanics.TpsaPoromechanicsMixin,
     pp.Thermoporomechanics,
 ):
@@ -75,14 +88,21 @@ class ThermoporomechanicsTpsaModel(
 
 
 # Hard-coded expected number of linear iterations for each model. These are used for
-# regression testing. Hopefully the reference values are stable.
+# regression testing. With the setup in model_options, these were found to be
+# invariant to perturbations of the Newton increments of relative size up to 1e-10
+# (a proxy for platform-dependent round-off).
 expected_linear_iterations = {
     FluidModel: [3, 3],
-    MechanicsModel: [5, 6],
-    PoromechanicsModel: [8, 12, 10, 12],
-    ThermoporomechanicsModel: [10, 15, 14],
-    ThermoporomechanicsTpsaModel: [13, 17, 19],
+    MechanicsModel: [10, 11],
+    PoromechanicsModel: [16, 20],
+    ThermoporomechanicsModel: [34, 41],
+    ThermoporomechanicsTpsaModel: [26, 35],
 }
+
+# Smallest accepted distance of the opening and sliding indicators from the switch
+# of the complementarity functions, evaluated at the converged solution. The value is
+# far above round-off, and far below the margins of the current setup (~1e-5).
+CONTACT_STATE_MARGIN = 1e-8
 
 
 def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
@@ -99,20 +119,54 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     return linear_iterations
 
 
-def model_options():
-    return {
+def assert_contact_state_well_defined(model: PorePyModel) -> None:
+    """Check that no fracture cell is at the switch between contact states.
+
+    If a cell is (numerically) at the switch, the Newton path, and thereby the number
+    of linear iterations, depends on round-off and varies between platforms.
+
+    """
+    if not isinstance(model, pp.models.solution_strategy.ContactIndicators):
+        return
+    fractures = model.mdg.subdomains(dim=model.nd - 1)
+    for name, indicator in [
+        ("opening", model.opening_indicator(fractures)),
+        ("sliding", model.sliding_indicator(fractures)),
+    ]:
+        values = model.equation_system.evaluate(indicator)
+        assert np.all(np.abs(values) > CONTACT_STATE_MARGIN), (
+            f"The {name} indicator is close to zero (min abs value "
+            f"{np.min(np.abs(values)):.2e}) in at least one fracture cell. The contact "
+            "state is then decided by round-off, which makes the iteration counts "
+            "platform dependent. Adjust the test setup."
+        )
+
+
+def model_options(pressure_drive: bool = False):
+    options = {
         "material_constants": {
             "solid": solid_constants,
             "fluid": pp.FluidComponent(**{"compressibility": 1e-7}),
         },
-        "reference_variable_values": pp.ReferenceVariableValues(**{"pressure": 1}),
         # EK note to self: Including both fractures in the model led to severe
         # convergence problem for the non-linear solver, even when a direct solver was
         # used for the linearized system. Use a single fracture for now.
         "fracture_indices": [1],
-        "cell_size": 0.1,
+        # The mesh size must be passed through meshing_arguments, a top-level
+        # "cell_size" is silently ignored (and the default 0.5 gives a 4-cell grid).
+        "meshing_arguments": {"cell_size": 0.1},
         "u_north": -0.001,  # Used for mechanics problems
     }
+    if pressure_drive:
+        # A boundary pressure different from the (zero) initial pressure drives the
+        # flow. This must not be used in the poromechanical models: There, the fluid
+        # pressure pushing the fracture open balances the mechanical compression, so
+        # that the fracture ends up exactly at the switch between open and closed
+        # (zero contact traction and zero opening). See the module docstring.
+        options["reference_variable_values"] = pp.ReferenceVariableValues(
+            **{"pressure": 1}
+        )
+    return options
 
 
 @pytest.mark.parametrize(
@@ -131,8 +185,10 @@ def test_model(model_class):
     # fracture states changing, possibly because the grid is rather coarse. Leave this
     # for now.
     solver_opts = {"nl_convergence_res_atol": 1e-8, "nl_convergence_inc_atol": 1e-8}
+    # Only the pure flow model needs a pressure drive to get a nontrivial problem.
+    pressure_drive = model_class is FluidModel
 
-    direct_model = model_class(model_options())
+    direct_model = model_class(model_options(pressure_drive))
     try:
         status = pp.ModelRunner(direct_model, solver_opts).run()
         assert status.is_success()
@@ -157,7 +213,7 @@ def test_model(model_class):
         },
     )
 
-    iterative_model = model_class(model_options())
+    iterative_model = model_class(model_options(pressure_drive))
     iterative_model.prepare_simulation()
     try:
         status = pp.ModelRunner(
@@ -195,6 +251,9 @@ def test_model(model_class):
     assert np.allclose(direct_solution, iterative_solution, rtol=1e-6, atol=1e-6), (
         "Solutions do not match."
     )
+    # Fail with an informative message, rather than with unstable iteration counts,
+    # if the setup has drifted into a degenerate contact state.
+    assert_contact_state_well_defined(direct_model)
 
     # Fetch the actual and expected number of iterations.
     linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
@@ -220,7 +279,7 @@ def test_model(model_class):
 def test_linear_solver_failure():
     """Tests a case when a linear solver fails (due to iterations limit), but nonlinear
     iterations continue until they reach a limit."""
-    iterative_model = FluidModel(model_options())
+    iterative_model = FluidModel(model_options(pressure_drive=True))
     # Need prepare_simulation to tell if the model is nonlinear.
     iterative_model.prepare_simulation()
     linear_solver = IterativeLinearSolver(
