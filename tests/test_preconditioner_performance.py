@@ -17,7 +17,9 @@ For the regression values to be reproducible across platforms, the contact state
 every fracture cell must be well defined at each Newton iterate. If a cell sits at
 the switch of the complementarity function (e.g. zero contact traction and zero
 normal jump), floating-point round-off (which differs between CPUs and BLAS kernels)
-decides the active branch, and with it the Newton path and the Krylov counts.
+decides the active branch, and with it the Newton path and the Krylov counts. The test
+setup is chosen to avoid this, and :func:`assert_contact_state_well_defined` guards
+against it.
 
 """
 
@@ -46,9 +48,12 @@ class FluidModel(
     pass
 
 
+# The ContactIndicators mixin is only used to check that the contact state is well
+# defined, see assert_contact_state_well_defined.
 class MechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.MomentumBalance,
 ):
     pass
@@ -57,6 +62,7 @@ class MechanicsModel(
 class PoromechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.Poromechanics,
 ):
     pass
@@ -65,6 +71,7 @@ class PoromechanicsModel(
 class ThermoporomechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.Thermoporomechanics,
 ):
     pass
@@ -73,6 +80,7 @@ class ThermoporomechanicsModel(
 class ThermoporomechanicsTpsaModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
+    pp.models.solution_strategy.ContactIndicators,
     pp.poromechanics.TpsaPoromechanicsMixin,
     pp.Thermoporomechanics,
 ):
@@ -91,6 +99,11 @@ expected_linear_iterations = {
     ThermoporomechanicsTpsaModel: [26, 35],
 }
 
+# Smallest accepted distance of the opening and sliding indicators from the switch
+# of the complementarity functions, evaluated at the converged solution. The value is
+# far above round-off, and far below the margins of the current setup (~1e-5).
+CONTACT_STATE_MARGIN = 1e-8
+
 
 def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     """Collect Krylov iteration counts from all recorded nonlinear solves."""
@@ -104,6 +117,29 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
                 )
                 linear_iterations.append(y.num_krylov_iters)
     return linear_iterations
+
+
+def assert_contact_state_well_defined(model: PorePyModel) -> None:
+    """Check that no fracture cell is at the switch between contact states.
+
+    If a cell is (numerically) at the switch, the Newton path, and thereby the number
+    of linear iterations, depends on round-off and varies between platforms.
+
+    """
+    if not isinstance(model, pp.models.solution_strategy.ContactIndicators):
+        return
+    fractures = model.mdg.subdomains(dim=model.nd - 1)
+    for name, indicator in [
+        ("opening", model.opening_indicator(fractures)),
+        ("sliding", model.sliding_indicator(fractures)),
+    ]:
+        values = model.equation_system.evaluate(indicator)
+        assert np.all(np.abs(values) > CONTACT_STATE_MARGIN), (
+            f"The {name} indicator is close to zero (min abs value "
+            f"{np.min(np.abs(values)):.2e}) in at least one fracture cell. The contact "
+            "state is then decided by round-off, which makes the iteration counts "
+            "platform dependent. Adjust the test setup."
+        )
 
 
 def model_options(pressure_drive: bool = False):
@@ -215,6 +251,9 @@ def test_model(model_class):
     assert np.allclose(direct_solution, iterative_solution, rtol=1e-6, atol=1e-6), (
         "Solutions do not match."
     )
+    # Fail with an informative message, rather than with unstable iteration counts,
+    # if the setup has drifted into a degenerate contact state.
+    assert_contact_state_well_defined(direct_model)
 
     # Fetch the actual and expected number of iterations.
     linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
