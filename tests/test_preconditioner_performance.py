@@ -13,6 +13,11 @@ to simple systems. For a given PorePy model, the tests consist of the following 
             the same as a historical value.
         Tests number iii) and iv) gives this a regression test character.
 
+For the regression values to be reproducible across platforms, the contact state of
+every fracture cell must be well defined at each Newton iterate. If a cell sits at
+the switch of the complementarity function (e.g. zero contact traction and zero
+normal jump), floating-point round-off (which differs between CPUs and BLAS kernels)
+decides the active branch, and with it the Newton path and the Krylov counts.
 
 """
 
@@ -79,9 +84,9 @@ class ThermoporomechanicsTpsaModel(
 expected_linear_iterations = {
     FluidModel: [3, 3],
     MechanicsModel: [5, 6],
-    PoromechanicsModel: [8, 12, 10, 12],
-    ThermoporomechanicsModel: [10, 15, 14],
-    ThermoporomechanicsTpsaModel: [13, 17, 19],
+    PoromechanicsModel: [8, 10],
+    ThermoporomechanicsModel: [10, 13],
+    ThermoporomechanicsTpsaModel: [13, 18],
 }
 
 
@@ -99,13 +104,12 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
     return linear_iterations
 
 
-def model_options():
-    return {
+def model_options(pressure_drive: bool = False):
+    options = {
         "material_constants": {
             "solid": solid_constants,
             "fluid": pp.FluidComponent(**{"compressibility": 1e-7}),
         },
-        "reference_variable_values": pp.ReferenceVariableValues(**{"pressure": 1}),
         # EK note to self: Including both fractures in the model led to severe
         # convergence problem for the non-linear solver, even when a direct solver was
         # used for the linearized system. Use a single fracture for now.
@@ -113,6 +117,16 @@ def model_options():
         "cell_size": 0.1,
         "u_north": -0.001,  # Used for mechanics problems
     }
+    if pressure_drive:
+        # A boundary pressure different from the (zero) initial pressure drives the
+        # flow. This must not be used in the poromechanical models: There, the fluid
+        # pressure pushing the fracture open balances the mechanical compression, so
+        # that the fracture ends up exactly at the switch between open and closed
+        # (zero contact traction and zero opening). See the module docstring.
+        options["reference_variable_values"] = pp.ReferenceVariableValues(
+            **{"pressure": 1}
+        )
+    return options
 
 
 @pytest.mark.parametrize(
@@ -131,8 +145,10 @@ def test_model(model_class):
     # fracture states changing, possibly because the grid is rather coarse. Leave this
     # for now.
     solver_opts = {"nl_convergence_res_atol": 1e-8, "nl_convergence_inc_atol": 1e-8}
+    # Only the pure flow model needs a pressure drive to get a nontrivial problem.
+    pressure_drive = model_class is FluidModel
 
-    direct_model = model_class(model_options())
+    direct_model = model_class(model_options(pressure_drive))
     try:
         status = pp.ModelRunner(direct_model, solver_opts).run()
         assert status.is_success()
@@ -157,7 +173,7 @@ def test_model(model_class):
         },
     )
 
-    iterative_model = model_class(model_options())
+    iterative_model = model_class(model_options(pressure_drive))
     iterative_model.prepare_simulation()
     try:
         status = pp.ModelRunner(
@@ -220,7 +236,7 @@ def test_model(model_class):
 def test_linear_solver_failure():
     """Tests a case when a linear solver fails (due to iterations limit), but nonlinear
     iterations continue until they reach a limit."""
-    iterative_model = FluidModel(model_options())
+    iterative_model = FluidModel(model_options(pressure_drive=True))
     # Need prepare_simulation to tell if the model is nonlinear.
     iterative_model.prepare_simulation()
     linear_solver = IterativeLinearSolver(
