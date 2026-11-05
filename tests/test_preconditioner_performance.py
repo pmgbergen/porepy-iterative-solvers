@@ -80,13 +80,15 @@ class ThermoporomechanicsTpsaModel(
 
 
 # Hard-coded expected number of linear iterations for each model. These are used for
-# regression testing. Hopefully the reference values are stable.
+# regression testing. With the setup in model_options, these were found to be
+# invariant to perturbations of the Newton increments of relative size up to 1e-10
+# (a proxy for platform-dependent round-off).
 expected_linear_iterations = {
     FluidModel: [3, 3],
-    MechanicsModel: [5, 6],
-    PoromechanicsModel: [8, 10],
-    ThermoporomechanicsModel: [10, 13],
-    ThermoporomechanicsTpsaModel: [13, 18],
+    MechanicsModel: [10, 11],
+    PoromechanicsModel: [16, 20],
+    ThermoporomechanicsModel: [34, 41],
+    ThermoporomechanicsTpsaModel: [26, 35],
 }
 
 
@@ -114,7 +116,9 @@ def model_options(pressure_drive: bool = False):
         # convergence problem for the non-linear solver, even when a direct solver was
         # used for the linearized system. Use a single fracture for now.
         "fracture_indices": [1],
-        "cell_size": 0.1,
+        # The mesh size must be passed through meshing_arguments, a top-level
+        # "cell_size" is silently ignored (and the default 0.5 gives a 4-cell grid).
+        "meshing_arguments": {"cell_size": 0.1},
         "u_north": -0.001,  # Used for mechanics problems
     }
     if pressure_drive:
