@@ -28,19 +28,22 @@ jobs:
       - name: Pull Docker image
         run: docker pull $DOCKER_IMAGE
 
+      # PorePy and pp_solvers are editable installs in the image, so pulling updates
+      # the code. Reinstalling with 'pip install -e .' picks up dependencies that were
+      # added after the image was built, without upgrading the existing ones. The
+      # commands are chained, so that a failure in any of them fails the job.
       - name: Run tests inside container
         run: |
           docker run --rm $DOCKER_IMAGE \
             bash -c "
               cd ~/porepy &&
               git pull &&
-              pip install pyproject.toml --upgrade
+              pip install -e . &&
               cd ~/pp_solvers &&
               git fetch origin $TEST_BRANCH &&
               git checkout $TEST_BRANCH &&
               git pull origin $TEST_BRANCH &&
-              pip install pyproject.toml --upgrade
-              pip install -e .  # If a new dependency is listed, and the image is not updated yet.
-              pip freeze
+              pip install -e . &&
+              pip freeze &&
               pytest -v
             "
