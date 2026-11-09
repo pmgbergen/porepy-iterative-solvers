@@ -81,6 +81,23 @@ class ContactStateMonitor(pp.models.solution_strategy.ContactIndicators):
         )
 
 
+class PorePressure(pp.PorePyModel):
+    """Uniform initial and boundary pore pressure, given by the model parameter
+    ``pore_pressure``.
+
+    The reference pressure is left at zero, so the constitutive laws are unaffected.
+    The fluid pressure in the fracture acts on the fracture walls, and thereby
+    contributes to the contact mechanics balance.
+
+    """
+
+    def ic_values_pressure(self, sd: pp.Grid) -> np.ndarray:
+        return self.params["pore_pressure"] * np.ones(sd.num_cells)
+
+    def bc_values_pressure(self, bg: pp.BoundaryGrid) -> np.ndarray:
+        return self.params["pore_pressure"] * np.ones(bg.num_cells)
+
+
 class MechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
@@ -94,6 +111,7 @@ class PoromechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
     ContactStateMonitor,
+    PorePressure,
     pp.Poromechanics,
 ):
     pass
@@ -103,6 +121,7 @@ class ThermoporomechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
     ContactStateMonitor,
+    PorePressure,
     pp.Thermoporomechanics,
 ):
     pass
@@ -112,6 +131,7 @@ class ThermoporomechanicsTpsaModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
     ContactStateMonitor,
+    PorePressure,
     pp.poromechanics.TpsaPoromechanicsMixin,
     pp.Thermoporomechanics,
 ):
@@ -119,20 +139,20 @@ class ThermoporomechanicsTpsaModel(
 
 
 # Hard-coded expected number of linear iterations for each model. These are used for
-# regression testing. With the setup in model_options, these were found to be
-# invariant to perturbations of the Newton increments of relative size up to 1e-10
-# (a proxy for platform-dependent round-off).
+# regression testing. With the setup in model_options, the counts for the contact
+# models were found to be invariant to relative perturbations of size 1e-15 to 1e-9 of
+# u_north and pore_pressure (a proxy for platform-dependent round-off).
 expected_linear_iterations = {
     FluidModel: [3, 3],
     MechanicsModel: [10, 11],
-    PoromechanicsModel: [16, 20],
-    ThermoporomechanicsModel: [34, 41],
-    ThermoporomechanicsTpsaModel: [26, 35],
+    PoromechanicsModel: [15, 20],
+    ThermoporomechanicsModel: [33, 40],
+    ThermoporomechanicsTpsaModel: [25, 35],
 }
 
 # Smallest accepted distance of the opening and sliding indicators from the switch
 # of the complementarity functions, evaluated at each Newton iterate. The value is
-# far above round-off, and far below the margins of the current setup (~1e-5).
+# far above round-off, and far below the margins of the current setup (~1e-4).
 CONTACT_STATE_MARGIN = 1e-8
 
 
@@ -183,14 +203,27 @@ def model_options(pressure_drive: bool = False):
         # The mesh size must be passed through meshing_arguments, a top-level
         # "cell_size" is silently ignored (and the default 0.5 gives a 4-cell grid).
         "meshing_arguments": {"cell_size": 0.1},
-        "u_north": -0.001,  # Used for mechanics problems
+        # Used for mechanics problems: Compression normal to the fracture, and a
+        # smaller shear component. Together with the pore pressure, this leaves the
+        # fracture closed and sticking, with clear margins to the open and sliding
+        # states. A larger shear component, or pore pressure, puts part of the
+        # fracture in sliding. The Newton path is then still well defined, but it
+        # takes more iterations, and the Krylov count of the last iteration (where
+        # the residual is close to round-off) was found to vary by up to 3 under
+        # round-off perturbations.
+        "u_north": [-0.0002, -0.001],
+        # Used by the poromechanical models, see PorePressure. Reduces the normal
+        # contact traction by about 40% compared to zero pore pressure.
+        "pore_pressure": 6e-4,
     }
     if pressure_drive:
         # A boundary pressure different from the (zero) initial pressure drives the
         # flow. This must not be used in the poromechanical models: There, the fluid
         # pressure pushing the fracture open balances the mechanical compression, so
         # that the fracture ends up exactly at the switch between open and closed
-        # (zero contact traction and zero opening). See the module docstring.
+        # (zero contact traction and zero opening). See the module docstring. The
+        # poromechanical models instead use a uniform pore pressure, see
+        # PorePressure.
         options["reference_variable_values"] = pp.ReferenceVariableValues(
             **{"pressure": 1}
         )
