@@ -41,9 +41,12 @@ on:
         required: false
         default: 'push'
 
-# A re-dispatch of the same PorePy commit cancels the older run.
+# Runs for the same PorePy PR share a group, so a newer commit on the PR (or
+# its merge) cancels the run for an older one. A cancelled run does not
+# comment, so a superseded commit cannot overwrite the latest result. Without
+# a PR number, runs are grouped by the tested commit.
 concurrency:
-  group: downstream-dispatch-${{ inputs.porepy_sha || inputs.porepy_ref }}
+  group: downstream-dispatch-${{ inputs.porepy_pr_number || inputs.porepy_sha || inputs.porepy_ref }}
   cancel-in-progress: true
 
 jobs:
@@ -73,7 +76,10 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Threading is disabled and numpy's BLAS runtime is logged, as in
-      # test-in-docker.yml.
+      # test-in-docker.yml. The requested PorePy ref or SHA is fetched explicitly
+      # and checked out detached: Checking out a branch by name would use the
+      # image's stale local branch, and a SHA may not be on any branch fetched by
+      # a plain 'git fetch' (e.g. if the PR branch was deleted).
       - name: Run tests inside container against requested porepy ref
         env:
           CHECKOUT_REF: ${{ inputs.porepy_sha != '' && inputs.porepy_sha || inputs.porepy_ref }}
@@ -87,8 +93,8 @@ jobs:
             bash -c "
               set -e
               cd ~/porepy &&
-              git fetch origin &&
-              git checkout \"\$CHECKOUT_REF\" &&
+              git fetch origin \"\$CHECKOUT_REF\" &&
+              git checkout --detach FETCH_HEAD &&
               pip install -e . &&
               cd ~/pp_solvers &&
               git fetch origin develop &&
@@ -140,6 +146,10 @@ jobs:
 
       - name: Log failure to job summary if no PR to comment on
         if: failure() && inputs.porepy_pr_number == ''
+        # Passed through the environment, so that the ref is not expanded as shell
+        # code.
+        env:
+          TESTED_REF: ${{ inputs.porepy_sha || inputs.porepy_ref }}
         run: |
           echo "### pp_solvers integration test failed" >> "$GITHUB_STEP_SUMMARY"
-          echo "No originating porepy PR was resolved for \`${{ inputs.porepy_sha || inputs.porepy_ref }}\`; nowhere to comment." >> "$GITHUB_STEP_SUMMARY"
+          echo "No originating porepy PR was resolved for \`$TESTED_REF\`; nowhere to comment." >> "$GITHUB_STEP_SUMMARY"
