@@ -200,20 +200,16 @@ def model_options(pressure_drive: bool = False):
         # convergence problem for the non-linear solver, even when a direct solver was
         # used for the linearized system. Use a single fracture for now.
         "fracture_indices": [1],
-        # The mesh size must be passed through meshing_arguments, a top-level
-        # "cell_size" is silently ignored (and the default 0.5 gives a 4-cell grid).
         "meshing_arguments": {"cell_size": 0.1},
-        # Used for mechanics problems: Compression normal to the fracture, and a
-        # smaller shear component. Together with the pore pressure, this leaves the
-        # fracture closed and sticking, with clear margins to the open and sliding
-        # states. A larger shear component, or pore pressure, puts part of the
-        # fracture in sliding. The Newton path is then still well defined, but it
-        # takes more iterations, and the Krylov count of the last iteration (where
-        # the residual is close to round-off) was found to vary by up to 3 under
-        # round-off perturbations.
+        # Used for mechanics problems: Compression normal to the fracture, and a smaller
+        # shear component. Together with the pore pressure, this leaves the fracture
+        # closed and sticking, with clear margins to the open and sliding states. A
+        # larger shear component, or pore pressure, puts part of the fracture in
+        # sliding. The Newton path is then still well defined, but  Krylov count of the
+        # last iteration (where the residual is close to round-off) was found to vary by
+        # up to 3 under round-off perturbations.
         "u_north": [-0.0002, -0.001],
-        # Used by the poromechanical models, see PorePressure. Reduces the normal
-        # contact traction by about 40% compared to zero pore pressure.
+        # Used by the poromechanical models, see PorePressure.
         "pore_pressure": 6e-4,
     }
     if pressure_drive:
@@ -309,11 +305,12 @@ def test_model(model_class):
     iterative_solution = iterative_model.equation_system.get_variable_values(
         time_step_index=0
     )
-    assert np.allclose(direct_solution, iterative_solution, rtol=1e-6, atol=1e-6), (
-        "Solutions do not match."
+    (
+        np.testing.assert_allclose(
+            direct_solution, iterative_solution, rtol=1e-6, atol=1e-6
+        ),
+        "Solutions do not match.",
     )
-    # Fail with an informative message, rather than with unstable iteration counts,
-    # if the setup has drifted into a degenerate contact state.
     assert_contact_state_well_defined(direct_model)
     assert_contact_state_well_defined(iterative_model)
 
@@ -370,4 +367,6 @@ def test_linear_solver_failure():
         f"We did {len(linear_iterations)} Newton iterations and did not converge."
     )
     # No idea why PETSc reports 2 and not 1, but it should not report anything else.
-    assert np.all(np.array(linear_iterations) == 2)
+    np.testing.assert_array_equal(
+        np.array(linear_iterations), np.array([2] * max_nonlinear_iterations)
+    )
