@@ -28,13 +28,32 @@ jobs:
       - name: Pull Docker image
         run: docker pull $DOCKER_IMAGE
 
+      # Iteration counts in the regression tests can depend on the CPU (e.g. through
+      # vectorized math kernels). Record the hardware and the exact image, so that
+      # failures can be correlated with them. The container runs on the same CPU.
+      - name: Log runner hardware and image
+        run: |
+          {
+            echo "### Test environment"
+            echo "- CPU: $(lscpu | sed -n 's/^Model name: *//p'), $(nproc) cores"
+            echo "- AVX-512: $(grep -q avx512f /proc/cpuinfo && echo yes || echo no)"
+            echo "- Image: $(docker image inspect --format '{{index .RepoDigests 0}}' $DOCKER_IMAGE)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       # PorePy and pp_solvers are editable installs in the image, so pulling updates
       # the code. Reinstalling with 'pip install -e .' picks up dependencies that were
       # added after the image was built, without upgrading the existing ones. The
       # commands are chained, so that a failure in any of them fails the job.
+      # Threading is disabled, since multithreaded BLAS and direct solvers are not
+      # guaranteed to give bitwise reproducible results. numpy.show_runtime() logs
+      # the BLAS library and the CPU kernels it uses.
       - name: Run tests inside container
         run: |
-          docker run --rm $DOCKER_IMAGE \
+          docker run --rm \
+            -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            $DOCKER_IMAGE \
             bash -c "
               cd ~/porepy &&
               git pull &&
@@ -45,5 +64,6 @@ jobs:
               git pull origin $TEST_BRANCH &&
               pip install -e . &&
               pip freeze &&
+              python -c 'import numpy; numpy.show_runtime()' &&
               pytest -v
             "
