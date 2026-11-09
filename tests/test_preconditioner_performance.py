@@ -18,10 +18,12 @@ every fracture cell must be well defined at each Newton iterate. If a cell sits 
 the switch of the complementarity function (e.g. zero contact traction and zero
 normal jump), floating-point round-off (which differs between CPUs and BLAS kernels)
 decides the active branch, and with it the Newton path and the Krylov counts. The test
-setup is chosen to avoid this, and :func:`assert_contact_state_well_defined` guards
-against it.
+setup is chosen to avoid this, and :class:`ContactStateMonitor` together with
+:func:`assert_contact_state_well_defined` guards against it.
 
 """
+
+from typing import Optional
 
 import numpy as np
 import porepy as pp
@@ -48,12 +50,41 @@ class FluidModel(
     pass
 
 
-# The ContactIndicators mixin is only used to check that the contact state is well
-# defined, see assert_contact_state_well_defined.
+class ContactStateMonitor(pp.models.solution_strategy.ContactIndicators):
+    """Record the distance to the contact state switches at each Newton iterate.
+
+    The indicators are evaluated after each nonlinear update, that is, at every
+    iterate except the initial guess (which is set by the initial conditions and does
+    not depend on round-off). This must be done during the time step: The sliding
+    indicator contains the time increment of the tangential displacement jump, which
+    is zero once the time step is completed. Evaluated after the simulation, the
+    sliding indicator is therefore zero in all sliding cells.
+
+    """
+
+    def prepare_simulation(self) -> None:
+        self.contact_state_margins: list[float] = []
+        super().prepare_simulation()
+
+    def after_nonlinear_iteration(
+        self,
+        nonlinear_increment: np.ndarray,
+        updated_variables: Optional[list[pp.ad.Variable]] = None,
+    ) -> None:
+        super().after_nonlinear_iteration(nonlinear_increment, updated_variables)
+        fractures = self.mdg.subdomains(dim=self.nd - 1)
+        self.contact_state_margins.append(
+            min(
+                np.min(np.abs(self.equation_system.evaluate(indicator(fractures))))
+                for indicator in (self.opening_indicator, self.sliding_indicator)
+            )
+        )
+
+
 class MechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    pp.models.solution_strategy.ContactIndicators,
+    ContactStateMonitor,
     pp.MomentumBalance,
 ):
     pass
@@ -62,7 +93,7 @@ class MechanicsModel(
 class PoromechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    pp.models.solution_strategy.ContactIndicators,
+    ContactStateMonitor,
     pp.Poromechanics,
 ):
     pass
@@ -71,7 +102,7 @@ class PoromechanicsModel(
 class ThermoporomechanicsModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    pp.models.solution_strategy.ContactIndicators,
+    ContactStateMonitor,
     pp.Thermoporomechanics,
 ):
     pass
@@ -80,7 +111,7 @@ class ThermoporomechanicsModel(
 class ThermoporomechanicsTpsaModel(
     pp.model_geometries.SquareDomainOrthogonalFractures,
     pp.model_boundary_conditions.BoundaryConditionsMechanicsDirNorthSouth,
-    pp.models.solution_strategy.ContactIndicators,
+    ContactStateMonitor,
     pp.poromechanics.TpsaPoromechanicsMixin,
     pp.Thermoporomechanics,
 ):
@@ -100,7 +131,7 @@ expected_linear_iterations = {
 }
 
 # Smallest accepted distance of the opening and sliding indicators from the switch
-# of the complementarity functions, evaluated at the converged solution. The value is
+# of the complementarity functions, evaluated at each Newton iterate. The value is
 # far above round-off, and far below the margins of the current setup (~1e-5).
 CONTACT_STATE_MARGIN = 1e-8
 
@@ -120,26 +151,23 @@ def fetch_linear_iterations_from_statistics(model: PorePyModel) -> list[int]:
 
 
 def assert_contact_state_well_defined(model: PorePyModel) -> None:
-    """Check that no fracture cell is at the switch between contact states.
+    """Check that no fracture cell was at the switch between contact states at any
+    Newton iterate.
 
     If a cell is (numerically) at the switch, the Newton path, and thereby the number
     of linear iterations, depends on round-off and varies between platforms.
 
     """
-    if not isinstance(model, pp.models.solution_strategy.ContactIndicators):
+    if not isinstance(model, ContactStateMonitor):
         return
-    fractures = model.mdg.subdomains(dim=model.nd - 1)
-    for name, indicator in [
-        ("opening", model.opening_indicator(fractures)),
-        ("sliding", model.sliding_indicator(fractures)),
-    ]:
-        values = model.equation_system.evaluate(indicator)
-        assert np.all(np.abs(values) > CONTACT_STATE_MARGIN), (
-            f"The {name} indicator is close to zero (min abs value "
-            f"{np.min(np.abs(values)):.2e}) in at least one fracture cell. The contact "
-            "state is then decided by round-off, which makes the iteration counts "
-            "platform dependent. Adjust the test setup."
-        )
+    margins = model.contact_state_margins
+    assert all(margin > CONTACT_STATE_MARGIN for margin in margins), (
+        "The opening or sliding indicator is close to zero in at least one fracture "
+        "cell. Smallest absolute indicator value per Newton iterate: "
+        f"{[f'{margin:.2e}' for margin in margins]}. The contact state is then decided "
+        "by round-off, which makes the iteration counts platform dependent. Adjust the "
+        "test setup."
+    )
 
 
 def model_options(pressure_drive: bool = False):
@@ -254,6 +282,7 @@ def test_model(model_class):
     # Fail with an informative message, rather than with unstable iteration counts,
     # if the setup has drifted into a degenerate contact state.
     assert_contact_state_well_defined(direct_model)
+    assert_contact_state_well_defined(iterative_model)
 
     # Fetch the actual and expected number of iterations.
     linear_iterations = fetch_linear_iterations_from_statistics(iterative_model)
